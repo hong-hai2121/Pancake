@@ -1,20 +1,30 @@
-"""Khởi động server FastAPI và đăng ký route webhook."""
+"""Điểm khởi động ứng dụng: tạo FastAPI app và gắn các route.
+
+Luồng hiện tại dùng POLLING qua Pancake (app/pancake) để nhận/ trả lời tin nhắn,
+KHÔNG dùng webhook Facebook nữa — nên chỉ đăng ký `pancake_router`.
+(Thư mục app/webhook đã bị bỏ; nếu sau này muốn dùng lại webhook Graph thì thêm
+router tương ứng vào đây.)
+"""
 
 import uvicorn
 from fastapi import FastAPI
 
 from app.pancake.routes import router as pancake_router
-from app.webhook.routes import router as webhook_router
 
+# Khởi tạo ứng dụng FastAPI. `title` hiển thị ở trang tài liệu tự sinh /docs.
 app = FastAPI(title="FB Sales Bot")
-app.include_router(webhook_router)
+
+# Gắn toàn bộ route Pancake: webview danh sách page, xem hội thoại, trả lời,
+# auto-refresh fragment, poll... (xem app/pancake/routes.py).
 app.include_router(pancake_router)
 
 
 @app.get("/health")
 def health() -> dict:
+    """Endpoint kiểm tra 'sống': trả {"status": "ok"} để biết server còn chạy."""
     return {"status": "ok"}
 
 
 if __name__ == "__main__":
+    # Chạy trực tiếp `python app/main.py`: bật uvicorn kèm auto-reload khi sửa code.
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
