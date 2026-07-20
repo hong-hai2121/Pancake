@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # Số chiều vector — PHẢI khớp cột embedding trong DB thật (hiện là vector(1536)).
     embedding_dim: int = 1536
 
+    # --- RAG (tìm kiếm ngữ nghĩa) ---
+    rag_top_k: int = 5                  # số kết quả lấy mỗi lần tìm
+    # Ngưỡng điểm tương đồng: chỉ nhận dòng có similarity >= ngưỡng.
+    # 0.0 = không lọc (luôn trả top-k). Đặt ~0.6 để "không đủ giống thì trả rỗng".
+    rag_match_threshold: float = 0.0
+
     # --- Supabase / Postgres ---
     supabase_url: str = ""      # https://<project>.supabase.co
     supabase_key: str = ""      # SECRET key (chạy phía server, bỏ qua RLS)

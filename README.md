@@ -25,6 +25,10 @@ pancakebot/
 │   │   ├── webview.py       # render HTML: danh sách page, người nhắn, khung chat
 │   │   └── routes.py        # các endpoint /pancake/... (webview + JSON + reply)
 │   │
+│   ├── data/               # ⭐ giao diện tự nhập dữ liệu cho bot
+│   │   ├── webview.py       # render form + danh sách (kịch bản / hội thoại mẫu)
+│   │   └── routes.py        # /data/kich-ban, /data/hoi-thoai (xem/thêm/xoá)
+│   │
 │   ├── bot/                # "não" quyết định trả lời
 │   │   ├── brain.py         # điều phối: kịch bản trước, không thì RAG + LLM
 │   │   ├── flow.py          # kịch bản Bảng 1 (khung, chưa cài logic khớp)
@@ -38,7 +42,7 @@ pancakebot/
 │   │
 │   ├── db/
 │   │   ├── client.py        # kết nối Supabase (REST)
-│   │   └── queries.py       # đọc/ghi bảng + insert kèm embedding + cosine
+│   │   └── queries.py       # đọc/ghi bảng + insert kèm embedding + gọi RPC tìm kiếm
 │   │
 │   └── messenger/
 │       └── send_api.py      # Facebook Send API (giữ lại, hiện không dùng)
@@ -48,8 +52,12 @@ pancakebot/
 │   ├── distill.py           # dùng LLM chưng cất chat -> cặp hỏi–đáp
 │   └── run_ingest.py        # chat thô (data/chats.json) -> distill -> embed -> lưu
 │
-└── scripts/
-    └── init_db.sql          # ⚠ CŨ — schema thật trong Supabase đã khác (xem dưới)
+├── scripts/
+│   ├── rpc_match.sql        # ⭐ tạo 2 hàm RPC tìm kiếm vector — PHẢI chạy 1 lần
+│   └── init_db.sql          # ⚠ CŨ — schema thật trong Supabase đã khác (xem dưới)
+│
+└── supabase/functions/
+    └── embed-insert/        # Edge Function — KHÔNG dùng (đã chọn chạy ở máy mình)
 ```
 
 ### Luồng trả lời (khi dùng não)
@@ -58,7 +66,7 @@ pancakebot/
 Tin khách ──> bot/brain ──┬── bot/flow (kịch bản) ──> trả lời luôn nếu khớp
                           │
                           └── rag/retriever ─embed─> rag/embedding
-                                    │  tìm cặp Q&A gần nhất (cosine)
+                                    │  RPC match_documents (Postgres tính cosine)
                                     ▼
                               db/queries ──> Supabase (hoi_thoai_mau, vector 1536)
                                     │
@@ -75,6 +83,7 @@ Tin khách ──> bot/brain ──┬── bot/flow (kịch bản) ──> tr�
 | `OPENAI_API_KEY`                                                                                    | Key OpenAI (dùng cho cả LLM và embedding)                                   |
 | `EMBEDDING_PROVIDER=openai` · `EMBEDDING_MODEL=text-embedding-3-small` · `EMBEDDING_DIM=1536` | Vector hóa;**1536 phải khớp cột `embedding` trong DB**             |
 | `SUPABASE_URL` · `SUPABASE_KEY`                                                                  | `SUPABASE_KEY` = **secret key** `sb_secret_...` (chạy phía server) |
+| `RAG_TOP_K=5` · `RAG_MATCH_THRESHOLD=0.0`                                                        | Số kết quả lấy về · ngưỡng lọc (đặt `0.6` để "không đủ giống thì trả rỗng") |
 | `FB_*`, `GEMINI_API_KEY`, `DATABASE_URL`                                                        | Không bắt buộc (luồng Graph/Gemini hiện không dùng)                     |
 
 ## Database (Supabase)
@@ -89,9 +98,27 @@ Tóm tắt cột: `kich_ban`(ten_kich_ban, buoc, noi_dung, dieu_kien, buoc_tiep,
 **embedding vector(1536)**, meta) · `trang_thai_khach`(page_id, psid, kich_ban,
 buoc_hien_tai, ngu_canh, trang_thai).
 
-DB **chưa có RPC** `match_documents`, nên tìm kiếm tương đồng được tính **cosine
-phía Python** (`db/queries.search_similar`) — đủ nhanh cho bảng Q&A nhỏ. Nếu muốn
-dùng index HNSW cho nhanh khi dữ liệu lớn thì thêm RPC pgvector sau.
+### Phân chia công việc: nhập ở Python, tìm ở Postgres
+
+| Việc | Chạy ở đâu | Chi tiết |
+| --- | --- | --- |
+| **Nhập dữ liệu** (tạo embedding) | **Python** (máy chạy app) | Gọi OpenAI lấy vector rồi `INSERT` qua PostgREST |
+| **Tìm kiếm** (so sánh vector) | **Postgres** | Gọi RPC — dùng toán tử cosine `<=>` + index **HNSW** |
+
+Vì PostgREST **không hỗ trợ toán tử pgvector** trực tiếp, phép so sánh phải bọc
+trong hàm SQL rồi gọi qua RPC (đúng cách n8n làm). Hai hàm cần có:
+
+| Hàm RPC | Tìm trong bảng | Trả về |
+| --- | --- | --- |
+| `match_documents` | `hoi_thoai_mau` | id, cau_hoi, cau_tra_loi, nguon, **similarity** |
+| `match_kich_ban` | `kich_ban` | id, ten_kich_ban, buoc, noi_dung, **similarity** |
+
+Cả hai nhận `(query_embedding vector(1536), match_count int, match_threshold float)`.
+Tạo bằng cách chạy [scripts/rpc_match.sql](scripts/rpc_match.sql) trong SQL Editor.
+
+**`match_threshold`** = ngưỡng lọc: chỉ trả dòng có `similarity >= ngưỡng`.
+Đặt qua `RAG_MATCH_THRESHOLD` trong `.env` (mặc định `0.0` = không lọc).
+Đặt `0.6` để có hành vi "không đủ giống thì trả **rỗng**" giống n8n.
 
 ### Schema chuẩn (chạy trong Supabase → SQL Editor)
 
@@ -161,6 +188,61 @@ create trigger trg_trang_thai_khach_updated
     for each row execute function set_updated_at();
 ```
 
+## Supabase — file nào làm chức năng gì
+
+### 1. Kết nối & cấu hình
+
+| File | Chức năng |
+| --- | --- |
+| `.env` | Khai báo `SUPABASE_URL`, `SUPABASE_KEY` (**secret key** `sb_secret_...`), `RAG_TOP_K`, `RAG_MATCH_THRESHOLD` |
+| [app/config.py](app/config.py) | Đọc `.env` → `settings.supabase_url`, `settings.supabase_key`, `settings.rag_*` |
+| [app/db/client.py](app/db/client.py) | `get_supabase()` — tạo client REST dùng chung (cache 1 lần). `get_pg_pool()` nối thẳng Postgres, **chưa cài đặt** |
+
+### 2. Đọc/ghi dữ liệu — [app/db/queries.py](app/db/queries.py) (file trung tâm)
+
+Mọi truy vấn Supabase đều nằm ở đây.
+
+| Nhóm | Hàm | Chức năng |
+| --- | --- | --- |
+| Tiện ích | `_pgvector()` | Đổi list số → chuỗi `[a,b,c]` để Postgres hiểu là `vector` |
+| | `_rpc()` | Gọi 1 hàm RPC; báo lỗi rõ nếu hàm chưa được tạo |
+| | `_count()` | Đếm số dòng (tuỳ chọn: chỉ dòng đã có embedding) |
+| `kich_ban` | `load_scripts()` | Lấy toàn bộ kịch bản (cho bot) |
+| | `list_scripts()` | Danh sách cho giao diện (**không** kéo cột embedding cho nhẹ) |
+| | `insert_script()` | **Python gọi OpenAI** tạo embedding → `INSERT` |
+| | `delete_script()` | Xoá 1 bước theo id |
+| `hoi_thoai_mau` | `list_qa_pairs()` | Danh sách cặp hỏi–đáp cho giao diện |
+| | `insert_qa()` | Embed câu hỏi → `INSERT` (text gốc lưu vào `meta.embed_text`) |
+| | `delete_qa()` | Xoá 1 cặp theo id |
+| **Tìm kiếm (RPC)** | `search_similar()` | Gọi `match_documents` → **Postgres tính**, trả Q&A gần nhất |
+| | `search_similar_scripts()` | Gọi `match_kich_ban` → bước kịch bản gần nhất |
+| | `debug_search()` | Gọi cả 2 RPC + số liệu chẩn đoán (cho tab "Thử tin nhắn") |
+| `trang_thai_khach` | `load_customer_state()` / `upsert_customer_state()` | Phiên khách — ⚠️ **đang lệch schema thật** (dùng `sender_id`/`du_lieu`, DB thật là `page_id`/`psid`/`ngu_canh`) |
+
+### 3. SQL phải chạy trên Supabase
+
+| File | Chức năng |
+| --- | --- |
+| [scripts/rpc_match.sql](scripts/rpc_match.sql) | Tạo 2 hàm RPC `match_documents` + `match_kich_ban`. **Bắt buộc chạy 1 lần** trong SQL Editor, nếu không phần tìm kiếm sẽ báo lỗi |
+| [scripts/init_db.sql](scripts/init_db.sql) | ⚠️ **CŨ, không dùng** — schema chuẩn nằm ở mục *Database* phía trên |
+
+### 4. Nơi gọi tới Supabase
+
+| File | Dùng để làm gì |
+| --- | --- |
+| [app/data/routes.py](app/data/routes.py) · [app/data/webview.py](app/data/webview.py) | Giao diện `/data`: thêm/xem/xoá kịch bản & hội thoại mẫu, và tab **Thử tin nhắn** (xem RPC truy xuất ra gì) |
+| [app/rag/retriever.py](app/rag/retriever.py) | Gọi `search_similar()` lấy ngữ cảnh cho bot trả lời |
+| [ingestion/load_scripts.py](ingestion/load_scripts.py) · [ingestion/run_ingest.py](ingestion/run_ingest.py) | Nạp hàng loạt từ file JSON vào 2 bảng |
+
+### 5. File Supabase KHÔNG dùng
+
+| File | Ghi chú |
+| --- | --- |
+| [supabase/functions/embed-insert/index.ts](supabase/functions/embed-insert/index.ts) | Edge Function (để Supabase tự embed + insert). Đã cân nhắc rồi **chọn chạy ở máy mình** nên **không dùng, chưa deploy**. Giữ lại phòng khi đổi hướng |
+
+> **Nhắc lại:** embedding **luôn** do OpenAI sinh ra — Postgres không tự tạo được.
+> Khác biệt chỉ là *ai gọi OpenAI*: hiện tại là **Python ở máy bạn**.
+
 ## Cài đặt
 
 ```bash
@@ -200,6 +282,12 @@ uvicorn app.main:app --reload --port 8000
 | `GET /pancake/pages/{id}/conversations/{conv_id}?customer_id=...` | Khung chat + ô trả lời                    |
 | `POST /pancake/pages/{id}/conversations/{conv_id}/reply`          | Gửi tin trả lời (qua Pancake)             |
 | `GET .../recent/fragment`, `.../{conv_id}/fragment`             | Fragment cho auto-refresh (JS gọi ngầm)    |
+| `GET /data/kich-ban`                                              | Giao diện thêm/xem/xoá **kịch bản**       |
+| `POST /data/kich-ban`                                             | Thêm 1 bước kịch bản (tự tạo embedding)  |
+| `POST /data/kich-ban/{id}/xoa`                                    | Xoá 1 bước kịch bản                        |
+| `GET /data/hoi-thoai`                                             | Giao diện thêm/xem/xoá **hội thoại mẫu** |
+| `POST /data/hoi-thoai`                                            | Thêm 1 cặp hỏi–đáp (tự tạo embedding)   |
+| `POST /data/hoi-thoai/{id}/xoa`                                   | Xoá 1 cặp hỏi–đáp                         |
 
 > **Chỉ dùng phần xem Pancake?** Chỉ cần `PANCAKE_ACCESS_TOKEN` là các trang
 > `/pancake/...` chạy được — chưa cần OpenAI/Supabase. Não RAG + gửi liên quan
@@ -213,12 +301,14 @@ mà không cần F5; bấm vào một người để xem hội thoại và trả
 Các link đang hoạt động (ví dụ với page **1087376544458941 — Thạc sĩ A. Đức -
 Phục Hồi Giấc Ngủ Từ Gốc**):
 
-- Health: <http://127.0.0.1:8000/health>
-- Swagger UI (mọi endpoint): <http://127.0.0.1:8000/docs>
-- Danh sách Page (JSON): <http://127.0.0.1:8000/pancake/pages>
-- Webview danh sách Page: <http://127.0.0.1:8000/pancake/webview>
-- **Người nhắn mới nhất**: <http://127.0.0.1:8000/pancake/pages/1087376544458941/recent?limit=10>
-- **Khung chat 1 khách** (ví dụ): <http://127.0.0.1:8000/pancake/pages/1087376544458941/conversations/1087376544458941_27084336667903395?customer_id=ee67b19d-c5c3-4b70-8178-0a377734fb16>
+- Health: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+- Swagger UI (mọi endpoint): [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- Danh sách Page (JSON): [http://127.0.0.1:8000/pancake/pages](http://127.0.0.1:8000/pancake/pages)
+- Webview danh sách Page: [http://127.0.0.1:8000/pancake/webview](http://127.0.0.1:8000/pancake/webview)
+- **Người nhắn mới nhất**: [http://127.0.0.1:8000/pancake/pages/1087376544458941/recent?limit=10](http://127.0.0.1:8000/pancake/pages/1087376544458941/recent?limit=10)
+- **Khung chat 1 khách** (ví dụ): [http://127.0.0.1:8000/pancake/pages/1087376544458941/conversations/1087376544458941_27084336667903395?customer_id=ee67b19d-c5c3-4b70-8178-0a377734fb16](http://127.0.0.1:8000/pancake/pages/1087376544458941/conversations/1087376544458941_27084336667903395?customer_id=ee67b19d-c5c3-4b70-8178-0a377734fb16)
+- **Nhập Kịch bản**: [http://127.0.0.1:8000/data/kich-ban](http://127.0.0.1:8000/data/kich-ban)
+- **Nhập Hội thoại mẫu**: [http://127.0.0.1:8000/data/hoi-thoai](http://127.0.0.1:8000/data/hoi-thoai)
 
 > Link khung chat là **động** (mỗi khách một `conv_id` + `customer_id`) — bình
 > thường bạn **bấm từ trang "Người nhắn mới nhất"** chứ không gõ tay. Đổi page
@@ -228,12 +318,32 @@ Phục Hồi Giấc Ngủ Từ Gốc**):
 
 ## Nạp/ import dữ liệu có embedding
 
-Trong code (`app/db/queries.py`):
+Có 3 cách, dùng cách nào cũng **tự tạo embedding** rồi ghi Supabase.
+
+### 1. Giao diện web (dễ nhất — tự nhập tay)
+
+Hai màn hình, chuyển qua lại bằng tab ở đầu trang:
+
+| Màn hình                                    | Nhập gì                                                        | Ghi vào bảng      |
+| --------------------------------------------- | ---------------------------------------------------------------- | ------------------- |
+| [`/data/kich-ban`](http://127.0.0.1:8000/data/kich-ban)   | Tên kịch bản\*, Bước\* (số), Nội dung\*, Điều kiện, Bước tiếp | `kich_ban`      |
+| [`/data/hoi-thoai`](http://127.0.0.1:8000/data/hoi-thoai) | Câu hỏi\*, Câu trả lời\*, Nguồn                             | `hoi_thoai_mau` |
+
+(\* = bắt buộc). Dưới mỗi form là **danh sách đã có** — kịch bản gom theo tên và
+sắp theo bước, hội thoại mẫu mới nhất trước — mỗi dòng có **nút ✕ xoá** (hỏi xác
+nhận trước khi xoá).
+
+Ràng buộc & báo lỗi sẵn có:
+
+- Trùng `(tên kịch bản, bước)` → báo *"Bước này đã tồn tại trong kịch bản"*.
+- Bước không phải số → báo *"bước phải là số nguyên"*.
+
+### 2. Gọi hàm trong code (`app/db/queries.py`)
 
 - `insert_qa(cau_hoi, cau_tra_loi, nguon=...)` — tự embed rồi lưu vào `hoi_thoai_mau`.
 - `insert_script(noi_dung, ten_kich_ban=..., buoc=..., ...)` — lưu vào `kich_ban`.
 
-Chạy offline từ file JSON:
+### 3. Chạy offline từ file JSON (nạp hàng loạt)
 
 ```bash
 python -m ingestion.load_scripts        # đọc data/kich_ban.json -> kich_ban
@@ -247,9 +357,14 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 | Xem page / người nhắn / khung chat + trả lời tay (Pancake)       | ✅ chạy                                                      |
 | Auto-refresh giao diện (poll fragment)                               | ✅ chạy                                                      |
 | RAG: embed, retrieve, LLM gpt-4o-mini, insert kèm embedding, distill | ✅ đã verify                                                |
+| Tìm kiếm vector chạy**trong Postgres** (RPC + index HNSW)          | ✅ đã verify (RPC đã tạo trên DB)                            |
+| Ngưỡng lọc`match_threshold` (lạc đề → trả rỗng)                  | ✅ đã verify (0.6 → 0 dòng với câu lạc đề)               |
+| Giao diện tự nhập**kịch bản** &**hội thoại mẫu** (`/data`) | ✅ đã verify (thêm/xoá/báo lỗi trùng)                  |
 | Bot**tự động poll + gợi ý/trả lời** hội thoại          | 🟡 đã chốt thiết kế,**chưa code**                 |
 | Phiên khách`trang_thai_khach` (session.py)                        | ⚠️ lệch schema thật (sender_id vs psid) — cần căn lại |
 | Kịch bản Bảng 1 (`bot/flow`)                                     | ⏳ khung, chưa cài logic khớp                              |
+| Tab**Thử tin nhắn** kèm câu trả lời của bot                       | ✅ đã verify (tick ô để gọi gpt-4o-mini)                  |
+| API`/api/chat` cho phần mềm ngoài + bảo mật API key             | 📋 chưa làm — xem mục *Kế hoạch: mở API* ở cuối          |
 
 ## Xử lý lỗi thường gặp
 
@@ -264,6 +379,109 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 - **Pancake trả `429 Too many requests`** (trang hiện 502) — gọi API quá dồn; chờ
   vài giây rồi tải lại.
 - **Tiếng Việt lỗi font trên console** — đặt `$env:PYTHONUTF8=1` trước khi chạy.
+
+## 🔒 Kế hoạch: mở API cho phần mềm ngoài gọi vào
+
+> **Trạng thái: CHƯA LÀM** — ghi lại để triển khai sau khi xong phần chính.
+
+### Có cần mua domain không?
+
+**Không bắt buộc.** Tuỳ người gọi ở đâu:
+
+| Cách | Cần domain? | URL nhận được |
+| --- | --- | --- |
+| Cùng mạng LAN | ❌ | `http://192.168.x.x:8000` (chạy `--host 0.0.0.0` + mở tường lửa) |
+| **Cloudflare Tunnel** (miễn phí) | ❌ | `https://ngau-nhien.trycloudflare.com` — có HTTPS sẵn, đổi mỗi lần khởi động lại |
+| ngrok (miễn phí) | ❌ | `https://xxxx.ngrok-free.app` |
+| Deploy cloud (Render/Railway/Fly.io) | ❌ | `https://tenapp.onrender.com` — **máy bạn không cần bật** |
+| Domain riêng | ✅ | `https://bot.tenmien.com` — URL cố định, đẹp |
+
+Domain chỉ cần khi muốn **URL cố định, chuyên nghiệp**. Test/nội bộ thì tunnel miễn phí là đủ.
+
+### ⚠️ Cảnh báo: hiện code KHÔNG có lớp bảo mật nào
+
+Mọi endpoint đang mở toang. **Phơi thẳng ra Internet là rất nguy hiểm** — bất kỳ ai
+biết URL đều có thể:
+
+- 📖 Đọc toàn bộ **tin nhắn khách hàng thật** (`/pancake/.../conversations/...`)
+- 📨 **Gửi tin nhắn tới khách hàng thật** qua `/reply` — không hoàn tác được
+- 🗑️ Thêm/xoá dữ liệu Supabase qua `/data/...`
+- 💸 **Tiêu tiền OpenAI** của bạn bằng cách spam endpoint gọi LLM
+
+Vì token Pancake / key OpenAI / secret Supabase đều nằm phía server, người lạ gọi
+endpoint là đang dùng **danh nghĩa và ví tiền của bạn**.
+→ Thứ tự đúng: **thêm bảo mật trước, rồi mới mở ra ngoài.**
+
+### Cơ chế bảo mật API — 6 lớp
+
+**1. Xác thực — "ai đang gọi?"** (cốt lõi)
+
+| Kiểu | Mô tả | Hợp với dự án này? |
+| --- | --- | --- |
+| **API Key** | Chuỗi bí mật gửi kèm mỗi request | ✅ **nên dùng** — đơn giản, đủ cho máy gọi máy |
+| JWT | Đăng nhập → cấp token có hạn (vd 1 giờ) | Thừa, hợp khi có nhiều người dùng đăng nhập |
+| OAuth | Đăng nhập bằng Google/Facebook | Quá nặng |
+
+**2. Phân quyền — "được làm gì?"** → chỉ mở đúng `/api/chat` ra ngoài; `/data/...`
+và khung chat Pancake **không nhận key ngoài**, chỉ chạy nội bộ.
+
+**3. HTTPS** (bắt buộc) — chạy `http://` thì key bị gửi dạng **chữ trần**, ai đứng
+giữa đường truyền cũng đọc được rồi dùng lại. Tunnel đã cho HTTPS miễn phí sẵn.
+
+**4. Rate limit** — giới hạn vd **60 lần/phút/key**. Không có thì bị spam là
+**cháy tiền OpenAI** (mỗi lần gọi tốn 1 lượt embedding + 1 lượt gpt-4o-mini).
+
+**5. Giới hạn đầu vào** — chặn `text` quá dài (vd > 2000 ký tự) để khỏi ngốn token.
+
+**6. Ghi log** — ai gọi (key nào), lúc nào, hỏi gì → để truy vết khi có sự cố.
+
+### API Key hoạt động thế nào
+
+```
+1. Sinh key:      openssl rand -hex 32   →  a3f9c2e8...
+2. Lưu .env:      API_KEY=a3f9c2e8...
+3. Đưa key cho người kia (kênh riêng — KHÔNG dán lên chat/git)
+
+4. Mỗi lần gọi:
+   POST https://abc.trycloudflare.com/api/chat
+   Header:  X-API-Key: a3f9c2e8...
+   Body:    {"text": "magie uống lúc nào"}
+
+5. Server kiểm tra header:
+   ✅ khớp     → xử lý, trả {"reply": "..."}
+   ❌ sai/thiếu → 401 Unauthorized, KHÔNG làm gì
+```
+
+> **Chi tiết nhỏ nhưng quan trọng:** so sánh key phải dùng
+> `secrets.compare_digest`, **không** dùng `==`. Vì `==` dừng ngay khi gặp ký tự
+> khác nhau — kẻ tấn công đo thời gian phản hồi có thể dò ra từng ký tự của key.
+
+### Lỗi hay gặp — tránh
+
+| ❌ Đừng | Vì sao |
+| --- | --- |
+| Để key trong URL `?key=abc` | Bị ghi vào log server, lịch sử trình duyệt, header Referer |
+| Commit key lên git | Lộ vĩnh viễn — xoá rồi vẫn còn trong lịch sử git |
+| Key ngắn kiểu `123456` | Dò ra trong vài giây |
+| Dùng chung 1 key cho nhiều bên | Lộ một chỗ phải đổi hết, không biết ai làm lộ |
+
+### Thiết kế dự kiến
+
+Đủ và không thừa: **API Key qua header** + **HTTPS bằng tunnel** + **rate limit**
++ **chỉ mở mỗi `/api/chat`**. Khoảng 40–50 dòng, không cần thêm thư viện.
+
+```
+POST /api/chat          Header: X-API-Key: <key>
+Body:  {"text": "magie uống lúc nào ạ"}
+Trả:   {"reply": "Dạ uống sau ăn tối 30 phút ạ.",
+        "nguon": [{"cau_hoi": "...", "similarity": 0.728}]}
+```
+
+Trả kèm `nguon` để bên gọi biết câu trả lời **dựa trên dữ liệu nào** — hoặc biết
+là **không có dữ liệu** (khi ngưỡng lọc hết, `nguon` rỗng).
+
+Việc cần quyết khi làm: dùng **một key chung** hay **mỗi bên gọi một key riêng**
+(key riêng thì thu hồi từng bên được, không ảnh hưởng bên khác).
 
 ## Chạy 24/7 (dùng máy này làm server)
 
