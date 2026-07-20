@@ -4,6 +4,7 @@ import base64
 import binascii
 import json
 import re
+import time
 from html import unescape
 
 import httpx
@@ -84,12 +85,24 @@ def _normalize(page: dict, group_key: str, group_label: str) -> dict:
     }
 
 
-async def list_pages() -> list[dict]:
+# Bộ nhớ đệm danh sách page. Gần như mọi trang đều cần danh sách này (kể cả các
+# lần auto-refresh mỗi 8–10 giây), trong khi nó rất ít thay đổi. Không cache thì
+# gọi Pancake dồn dập và bị chặn (HTTP 429/5xx) khi mở nhiều tab cùng lúc.
+_PAGES_CACHE: dict = {"at": 0.0, "data": []}
+_PAGES_TTL = 60.0  # giây
+
+
+async def list_pages(force: bool = False) -> list[dict]:
     """Trả về danh sách page mà access token có quyền truy cập.
 
     Mỗi phần tử là dict đã chuẩn hóa (xem `_normalize`), gắn kèm nhóm
     (đang hoạt động / chưa kích hoạt / ẩn / không quyền).
+    Kết quả được nhớ đệm 60 giây; `force=True` để lấy mới ngay.
     """
+    now = time.monotonic()
+    if not force and _PAGES_CACHE["data"] and now - _PAGES_CACHE["at"] < _PAGES_TTL:
+        return _PAGES_CACHE["data"]
+
     data = await _get("pages")
     categorized = data.get("categorized", {}) or {}
 
@@ -98,6 +111,8 @@ async def list_pages() -> list[dict]:
         for page in categorized.get(key, []) or []:
             if isinstance(page, dict):
                 pages.append(_normalize(page, key, label))
+
+    _PAGES_CACHE["at"], _PAGES_CACHE["data"] = now, pages
     return pages
 
 

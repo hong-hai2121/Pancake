@@ -1,13 +1,18 @@
-"""Dựng HTML cho giao diện quản lý dữ liệu bot (server-side render).
+"""Dựng HTML cho mục "Dữ liệu bot" — 3 tab (server-side render).
 
-Hai màn hình:
   - Kịch bản (bảng `kich_ban`): các bước bán hàng theo tên kịch bản.
   - Hội thoại mẫu (bảng `hoi_thoai_mau`): cặp hỏi–đáp dùng cho RAG.
-Cả hai đều: form thêm mới (tự tạo embedding khi lưu) + danh sách đã có + nút xoá.
+  - Thử tin nhắn: mô phỏng tin khách để xem bot truy xuất được gì.
+Hai tab đầu đều có: form thêm mới (tự tạo embedding khi lưu) + danh sách + nút xoá.
+
+Phần khung (menu trái, topbar, CSS) lấy từ `app.ui.shell`.
 """
 
 from datetime import datetime, timezone
 from html import escape
+
+from app.ui.shell import flash as flash_bar
+from app.ui.shell import render_shell, tabs_bar
 
 
 def _fmt_dt(iso: str) -> str:
@@ -23,28 +28,33 @@ def _fmt_dt(iso: str) -> str:
     return dt.strftime("%H:%M %d/%m/%Y")
 
 
-def _nav(active: str) -> str:
-    """Thanh chuyển màn hình; `active` = 'kich-ban' | 'hoi-thoai' | 'thu'."""
-    def tab(href: str, label: str, key: str) -> str:
-        cls = "tab on" if key == active else "tab"
-        return f'<a class="{cls}" href="{href}">{label}</a>'
+# 3 tab của mục "Dữ liệu bot": (đường dẫn, nhãn, khoá active)
+_TABS = [
+    ("/data/kich-ban", "Kịch bản", "kich-ban"),
+    ("/data/hoi-thoai", "Hội thoại mẫu", "hoi-thoai"),
+    ("/data/thu-tin-nhan", "Thử tin nhắn", "thu"),
+]
 
-    return (
-        '<nav class="tabs">'
-        + tab("/data/kich-ban", "Kịch bản", "kich-ban")
-        + tab("/data/hoi-thoai", "Hội thoại mẫu", "hoi-thoai")
-        + tab("/data/thu-tin-nhan", "Thử tin nhắn", "thu")
-        + "</nav>"
+
+def _page(
+    title: str,
+    active: str,
+    sub: str,
+    intro: str,
+    form: str,
+    listing: str,
+    flash_html: str = "",
+) -> str:
+    """Bọc nội dung 1 tab vào khung chung (menu trái + topbar + dải tab)."""
+    intro_html = f'<p class="intro">{intro}</p>' if intro else ""
+    return render_shell(
+        title=f"Dữ liệu bot — {title}",
+        active="data",
+        heading=title,
+        sub=sub,
+        tabs=tabs_bar(_TABS, active),
+        body=flash_html + intro_html + form + listing,
     )
-
-
-def _flash(ok: str, error: str) -> str:
-    """Dải thông báo kết quả sau khi thêm/xoá."""
-    if ok:
-        return f'<div class="flash ok">✓ {escape(ok)}</div>'
-    if error:
-        return f'<div class="flash err">✕ {escape(error)}</div>'
-    return ""
 
 
 def _del_form(action: str) -> str:
@@ -117,14 +127,15 @@ def render_scripts(rows: list[dict], ok: str = "", error: str = "") -> str:
         <button type="submit">Thêm bước kịch bản</button>
       </form>"""
 
-    return _TEMPLATE.format(
+    return _page(
         title="Kịch bản",
-        nav=_nav("kich-ban"),
-        flash=_flash(ok, error),
+        active="kich-ban",
+        sub="Các bước kịch bản bán hàng · bảng <code>kich_ban</code>",
         intro="Mỗi dòng là một <b>bước</b> trong kịch bản bán hàng. Khi lưu, nội "
               "dung được tự động tạo embedding.",
         form=form,
         listing=listing,
+        flash_html=flash_bar(ok, error),
     )
 
 
@@ -165,14 +176,15 @@ def render_qa(rows: list[dict], ok: str = "", error: str = "") -> str:
         <button type="submit">Thêm cặp hỏi–đáp</button>
       </form>"""
 
-    return _TEMPLATE.format(
+    return _page(
         title="Hội thoại mẫu",
-        nav=_nav("hoi-thoai"),
-        flash=_flash(ok, error),
+        active="hoi-thoai",
+        sub="Kho ngữ cảnh cho RAG · bảng <code>hoi_thoai_mau</code>",
         intro="Cặp hỏi–đáp dùng cho <b>RAG</b>: khi khách nhắn, bot tìm câu hỏi "
               "giống nhất ở đây để lấy ngữ cảnh trả lời. Câu hỏi được tạo embedding.",
         form=form,
         listing=listing,
+        flash_html=flash_bar(ok, error),
     )
 
 
@@ -230,15 +242,14 @@ def render_simulate(
       </form>"""
 
     if error:
-        return _TEMPLATE.format(
-            title="Thử tin nhắn", nav=_nav("thu"),
-            flash=f'<div class="flash err">✕ {escape(error)}</div>',
-            intro=_SIM_INTRO, form=form, listing="")
+        return _page(
+            title="Thử tin nhắn", active="thu", sub=_SIM_SUB, intro=_SIM_INTRO,
+            form=form, listing="", flash_html=flash_bar(error=error))
 
     if not q or result is None:
-        return _TEMPLATE.format(
-            title="Thử tin nhắn", nav=_nav("thu"), flash="",
-            intro=_SIM_INTRO, form=form,
+        return _page(
+            title="Thử tin nhắn", active="thu", sub=_SIM_SUB, intro=_SIM_INTRO,
+            form=form,
             listing='<p class="empty">Nhập một tin nhắn rồi bấm '
                     '<b>Thử truy xuất</b> để xem bot lấy được gì từ database.</p>')
 
@@ -338,10 +349,12 @@ def render_simulate(
                  '<span class="count">gpt-4o-mini</span></h3>'
                  f'<div class="card">{body}</div>')
 
-    return _TEMPLATE.format(
-        title="Thử tin nhắn", nav=_nav("thu"), flash="",
-        intro=_SIM_INTRO, form=form, listing=step1 + step2 + step3 + step4)
+    return _page(
+        title="Thử tin nhắn", active="thu", sub=_SIM_SUB, intro=_SIM_INTRO,
+        form=form, listing=step1 + step2 + step3 + step4)
 
+
+_SIM_SUB = "Mô phỏng tin khách để kiểm tra bot truy xuất được gì (chỉ đọc)"
 
 _SIM_INTRO = (
     "Gõ một tin nhắn <b>giả làm khách</b> để xem bot moi được dữ liệu gì từ "
@@ -352,145 +365,14 @@ _SIM_INTRO = (
 
 def render_error(message: str) -> str:
     """Trang lỗi khi không đọc được dữ liệu (vd Supabase lỗi)."""
-    return _TEMPLATE.format(
+    return _page(
         title="Lỗi",
-        nav=_nav(""),
-        flash=f'<div class="flash err">✕ {escape(message)}</div>',
-        intro="",
+        active="",
+        sub="Không đọc được dữ liệu từ Supabase",
+        intro="Kiểm tra <code>SUPABASE_URL</code> / <code>SUPABASE_KEY</code> trong "
+              "<code>.env</code>, hoặc chạy <code>scripts/rpc_match.sql</code> nếu "
+              "thiếu hàm RPC.",
         form="",
         listing="",
+        flash_html=flash_bar(error=message),
     )
-
-
-_TEMPLATE = """<!doctype html>
-<html lang="vi">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} — Dữ liệu bot</title>
-<style>
-  :root {{
-    --bg: #f5f6f8; --card: #ffffff; --text: #1f2328; --sub: #6b7280;
-    --border: #e5e7eb; --accent: #2563eb; --ok: #16a34a; --err: #dc2626;
-  }}
-  @media (prefers-color-scheme: dark) {{
-    :root {{
-      --bg: #0d1117; --card: #161b22; --text: #e6edf3; --sub: #9198a1;
-      --border: #30363d; --accent: #4493f8; --ok: #3fb950; --err: #f85149;
-    }}
-  }}
-  * {{ box-sizing: border-box; }}
-  body {{
-    margin: 0; background: var(--bg); color: var(--text); padding: 20px;
-    font-family: -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
-    line-height: 1.45;
-  }}
-  .wrap {{ max-width: 760px; margin: 0 auto; }}
-  h1 {{ font-size: 20px; margin: 0 0 10px; }}
-  .tabs {{ display: flex; gap: 8px; margin-bottom: 14px; }}
-  .tab {{
-    padding: 7px 14px; border-radius: 20px; text-decoration: none;
-    border: 1px solid var(--border); color: var(--sub); font-size: 14px;
-  }}
-  .tab.on {{ background: var(--accent); border-color: var(--accent); color: #fff;
-             font-weight: 600; }}
-  .intro {{ color: var(--sub); font-size: 13px; margin-bottom: 14px; }}
-  .card {{
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 16px;
-  }}
-  .form label {{ display: block; font-size: 13px; color: var(--sub);
-                 margin-bottom: 10px; }}
-  .form input, .form textarea {{
-    display: block; width: 100%; margin-top: 4px; padding: 8px 10px;
-    border: 1px solid var(--border); border-radius: 8px; font: inherit;
-    font-size: 14px; background: var(--bg); color: var(--text); resize: vertical;
-  }}
-  .grid2 {{ display: flex; gap: 12px; flex-wrap: wrap; }}
-  .grid2 > label {{ flex: 1 1 200px; }}
-  .form button {{
-    border: 0; background: var(--accent); color: #fff; border-radius: 8px;
-    padding: 9px 18px; font: inherit; font-weight: 600; cursor: pointer;
-  }}
-  .grp {{ font-size: 14px; margin: 22px 0 8px; color: var(--sub);
-          text-transform: uppercase; letter-spacing: .03em; }}
-  .count {{ background: var(--border); color: var(--text); border-radius: 10px;
-            padding: 1px 8px; font-size: 12px; margin-left: 4px;
-            text-transform: none; letter-spacing: 0; }}
-  .list {{ list-style: none; margin: 0; padding: 0; display: flex;
-           flex-direction: column; gap: 8px; }}
-  .row {{
-    display: flex; gap: 12px; align-items: flex-start; background: var(--card);
-    border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
-  }}
-  .step {{
-    flex: 0 0 auto; min-width: 28px; height: 28px; border-radius: 8px;
-    background: var(--accent); color: #fff; font-weight: 700; font-size: 13px;
-    display: grid; place-items: center;
-  }}
-  .rbody {{ flex: 1; min-width: 0; }}
-  .rtext {{ font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }}
-  .qa .q {{ font-weight: 600; font-size: 14px; overflow-wrap: anywhere; }}
-  .qa .a {{ font-size: 14px; margin-top: 2px; color: var(--text);
-            overflow-wrap: anywhere; }}
-  .rmeta {{ color: var(--sub); font-size: 12px; margin-top: 4px; }}
-  .del button {{
-    border: 1px solid var(--border); background: transparent; color: var(--err);
-    border-radius: 8px; width: 30px; height: 30px; cursor: pointer;
-    font-size: 14px; line-height: 1;
-  }}
-  .del button:hover {{ border-color: var(--err); }}
-  .flash {{ padding: 9px 12px; border-radius: 8px; font-size: 13px;
-            margin-bottom: 12px; }}
-  .flash.ok {{ background: color-mix(in srgb, var(--ok) 15%, transparent);
-               color: var(--ok); }}
-  .flash.err {{ background: color-mix(in srgb, var(--err) 15%, transparent);
-                color: var(--err); }}
-  .empty {{ background: var(--card); border: 1px solid var(--border);
-            border-radius: 12px; padding: 20px; color: var(--sub); }}
-  .mono {{ font-size: 13px; }}
-  .mono .lbl {{ color: var(--sub); font-size: 12px; margin-top: 8px; }}
-  .qline {{
-    font-family: ui-monospace, Consolas, monospace; font-size: 12px;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-    padding: 6px 9px; margin-bottom: 6px; overflow-x: auto; white-space: nowrap;
-  }}
-  code {{ font-family: ui-monospace, Consolas, monospace; font-size: 12px;
-          background: var(--bg); padding: 1px 5px; border-radius: 5px; }}
-  .note {{ color: var(--sub); font-size: 12px; margin: 10px 0 0; }}
-  .score {{ flex: 0 0 auto; width: 92px; text-align: right; }}
-  .snum {{ font-size: 12px; color: var(--sub);
-           font-family: ui-monospace, Consolas, monospace; }}
-  .sbar {{ display: block; height: 5px; border-radius: 3px;
-           background: var(--border); margin-top: 4px; overflow: hidden; }}
-  .sbar i {{ display: block; height: 100%; border-radius: 3px; }}
-  .check {{ display: flex; align-items: center; gap: 8px; font-size: 13px;
-            color: var(--sub); margin-bottom: 12px; }}
-  .check input {{ width: auto; margin: 0; }}
-  .answer {{
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    border-left: 3px solid var(--accent); border-radius: 8px;
-    padding: 12px 14px; font-size: 14px; white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }}
-  details {{ margin-top: 10px; font-size: 13px; color: var(--sub); }}
-  summary {{ cursor: pointer; }}
-  .prompt {{
-    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-    padding: 10px; margin-top: 8px; font-size: 12px; white-space: pre-wrap;
-    overflow-x: auto; font-family: ui-monospace, Consolas, monospace;
-    color: var(--text);
-  }}
-</style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>Dữ liệu bot — {title}</h1>
-    {nav}
-    {flash}
-    <p class="intro">{intro}</p>
-    {form}
-    {listing}
-  </div>
-</body>
-</html>"""

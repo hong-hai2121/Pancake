@@ -1,8 +1,14 @@
-"""Dựng HTML cho webview hiển thị danh sách page (server-side render)."""
+"""Dựng HTML cho các màn hình Pancake (server-side render).
+
+Chỉ dựng phần THÂN trang rồi bọc bằng `app.ui.shell.render_shell` để mọi màn
+hình dùng chung menu trái + topbar + stylesheet.
+"""
 
 from datetime import datetime, timezone
 from html import escape
 from urllib.parse import urlencode
+
+from app.ui.shell import render_shell
 
 # Bảng màu cho avatar chữ cái đầu (ổn định theo id).
 _AVATAR_COLORS = [
@@ -42,14 +48,16 @@ def _page_card(page: dict) -> str:
         badges.append(f'<span class="badge role">{escape(str(role))}</span>')
     badges_html = "".join(badges)
 
+    # Bấm vào thẻ -> mở màn Tin nhắn của page đó; tên page vẫn link ra Facebook.
     return f"""
-      <li class="card">
+      <li class="card link-wrap">
         {_avatar(page)}
         <div class="info">
-          <a class="name" href="{fb_url}" target="_blank" rel="noopener">{name}</a>
+          <a class="name" href="/tin-nhan?page_id={pid}">{name}</a>
           <div class="sub">{subtitle}</div>
           <div class="badges">{badges_html}</div>
         </div>
+        <a class="btn" href="{fb_url}" target="_blank" rel="noopener">Facebook ↗</a>
       </li>"""
 
 
@@ -68,9 +76,8 @@ def _fmt_exp(exp) -> str:
 
 
 def render_pages(pages: list[dict], owner: dict | None = None) -> str:
-    """Trang HTML hoàn chỉnh liệt kê các page, gom theo nhóm."""
+    """Trang liệt kê các page token có quyền, gom theo nhóm."""
     owner = owner or {}
-    total = len(pages)
 
     # Gom theo nhóm, giữ thứ tự xuất hiện.
     groups: dict[str, list[dict]] = {}
@@ -81,22 +88,26 @@ def render_pages(pages: list[dict], owner: dict | None = None) -> str:
     for label, items in groups.items():
         cards = "".join(_page_card(p) for p in items)
         sections.append(
-            f'<h2 class="group">{escape(label)} '
+            f'<h2 class="grp">{escape(label)} '
             f'<span class="count">{len(items)}</span></h2>'
             f'<ul class="list">{cards}</ul>'
         )
     body = "".join(sections) or '<p class="empty">Không có page nào.</p>'
 
-    owner_line = ""
+    sub_bits = [f"Tổng cộng <b>{len(pages)}</b> page"]
     if owner.get("name"):
         exp = _fmt_exp(owner.get("exp"))
-        exp_html = f' · token hết hạn {exp}' if exp else ""
-        owner_line = (
-            f'<div class="owner">Tài khoản: <b>{escape(str(owner["name"]))}</b>'
-            f'{exp_html}</div>'
-        )
+        sub_bits.append(f'tài khoản <b>{escape(str(owner["name"]))}</b>')
+        if exp:
+            sub_bits.append(f"token hết hạn {exp}")
 
-    return _PAGE_TEMPLATE.format(total=total, owner=owner_line, body=body)
+    return render_shell(
+        title="Danh sách Page",
+        active="messages",
+        heading="Danh sách Page",
+        sub=" · ".join(sub_bits),
+        body=body,
+    )
 
 
 def _parse_dt(iso: str):
@@ -145,7 +156,28 @@ def _fmt_dt(iso: str) -> str:
     return dt.strftime("%H:%M · %d/%m/%Y") if dt else ""
 
 
-def _conv_card(conv: dict, page_id: str) -> str:
+def conv_href(conv: dict, page_id: str, mode: str = "pancake") -> str:
+    """Đường dẫn mở 1 hội thoại.
+
+    mode = "pancake" -> trang chat riêng cũ (/pancake/.../conversations/...)
+    mode = "inbox"   -> màn Tin nhắn 2 cột (/tin-nhan?page_id=&conv_id=...)
+    """
+    cust = conv.get("customer_id", "")
+    if mode == "inbox":
+        query = urlencode(
+            {"page_id": page_id, "conv_id": conv["conv_id"], "customer_id": cust}
+        )
+        return f"/tin-nhan?{query}"
+    query = urlencode({"customer_id": cust})
+    return (
+        f'/pancake/pages/{escape(str(page_id))}/conversations/'
+        f'{escape(conv["conv_id"])}?{query}'
+    )
+
+
+def _conv_card(
+    conv: dict, page_id: str, mode: str = "pancake", active: str = ""
+) -> str:
     """Dựng 1 thẻ hội thoại (link bấm vào để mở trang chat), có avatar, tên,
     tin nhắn cuối, thời gian tương đối và badge số tin / chưa đọc."""
     name = escape(conv["name"])
@@ -158,17 +190,13 @@ def _conv_card(conv: dict, page_id: str) -> str:
         f'<span class="unread" title="{unread} tin chưa đọc">{unread}</span>'
         if unread else ""
     )
-    query = urlencode({"customer_id": conv.get("customer_id", "")})
-    href = (
-        f'/pancake/pages/{escape(str(page_id))}/conversations/'
-        f'{escape(conv["conv_id"])}?{query}'
-    )
+    cls = "card link on" if conv["conv_id"] == active else "card link"
     return f"""
       <li>
-        <a class="card" href="{href}">
+        <a class="{cls}" href="{conv_href(conv, page_id, mode)}">
           {_avatar(who)}
           <div class="info">
-            <div class="row">
+            <div class="crow">
               <span class="name">{name}</span>
               <span class="time" title="{abs_dt}">{rel}</span>
             </div>
@@ -182,10 +210,16 @@ def _conv_card(conv: dict, page_id: str) -> str:
       </li>"""
 
 
-def render_recent_list(convs: list[dict], page_id: str, msg_type: str) -> str:
+def render_recent_list(
+    convs: list[dict],
+    page_id: str,
+    msg_type: str,
+    mode: str = "pancake",
+    active: str = "",
+) -> str:
     """Chỉ phần danh sách thẻ (dùng cho cả trang đầy đủ lẫn polling fragment)."""
     kind = "nhắn tin" if msg_type == "INBOX" else "bình luận"
-    cards = "".join(_conv_card(c, page_id) for c in convs)
+    cards = "".join(_conv_card(c, page_id, mode, active) for c in convs)
     return (
         f'<ul class="list">{cards}</ul>'
         if convs
@@ -196,15 +230,19 @@ def render_recent_list(convs: list[dict], page_id: str, msg_type: str) -> str:
 def render_recent(
     page_id: str, page: dict | None, convs: list[dict], msg_type: str, limit: int
 ) -> str:
-    """Trang HTML: N người nhắn tin mới nhất của 1 page."""
+    """Trang: N người nhắn tin mới nhất của 1 page (danh sách 1 cột)."""
     page_name = escape((page or {}).get("name") or f"Page {page_id}")
     kind = "nhắn tin" if msg_type == "INBOX" else "bình luận"
-    return _RECENT_TEMPLATE.format(
-        page_name=page_name,
-        page_id=escape(str(page_id)),
-        heading=f"{len(convs)} người {kind} mới nhất",
-        limit=limit,
-        body=render_recent_list(convs, page_id, msg_type),
+    return render_shell(
+        title=page_name,
+        active="messages",
+        heading=page_name,
+        sub=f'{len(convs)} người {kind} mới nhất · ID {escape(str(page_id))} · '
+            f'<span class="live"><span class="dot"></span>tự cập nhật</span>',
+        actions=f'<a class="btn" href="/tin-nhan?page_id={escape(str(page_id))}">'
+                f'Mở dạng 2 cột</a>',
+        body=f'<div id="feed">{render_recent_list(convs, page_id, msg_type)}</div>',
+        script=_POLL_JS.replace("__TARGET__", "feed").replace("__MS__", "10000"),
     )
 
 
@@ -242,6 +280,22 @@ def render_thread(messages: list[dict]) -> str:
         '<p class="empty">Chưa có tin nhắn.</p>'
 
 
+def render_composer(action_url: str, customer_id: str, extra: str = "") -> str:
+    """Ô soạn tin ở đáy khung chat (Enter gửi, Shift+Enter xuống dòng).
+
+    `extra` = HTML các input ẩn thêm (vd page_id/conv_id khi form nằm ở màn
+    Tin nhắn 2 cột, nơi đường dẫn POST không chứa sẵn 2 giá trị đó).
+    """
+    return f"""
+      <form class="composer" method="post" action="{action_url}">
+        <input type="hidden" name="customer_id" value="{escape(str(customer_id or ''))}">
+        {extra}
+        <textarea name="message" rows="1" placeholder="Nhập tin nhắn trả lời…"
+                  autocomplete="off" required></textarea>
+        <button type="submit">Gửi</button>
+      </form>"""
+
+
 def render_conversation(
     page_id: str,
     page: dict | None,
@@ -251,384 +305,104 @@ def render_conversation(
     sent: bool = False,
     error: str = "",
 ) -> str:
-    """Trang HTML: xem toàn bộ hội thoại + form trả lời (mô phỏng Pancake)."""
+    """Trang xem toàn bộ hội thoại + form trả lời (mô phỏng Pancake)."""
     page_name = escape((page or {}).get("name") or f"Page {page_id}")
     cust_name = escape(convo.get("customer_name") or "Khách")
-    thread = render_thread(convo.get("messages") or [])
+    action_url = (
+        f"/pancake/pages/{escape(str(page_id))}/conversations/"
+        f"{escape(str(conv_id))}/reply"
+    )
 
-    flash = ""
+    flash_html = ""
     if sent:
-        flash = '<div class="flash ok">✓ Đã gửi tin nhắn</div>'
+        flash_html = '<div class="flash ok" style="margin:12px 22px 0">✓ Đã gửi tin nhắn</div>'
     elif error:
-        flash = f'<div class="flash err">✕ {escape(error)}</div>'
+        flash_html = (
+            f'<div class="flash err" style="margin:12px 22px 0">✕ {escape(error)}</div>'
+        )
 
-    return _CONVO_TEMPLATE.format(
-        page_name=page_name,
-        cust_name=cust_name,
-        back_url=f"/pancake/pages/{escape(str(page_id))}/recent",
-        action_url=f"/pancake/pages/{escape(str(page_id))}/conversations/"
-                   f"{escape(str(conv_id))}/reply",
-        customer_id=escape(str(customer_id or "")),
-        thread=thread,
-        flash=flash,
+    body = (
+        '<div class="pane">'
+        + flash_html
+        + f'<div class="thread" id="thread">'
+          f'{render_thread(convo.get("messages") or [])}</div>'
+        + render_composer(action_url, customer_id)
+        + "</div>"
+    )
+    return render_shell(
+        title=f"{cust_name} — {page_name}",
+        active="messages",
+        heading=cust_name,
+        sub=f'{page_name} · <span class="live"><span class="dot"></span>'
+            f"tự cập nhật</span>",
+        actions=f'<a class="btn" href="/pancake/pages/{escape(str(page_id))}/recent">'
+                f"← Danh sách</a>",
+        body=body,
+        full=True,
+        script=_CHAT_JS + _POLL_JS.replace("__TARGET__", "thread").replace(
+            "__MS__", "8000"
+        ),
     )
 
 
 def render_error(message: str) -> str:
     """Trang lỗi dùng chung khi không tải được dữ liệu (vd Pancake API lỗi)."""
-    return _PAGE_TEMPLATE.format(
-        total=0,
-        owner="",
-        body=f'<div class="error"><b>Không tải được danh sách page</b>'
-             f'<p>{escape(message)}</p></div>',
+    return render_shell(
+        title="Lỗi",
+        active="messages",
+        heading="Không tải được dữ liệu từ Pancake",
+        body=f'<div class="flash err">✕ {escape(message)}</div>'
+             '<p class="note">Kiểm tra <code>PANCAKE_ACCESS_TOKEN</code> trong '
+             "<code>.env</code> (token có thể đã hết hạn) rồi tải lại trang.</p>",
     )
 
 
-_PAGE_TEMPLATE = """<!doctype html>
-<html lang="vi">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pancake — Danh sách Page</title>
-<style>
-  :root {{
-    --bg: #f5f6f8; --card: #ffffff; --text: #1f2328; --sub: #6b7280;
-    --border: #e5e7eb; --accent: #2563eb;
-  }}
-  @media (prefers-color-scheme: dark) {{
-    :root {{
-      --bg: #0d1117; --card: #161b22; --text: #e6edf3; --sub: #9198a1;
-      --border: #30363d; --accent: #4493f8;
-    }}
-  }}
-  * {{ box-sizing: border-box; }}
-  body {{
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
-    padding: 20px; line-height: 1.45;
-  }}
-  .wrap {{ max-width: 720px; margin: 0 auto; }}
-  header {{ margin-bottom: 18px; }}
-  h1 {{ font-size: 20px; margin: 0 0 4px; }}
-  .owner, .total {{ color: var(--sub); font-size: 13px; }}
-  .group {{
-    font-size: 14px; text-transform: uppercase; letter-spacing: .04em;
-    color: var(--sub); margin: 22px 0 8px;
-  }}
-  .count {{
-    background: var(--border); color: var(--text); border-radius: 10px;
-    padding: 1px 8px; font-size: 12px; margin-left: 4px;
-  }}
-  .list {{ list-style: none; margin: 0; padding: 0;
-           display: flex; flex-direction: column; gap: 8px; }}
-  .card {{
-    display: flex; gap: 12px; align-items: center; background: var(--card);
-    border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
-  }}
-  .avatar {{
-    flex: 0 0 auto; width: 42px; height: 42px; border-radius: 50%;
-    display: grid; place-items: center; color: #fff; font-weight: 700;
-    font-size: 18px;
-  }}
-  .info {{ min-width: 0; }}
-  .name {{
-    font-weight: 600; color: var(--text); text-decoration: none;
-    display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }}
-  .name:hover {{ color: var(--accent); text-decoration: underline; }}
-  .sub {{ color: var(--sub); font-size: 12px; margin-top: 1px; }}
-  .badges {{ margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }}
-  .badge {{
-    font-size: 11px; padding: 2px 8px; border-radius: 20px;
-    border: 1px solid var(--border);
-  }}
-  .badge.platform {{ text-transform: capitalize; color: var(--accent); }}
-  .badge.role {{ color: var(--sub); }}
-  .empty, .error {{
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 20px; color: var(--sub);
-  }}
-  .error b {{ color: #dc2626; }}
-</style>
-</head>
-<body>
-  <div class="wrap">
-    <header>
-      <h1>Danh sách Page có quyền truy cập</h1>
-      <div class="total">Tổng cộng <b>{total}</b> page</div>
-      {owner}
-    </header>
-    {body}
-  </div>
-</body>
-</html>"""
+# --- JS dùng chung -----------------------------------------------------------
+# Tự tải lại nội dung: gọi endpoint /fragment cùng đường dẫn, chỉ thay DOM khi
+# HTML thực sự đổi (tránh nháy màn hình và mất ảnh đang tải).
+_POLL_JS = """
+(function(){
+  var el = document.getElementById('__TARGET__');
+  if(!el) return;
+  var url = location.pathname + '/fragment' + location.search;
+  var last = null;
+  function atBottom(){ return el.scrollHeight - el.scrollTop - el.clientHeight < 60; }
+  function tick(){
+    if (document.hidden) return;
+    fetch(url, {cache:'no-store'})
+      .then(function(r){ return r.ok ? r.text() : null; })
+      .then(function(html){
+        if (html == null) return;
+        if (last === null) { last = html; return; }   // mồi lần đầu
+        if (html !== last) {
+          var stick = atBottom();
+          el.innerHTML = html; last = html;
+          if (stick) el.scrollTop = el.scrollHeight;
+        }
+      })
+      .catch(function(){});
+  }
+  setInterval(tick, __MS__);
+})();
+"""
 
-
-_RECENT_TEMPLATE = """<!doctype html>
-<html lang="vi">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{heading} — {page_name}</title>
-<style>
-  :root {{
-    --bg: #f5f6f8; --card: #ffffff; --text: #1f2328; --sub: #6b7280;
-    --border: #e5e7eb; --accent: #2563eb; --unread: #dc2626;
-  }}
-  @media (prefers-color-scheme: dark) {{
-    :root {{
-      --bg: #0d1117; --card: #161b22; --text: #e6edf3; --sub: #9198a1;
-      --border: #30363d; --accent: #4493f8; --unread: #f85149;
-    }}
-  }}
-  * {{ box-sizing: border-box; }}
-  body {{
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
-    padding: 20px; line-height: 1.45;
-  }}
-  .wrap {{ max-width: 640px; margin: 0 auto; }}
-  header {{ margin-bottom: 18px; }}
-  h1 {{ font-size: 20px; margin: 0 0 4px; }}
-  .sub {{ color: var(--sub); font-size: 13px; }}
-  .list {{ list-style: none; margin: 0; padding: 0;
-           display: flex; flex-direction: column; gap: 8px; }}
-  .card {{
-    display: flex; gap: 12px; align-items: flex-start; background: var(--card);
-    border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px;
-    text-decoration: none; color: inherit; transition: border-color .15s;
-  }}
-  .card:hover {{ border-color: var(--accent); }}
-  .avatar {{
-    flex: 0 0 auto; width: 42px; height: 42px; border-radius: 50%;
-    display: grid; place-items: center; color: #fff; font-weight: 700;
-    font-size: 18px;
-  }}
-  .info {{ min-width: 0; flex: 1; }}
-  .row {{ display: flex; align-items: baseline; gap: 8px; }}
-  .name {{
-    font-weight: 600; color: var(--text);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }}
-  .time {{ color: var(--sub); font-size: 12px; margin-left: auto;
-           flex: 0 0 auto; white-space: nowrap; }}
-  .snippet {{
-    color: var(--sub); font-size: 13px; margin-top: 2px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }}
-  .badges {{ margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap;
-             align-items: center; }}
-  .badge {{
-    font-size: 11px; padding: 2px 8px; border-radius: 20px;
-    border: 1px solid var(--border); color: var(--sub);
-  }}
-  .unread {{
-    background: var(--unread); color: #fff; border-radius: 20px;
-    font-size: 11px; font-weight: 700; padding: 2px 8px; min-width: 20px;
-    text-align: center;
-  }}
-  .empty {{
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 20px; color: var(--sub);
-  }}
-  .live {{ display: inline-flex; align-items: center; gap: 5px; }}
-  .dot {{ width: 8px; height: 8px; border-radius: 50%; background: #16a34a;
-          box-shadow: 0 0 0 0 rgba(22,163,74,.6); animation: pulse 1.8s infinite; }}
-  @keyframes pulse {{
-    0% {{ box-shadow: 0 0 0 0 rgba(22,163,74,.5); }}
-    70% {{ box-shadow: 0 0 0 6px rgba(22,163,74,0); }}
-    100% {{ box-shadow: 0 0 0 0 rgba(22,163,74,0); }}
-  }}
-</style>
-</head>
-<body>
-  <div class="wrap">
-    <header>
-      <h1>{page_name}</h1>
-      <div class="sub">{heading} · ID {page_id}
-        · <span class="live"><span class="dot"></span>tự cập nhật</span></div>
-    </header>
-    <div id="feed">{body}</div>
-  </div>
-  <script>
-    (function () {{
-      var feed = document.getElementById('feed');
-      if (!feed) return;
-      var url = location.pathname + '/fragment' + location.search;
-      var last = null;               // "mồi" lần đầu, không thay để tránh nháy
-      function tick() {{
-        if (document.hidden) return;
-        fetch(url, {{ cache: 'no-store' }})
-          .then(function (r) {{ return r.ok ? r.text() : null; }})
-          .then(function (html) {{
-            if (html == null) return;
-            if (last === null) {{ last = html; return; }}
-            if (html !== last) {{ feed.innerHTML = html; last = html; }}
-          }})
-          .catch(function () {{}});
-      }}
-      setInterval(tick, 10000);      // 10 giây/lần
-    }})();
-  </script>
-</body>
-</html>"""
-
-
-_CONVO_TEMPLATE = """<!doctype html>
-<html lang="vi">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{cust_name} — {page_name}</title>
-<style>
-  :root {{
-    --bg: #f5f6f8; --card: #ffffff; --text: #1f2328; --sub: #6b7280;
-    --border: #e5e7eb; --accent: #2563eb; --in: #eceef1; --out: #2563eb;
-    --ok: #16a34a; --err: #dc2626;
-  }}
-  @media (prefers-color-scheme: dark) {{
-    :root {{
-      --bg: #0d1117; --card: #161b22; --text: #e6edf3; --sub: #9198a1;
-      --border: #30363d; --accent: #4493f8; --in: #21262d; --out: #2f6fed;
-      --ok: #3fb950; --err: #f85149;
-    }}
-  }}
-  * {{ box-sizing: border-box; }}
-  html, body {{ height: 100%; }}
-  body {{
-    margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, "Segoe UI", Roboto, system-ui, sans-serif;
-    line-height: 1.45;
-  }}
-  .wrap {{ max-width: 640px; margin: 0 auto; min-height: 100vh;
-           display: flex; flex-direction: column; }}
-  header {{
-    position: sticky; top: 0; z-index: 5; background: var(--card);
-    border-bottom: 1px solid var(--border); padding: 12px 16px;
-    display: flex; align-items: center; gap: 12px;
-  }}
-  .back {{ color: var(--accent); text-decoration: none; font-size: 20px;
-           line-height: 1; }}
-  .htext {{ min-width: 0; }}
-  .htext h1 {{ font-size: 16px; margin: 0; overflow: hidden;
-               text-overflow: ellipsis; white-space: nowrap; }}
-  .htext .sub {{ color: var(--sub); font-size: 12px; }}
-  .thread {{ flex: 1; padding: 16px; display: flex; flex-direction: column;
-             gap: 4px; overflow-y: auto; }}
-  .msg {{ display: flex; flex-direction: column; max-width: 78%;
-          margin-top: 8px; }}
-  .msg.in {{ align-self: flex-start; align-items: flex-start; }}
-  .msg.out {{ align-self: flex-end; align-items: flex-end; }}
-  .bubble {{
-    padding: 8px 12px; border-radius: 16px; font-size: 14px;
-    white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere;
-  }}
-  .msg.in .bubble {{ background: var(--in); color: var(--text);
-                     border-bottom-left-radius: 4px; }}
-  .msg.out .bubble {{ background: var(--out); color: #fff;
-                      border-bottom-right-radius: 4px; }}
-  .att {{ display: block; max-width: 220px; max-height: 220px;
-          border-radius: 10px; margin-top: 6px; }}
-  .att-link {{ display: inline-block; margin-top: 6px; font-size: 13px; }}
-  .mtime {{ color: var(--sub); font-size: 11px; margin: 2px 4px 0; }}
-  .empty {{ color: var(--sub); text-align: center; margin: 40px 0; }}
-  .flash {{ margin: 10px 16px 0; padding: 8px 12px; border-radius: 8px;
-            font-size: 13px; }}
-  .flash.ok {{ background: color-mix(in srgb, var(--ok) 15%, transparent);
-               color: var(--ok); }}
-  .flash.err {{ background: color-mix(in srgb, var(--err) 15%, transparent);
-                color: var(--err); }}
-  .composer {{
-    position: sticky; bottom: 0; background: var(--card);
-    border-top: 1px solid var(--border); padding: 10px 12px;
-    display: flex; gap: 8px; align-items: flex-end;
-  }}
-  .composer textarea {{
-    flex: 1; resize: none; border: 1px solid var(--border);
-    border-radius: 20px; padding: 9px 14px; font: inherit; font-size: 14px;
-    background: var(--bg); color: var(--text); max-height: 120px;
-  }}
-  .composer button {{
-    flex: 0 0 auto; border: 0; background: var(--accent); color: #fff;
-    border-radius: 20px; padding: 9px 18px; font: inherit; font-weight: 600;
-    cursor: pointer;
-  }}
-  .composer button:disabled {{ opacity: .5; cursor: default; }}
-  .live {{ display: inline-flex; align-items: center; gap: 5px; }}
-  .dot {{ width: 8px; height: 8px; border-radius: 50%; background: var(--ok);
-          box-shadow: 0 0 0 0 rgba(22,163,74,.6); animation: pulse 1.8s infinite; }}
-  @keyframes pulse {{
-    0% {{ box-shadow: 0 0 0 0 rgba(22,163,74,.5); }}
-    70% {{ box-shadow: 0 0 0 6px rgba(22,163,74,0); }}
-    100% {{ box-shadow: 0 0 0 0 rgba(22,163,74,0); }}
-  }}
-</style>
-</head>
-<body>
-  <div class="wrap">
-    <header>
-      <a class="back" href="{back_url}" title="Quay lại">&#8592;</a>
-      <div class="htext">
-        <h1>{cust_name}</h1>
-        <div class="sub">{page_name} · <span class="live">
-          <span class="dot"></span>tự cập nhật</span></div>
-      </div>
-    </header>
-    {flash}
-    <div class="thread" id="thread">
-      {thread}
-    </div>
-    <form class="composer" method="post" action="{action_url}">
-      <input type="hidden" name="customer_id" value="{customer_id}">
-      <textarea name="message" rows="1" placeholder="Nhập tin nhắn trả lời…"
-                autocomplete="off" required></textarea>
-      <button type="submit">Gửi</button>
-    </form>
-  </div>
-  <script>
-    // Cuộn xuống tin mới nhất khi mở
-    var t = document.getElementById('thread');
-    if (t) t.scrollTop = t.scrollHeight;
-    // Textarea tự giãn + Enter để gửi (Shift+Enter xuống dòng)
-    var ta = document.querySelector('.composer textarea');
-    var form = document.querySelector('.composer');
-    if (ta) {{
-      ta.addEventListener('input', function () {{
-        ta.style.height = 'auto';
-        ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
-      }});
-      ta.addEventListener('keydown', function (e) {{
-        if (e.key === 'Enter' && !e.shiftKey) {{
-          e.preventDefault();
-          if (ta.value.trim()) form.submit();
-        }}
-      }});
-    }}
-    // Poll tin nhắn mới, chỉ thay khi có thay đổi để khỏi nháy/mất ảnh
-    (function () {{
-      if (!t) return;
-      var url = location.pathname + '/fragment' + location.search;
-      var last = null;
-      function atBottom() {{
-        return t.scrollHeight - t.scrollTop - t.clientHeight < 60;
-      }}
-      function tick() {{
-        if (document.hidden) return;
-        fetch(url, {{ cache: 'no-store' }})
-          .then(function (r) {{ return r.ok ? r.text() : null; }})
-          .then(function (html) {{
-            if (html == null) return;
-            if (last === null) {{ last = html; return; }}
-            if (html !== last) {{
-              var stick = atBottom();
-              t.innerHTML = html; last = html;
-              if (stick) t.scrollTop = t.scrollHeight;
-            }}
-          }})
-          .catch(function () {{}});
-      }}
-      setInterval(tick, 8000);       // 8 giây/lần
-    }})();
-  </script>
-</body>
-</html>"""
+# Khung chat: cuộn xuống cuối khi mở, textarea tự giãn, Enter = gửi.
+_CHAT_JS = """
+(function(){
+  var t = document.getElementById('thread');
+  if (t) t.scrollTop = t.scrollHeight;
+  var ta = document.querySelector('.composer textarea');
+  var form = document.querySelector('.composer');
+  if (!ta) return;
+  ta.addEventListener('input', function(){
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 130) + 'px';
+  });
+  ta.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (ta.value.trim()) form.submit();
+    }
+  });
+})();
+"""

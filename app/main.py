@@ -11,9 +11,13 @@ from fastapi import FastAPI
 
 from app.data.routes import router as data_router
 from app.pancake.routes import router as pancake_router
+from app.ui.routes import router as ui_router
 
 # Khởi tạo ứng dụng FastAPI. `title` hiển thị ở trang tài liệu tự sinh /docs.
 app = FastAPI(title="FB Sales Bot")
+
+# Giao diện chính (menu trái): / , Bảng điều khiển, Tin nhắn, Khách hàng.
+app.include_router(ui_router)
 
 # Gắn toàn bộ route Pancake: webview danh sách page, xem hội thoại, trả lời,
 # auto-refresh fragment, poll... (xem app/pancake/routes.py).
