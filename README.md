@@ -91,6 +91,7 @@ Tin khách ──> bot/brain ──┬── bot/flow (kịch bản) ──> tr�
 | `EMBEDDING_PROVIDER=openai` · `EMBEDDING_MODEL=text-embedding-3-small` · `EMBEDDING_DIM=1536` | Vector hóa;**1536 phải khớp cột `embedding` trong DB**                               |
 | `SUPABASE_URL` · `SUPABASE_KEY`                                                                  | `SUPABASE_KEY` = **secret key** `sb_secret_...` (chạy phía server)                   |
 | `RAG_TOP_K=5` · `RAG_MATCH_THRESHOLD=0.0`                                                        | Số kết quả lấy về · ngưỡng lọc (đặt`0.6` để "không đủ giống thì trả rỗng") |
+| `RAG_SUGGEST_THRESHOLD=0.0`                                                                         | Bộ **sàng thô** cho nút **"Gợi ý trả lời"**: bỏ câu mẫu quá lạc đề TRƯỚC khi đưa lên GPT. Mặc định `0` = **tắt, để GPT tự quyết** "có câu nào phù hợp không". Đặt > 0 chỉ để tiết kiệm lượt gọi GPT |
 | `FB_*`, `GEMINI_API_KEY`, `DATABASE_URL`                                                        | Không bắt buộc (luồng Graph/Gemini hiện không dùng)                                       |
 
 ## Database (Supabase)
@@ -285,6 +286,7 @@ uvicorn app.main:app --reload --port 8000
 | `GET /bang-dieu-khien`                                            | **Bảng điều khiển** — số liệu + cấu hình |
 | `GET /tin-nhan`                                                   | **Tin nhắn** — hộp thư 2 cột (list + chat)   |
 | `POST /tin-nhan/tra-loi`                                          | Gửi tin trả lời từ màn 2 cột                      |
+| `POST /tin-nhan/goi-y`                                            | **Gợi ý trả lời** (RAG+LLM) cho tin cuối của khách — trả JSON, KHÔNG gửi |
 | `GET /tin-nhan/fragment/list`, `.../thread`                     | Fragment auto-refresh của màn Tin nhắn               |
 | `GET /khach-hang`                                                 | **Khách hàng** — bảng khách + tìm nhanh     |
 | `GET /health`                                                     | Kiểm tra server sống (`{"status":"ok"}`)            |
@@ -401,7 +403,7 @@ chỉ nói chuyện với Supabase/OpenAI, **Bảng điều khiển** đọc c�
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Kịch bản**       | *Xem*: `list_scripts()` đọc bảng `kich_ban`, **cố ý không lấy cột `embedding`** cho nhẹ, rồi gom nhóm theo tên kịch bản. *Thêm*: nội dung → `embed()` gọi **OpenAI** → nhận vector 1536 chiều → ghi 1 dòng kèm vector dạng literal `[0.1,0.2,…]`                                                                                                                                      |
 | **Hội thoại mẫu** | Giống trên, ghi vào`hoi_thoai_mau`. Điểm khác: **vector hoá CÂU HỎI** (không phải câu trả lời) — vì lúc chạy thật ta so tin nhắn của khách với câu hỏi mẫu                                                                                                                                                                                                                                              |
-| **Thử tin nhắn**   | Gõ tin giả làm khách →`embed()` → gọi **2 RPC** `match_documents` + `match_kich_ban`. Phép so sánh cosine `<=>` chạy **trong Postgres** và dùng **index HNSW** — Python chỉ gửi vector rồi nhận về kết quả đã xếp hạng sẵn (không kéo cả bảng về). Tick thêm ô *kèm câu trả lời* thì ghép ngữ cảnh → `build_prompt()` → `complete()` gọi **gpt-4o-mini** |
+| **Thử tin nhắn**   | Gõ tin giả làm khách →`embed()` → gọi **2 RPC** `match_documents` + `match_kich_ban`. Phép so sánh cosine `<=>` chạy **trong Postgres** và dùng **index HNSW** — Python chỉ gửi vector rồi nhận về kết quả đã xếp hạng sẵn (không kéo cả bảng về). Tick ô *kèm câu trả lời* hiện **2 ô để đối chiếu**: **Bước 4 — Trả lời tự do** (`build_prompt()` ghép toàn bộ ngữ cảnh, LLM tự viết) và **Bước 5 — Gợi ý trả lời** (`choose_reply()` — GPT **chọn** trong top 3 câu mẫu, không hợp → **NO_MATCH → không gợi ý**, đúng logic nút "Gợi ý trả lời" ở màn Tin nhắn) |
 
 - **Chống gửi lại form**: mọi thao tác thêm/xoá đều POST rồi **redirect 303** kèm thông báo trên URL — bấm F5 sau khi thêm sẽ không tạo trùng dòng.
 - **Ngưỡng lọc**: `RAG_MATCH_THRESHOLD` trong `.env`. Để `0` là luôn trả top-k; đặt `0.6` thì câu lạc đề sẽ trả **rỗng** (giống cách n8n hoạt động).
@@ -486,11 +488,78 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 | Tìm kiếm vector chạy**trong Postgres** (RPC + index HNSW)               | ✅ đã verify (RPC đã tạo trên DB)                       |
 | Ngưỡng lọc`match_threshold` (lạc đề → trả rỗng)                       | ✅ đã verify (0.6 → 0 dòng với câu lạc đề)           |
 | Giao diện tự nhập**kịch bản** &**hội thoại mẫu** (`/data`) | ✅ đã verify (thêm/xoá/báo lỗi trùng)                  |
+| Nút**"Gợi ý trả lời"** trong khung chat (human-in-the-loop, không tự gửi) | ✅ đã verify (test mock: happy-path, thiếu tin, lỗi LLM không 500) |
 | Bot**tự động poll + gợi ý/trả lời** hội thoại                     | 🟡 đã chốt thiết kế,**chưa code**                 |
 | Phiên khách`trang_thai_khach` (session.py)                                   | ⚠️ lệch schema thật (sender_id vs psid) — cần căn lại |
 | Kịch bản Bảng 1 (`bot/flow`)                                                | ⏳ khung, chưa cài logic khớp                              |
 | Tab**Thử tin nhắn** kèm câu trả lời của bot                         | ✅ đã verify (tick ô để gọi gpt-4o-mini)                |
 | API`/api/chat` cho phần mềm ngoài + bảo mật API key                       | 📋 chưa làm — xem mục*Kế hoạch: mở API* ở cuối     |
+
+## 🧭 Gợi ý lộ trình (NOTE) — nối 2 tính năng thành quy trình tự động
+
+> **Bối cảnh:** các mảnh đã có đủ (lấy tin Pancake, "não" RAG+LLM, nạp tri thức),
+> nhưng **chưa nối vào nhau và chưa chạm dữ liệu thật**. Cụ thể:
+> `bot/brain.generate_reply` đã xong nhưng **không endpoint nào gọi** (mồ côi);
+> `ingestion` đọc từ `data/chats.json` **chép tay**, chưa kéo từ Pancake;
+> `bot/flow.next_step` còn là stub; `bot/session` **lệch schema thật**
+> (`sender_id` vs `page_id/psid/ngu_canh`) — sẽ vỡ khi nối poll.
+> Thứ thiếu **không phải mảnh mới, mà là những "cây cầu"** nối mảnh sẵn có.
+> Làm theo 3 tầng dưới (an toàn → tự động dần):
+
+### Tầng 1 — nối cái đang có (nhỏ, lợi ngay, ít rủi ro) ⭐ nên làm trước
+
+1. ✅ **ĐÃ LÀM — Nút "Gợi ý trả lời" trong khung chat `/tin-nhan`**. Bấm nút →
+   `POST /tin-nhan/goi-y` lấy **tin chữ gần nhất của khách** → `bot.suggest_reply`
+   (**không đụng phiên** để tránh schema `trang_thai_khach` còn lệch, **không gửi
+   tin**) → câu gợi ý **đổ sẵn vào ô trả lời để người sửa rồi tự bấm Gửi**
+   (human-in-the-loop).
+   **Logic (GPT là người chọn, không phải cosine):**
+   1. Nhúng câu hỏi → Supabase lấy **top 5** câu mẫu tương đồng (`hoi_thoai_mau`),
+      **không cắt cứng** theo điểm cosine.
+   2. Gửi câu hỏi + **top 3** câu mẫu lên GPT để **chọn/soạn câu trả lời phù hợp
+      nhất**, chỉ dựa vào các câu mẫu (không được bịa).
+   3. GPT thấy **không câu nào hợp → trả `NO_MATCH` → KHÔNG gợi ý** (chỉ hiện dòng
+      "Câu hỏi này chưa có trong tri thức — không gợi ý", giữ nguyên ô soạn).
+   `RAG_SUGGEST_THRESHOLD` chỉ là bộ **sàng thô tuỳ chọn** (mặc định `0` = tắt, để
+   GPT tự phán xử). Kho tri thức rỗng thì bỏ qua luôn, không gọi GPT.
+   *File*: [app/bot/brain.py](app/bot/brain.py) `suggest_reply` ·
+   [app/bot/prompt.py](app/bot/prompt.py) `build_suggest_prompt` ·
+   [app/ui/routes.py](app/ui/routes.py) `inbox_suggest` ·
+   [app/ui/webview.py](app/ui/webview.py) (nút + JS) · [app/ui/shell.py](app/ui/shell.py) (CSS).
+2. **Nút "Học từ hội thoại này"** ngay trong khung chat → kéo hội thoại hiện tại
+   từ Pancake → `distill` → `embed` → lưu `hoi_thoai_mau`. Chính là feature
+   "nạp tri thức" **trên dữ liệu thật**, thay cho chép tay vào `chats.json`.
+
+→ Hai nút này biến 2 tính năng rời thành **1 vòng dùng được hằng ngày**, chưa cần bot nền.
+
+### Tầng 2 — nền cho tự động
+
+3. **Căn lại `session.py` theo schema thật** (`page_id/psid/ngu_canh`).
+   Đây là **bug chờ nổ**: poll bot vừa lưu phiên là hỏng.
+4. **Vòng lặp poll nền trên server** (đã chốt thiết kế, chưa code): con trỏ
+   `last_seen` mỗi hội thoại để phát hiện tin mới trên **mọi page kể cả khi không
+   mở trình duyệt**.
+5. **Cơ chế an toàn tự-trả-lời**: gate theo `similarity` (đủ giống → gợi ý/gửi,
+   lạc đề → nhường người), **không trả tin của chính shop**, chống trả trùng,
+   công tắc bật/tắt từng page.
+
+### Tầng 3 — khép vòng & mở rộng
+
+6. **Hàng đợi duyệt (approval queue)**: bot soạn sẵn, người bấm *Duyệt/Sửa* rồi
+   mới gửi — cầu nối từ tay sang tự động hoàn toàn.
+7. **Vòng phản hồi tri thức**: câu người đã sửa/duyệt (mục 6) → tự thành **ứng
+   viên `hoi_thoai_mau` mới** → khép kín 2 feature (khách hỏi → bot học từ chính
+   câu trả lời tốt của shop).
+8. **Chống trùng khi nạp tri thức**: trước khi `insert_qa`, so vector với cái đã
+   có, > ngưỡng thì gộp/bỏ — tránh phình DB và **câu trả lời mâu thuẫn**.
+9. **Nhật ký & thống kê bot**: tỉ lệ bot tự trả được, điểm similarity trung bình,
+   số lần người ghi đè → biết tri thức đang **thiếu chỗ nào**.
+10. **`/api/chat` + API key** (xem mục *Kế hoạch: mở API* ở cuối) — làm sau cùng
+    khi cần cho phần mềm ngoài.
+
+> **Khuyến nghị:** bắt đầu từ **mục 1 & 2** — đúng 2 tính năng đang muốn, nối thẳng
+> vào UI đã chạy, không cần bot nền, không rủi ro gửi nhầm. Xong 2 nút đó là đã có
+> vòng "trả lời theo tri thức + học từ hội thoại" chạy thật; rồi mới tính poll nền (3–5).
 
 ## Xử lý lỗi thường gặp
 

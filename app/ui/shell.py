@@ -434,6 +434,12 @@ a.name:hover{color:var(--accent)}
 .mtime{color:var(--sub);font-size:11px;margin:2px 4px 0}
 .chead{padding:12px 22px;border-bottom:1px solid var(--border);background:var(--card);
   display:flex;align-items:center;gap:10px}
+.suggest-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:10px 16px 0;background:var(--card)}
+.suggest-bar .btn:disabled{opacity:.6;cursor:default}
+.shint{color:var(--sub);font-size:12.5px;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.shint.warn{color:var(--warn)}
 .composer{border-top:1px solid var(--border);background:var(--card);padding:12px 16px;
   display:flex;gap:10px;align-items:flex-end}
 .composer textarea{flex:1;resize:none;border:1px solid var(--border);border-radius:20px;

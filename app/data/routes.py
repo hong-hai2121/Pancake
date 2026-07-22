@@ -20,6 +20,7 @@ from app.db.queries import (
     list_qa_pairs,
     list_scripts,
 )
+from app.bot.brain import choose_reply
 from app.bot.prompt import build_prompt
 from app.rag.embedding import embed
 from app.rag.llm import complete
@@ -199,8 +200,13 @@ async def simulate_page(
             status_code=502,
         )
 
-    # Tuỳ chọn: ghép ngữ cảnh -> prompt -> gọi LLM lấy câu trả lời.
+    # Tuỳ chọn: gọi LLM. Hai ô độc lập để đối chiếu:
+    #  - Bước 4 (cũ): trả lời TỰ DO — ghép toàn bộ ngữ cảnh rồi để LLM tự viết.
+    #  - Bước 5 (mới): GIỐNG nút "Gợi ý trả lời" — GPT CHỌN từ top 3 câu mẫu, không
+    #    hợp thì trả NO_MATCH -> không gợi ý (dùng chung hàm choose_reply).
     prompt = answer = answer_error = ""
+    suggest: dict | None = None
+    suggest_error = ""
     if want_answer:
         # Cùng định dạng ngữ cảnh mà retriever dùng cho bot thật.
         context = [
@@ -215,10 +221,17 @@ async def simulate_page(
             # Lỗi LLM không làm hỏng cả trang — vẫn xem được phần truy xuất.
             answer_error = str(exc)[:300]
 
+        # Logic mới, xét trên chính các câu mẫu vừa truy xuất được (Bước 3).
+        try:
+            suggest = await choose_reply(q, result["qa"])
+        except Exception as exc:
+            suggest_error = str(exc)[:300]
+
     return HTMLResponse(
         render_simulate(
             q=q, k=k, threshold=thr, tra_loi=want_answer,
             vector=vector, result=result,
             prompt=prompt, answer=answer, answer_error=answer_error,
+            suggest=suggest, suggest_error=suggest_error,
         )
     )

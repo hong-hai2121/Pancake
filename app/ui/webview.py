@@ -230,6 +230,11 @@ def render_inbox(
             + flash_html
             + f'<div class="thread" id="thread">'
               f'{render_thread(convo.get("messages") or [])}</div>'
+            + '<div class="suggest-bar">'
+              '<button type="button" id="btn-suggest" class="btn">'
+              '💡 Gợi ý trả lời</button>'
+              '<span class="shint" id="suggest-hint"></span>'
+              "</div>"
             + render_composer(
                 "/tin-nhan/tra-loi", customer_id,
                 extra=f'<input type="hidden" name="page_id" '
@@ -356,6 +361,54 @@ _INBOX_JS = """
       if (ta.value.trim()) form.submit();
     }
   });
+
+  // Nút "Gợi ý trả lời": gọi RAG+LLM cho tin cuối của khách, đổ vào ô soạn để
+  // người sửa rồi tự bấm Gửi. KHÔNG tự gửi. Đọc page_id/conv_id/customer_id từ
+  // chính các input ẩn của composer (một nguồn dữ liệu duy nhất).
+  var sug = document.getElementById('btn-suggest');
+  var hint = document.getElementById('suggest-hint');
+  if (sug) {
+    sug.addEventListener('click', function(){
+      var f = form;
+      var body = new URLSearchParams({
+        page_id: (f && f.page_id) ? f.page_id.value : '',
+        conv_id: (f && f.conv_id) ? f.conv_id.value : '',
+        customer_id: (f && f.customer_id) ? f.customer_id.value : ''
+      });
+      var old = sug.textContent;
+      sug.disabled = true; sug.textContent = 'Đang soạn…';
+      if (hint) { hint.textContent = ''; hint.classList.remove('warn'); }
+      fetch('/tin-nhan/goi-y', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: body.toString()
+      })
+      .then(function(r){ return r.json().catch(function(){ return {error:'Lỗi máy chủ'}; }); })
+      .then(function(d){
+        sug.disabled = false; sug.textContent = old;
+        if (!d || d.error) {
+          if (hint) { hint.textContent = '⚠ ' + ((d && d.error) || 'Không gợi ý được'); hint.classList.add('warn'); }
+          return;
+        }
+        if (d.no_match || !d.reply) {   // câu hỏi chưa có trong tri thức -> KHÔNG gợi ý
+          if (hint) {
+            hint.textContent = d.nguon_text || 'Câu hỏi này chưa có trong tri thức — không gợi ý.';
+            hint.classList.add('warn');
+          }
+          return;   // giữ nguyên ô soạn, không ghi đè
+        }
+        ta.value = d.reply;
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, 130) + 'px';
+        ta.focus();
+        if (hint) hint.textContent = d.nguon_text || '';
+      })
+      .catch(function(){
+        sug.disabled = false; sug.textContent = old;
+        if (hint) { hint.textContent = '⚠ Lỗi mạng, thử lại.'; hint.classList.add('warn'); }
+      });
+    });
+  }
 })();
 """
 

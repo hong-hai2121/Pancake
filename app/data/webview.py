@@ -211,6 +211,8 @@ def render_simulate(
     prompt: str = "",
     answer: str = "",
     answer_error: str = "",
+    suggest: dict | None = None,
+    suggest_error: str = "",
     error: str = "",
 ) -> str:
     """Màn hình mô phỏng: gõ tin khách -> xem DB truy xuất ra gì.
@@ -327,7 +329,7 @@ def render_simulate(
           f'ở đây để bạn đối chiếu.</p>'
     )
 
-    # --- Bước 4 (tuỳ chọn): đưa ngữ cảnh cho LLM và lấy câu trả lời ---
+    # --- Bước 4 (tuỳ chọn): trả lời TỰ DO — ghép toàn bộ ngữ cảnh cho LLM ---
     step4 = ""
     if tra_loi:
         if answer_error:
@@ -345,13 +347,42 @@ def render_simulate(
                 f'<details><summary>Xem prompt đã gửi cho gpt-4o-mini</summary>'
                 f'<pre class="prompt">{escape(prompt)}</pre></details>'
             )
-        step4 = ('<h3 class="grp">Bước 4 — Câu trả lời của bot '
-                 '<span class="count">gpt-4o-mini</span></h3>'
+        step4 = ('<h3 class="grp">Bước 4 — Trả lời tự do '
+                 '<span class="count">gpt-4o-mini · để đối chiếu</span></h3>'
                  f'<div class="card">{body}</div>')
+
+    # --- Bước 5 (tuỳ chọn): GIỐNG nút "Gợi ý trả lời" — GPT CHỌN / NO_MATCH ---
+    step5 = ""
+    if tra_loi:
+        if suggest_error:
+            body = f'<div class="flash err">✕ {escape(suggest_error)}</div>'
+        elif suggest and not suggest.get("no_match"):
+            body = (
+                f'<div class="answer">{escape(suggest.get("reply") or "")}</div>'
+                '<p class="note">GPT đã <b>chọn/soạn</b> từ <b>top 3</b> câu mẫu ở '
+                'Bước 3 — đây đúng là câu sẽ hiện khi bấm nút <b>Gợi ý trả lời</b> '
+                'ở màn Tin nhắn.</p>'
+            )
+        else:  # suggest is None hoặc no_match
+            body = (
+                '<div class="flash err" style="background:'
+                'color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn)">'
+                '∅ Không có câu mẫu nào phù hợp → <b>KHÔNG gợi ý</b></div>'
+                '<p class="note">GPT xét top 3 câu mẫu ở Bước 3 và thấy không câu '
+                'nào thực sự trả lời được — nên nút <b>Gợi ý trả lời</b> sẽ im lặng '
+                '(không đổ chữ vào ô soạn).</p>'
+            )
+        step5 = ('<h3 class="grp">Bước 5 — Gợi ý trả lời '
+                 '<span class="count">GPT chọn · NO_MATCH → không gợi ý</span></h3>'
+                 f'<div class="card">{body}</div>'
+                 '<p class="note">Khác Bước 4: ở đây GPT chỉ được <b>chọn</b> trong '
+                 'các câu mẫu (không bịa), và được phép nói "không có câu phù hợp". '
+                 'Nút thật trên màn Tin nhắn lấy <b>top 5</b> rồi đưa <b>top 3</b> '
+                 'lên GPT.</p>')
 
     return _page(
         title="Thử tin nhắn", active="thu", sub=_SIM_SUB, intro=_SIM_INTRO,
-        form=form, listing=step1 + step2 + step3 + step4)
+        form=form, listing=step1 + step2 + step3 + step4 + step5)
 
 
 _SIM_SUB = "Mô phỏng tin khách để kiểm tra bot truy xuất được gì (chỉ đọc)"

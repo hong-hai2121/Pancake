@@ -9,8 +9,9 @@ from urllib.parse import parse_qs, urlencode
 
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from app.bot.brain import suggest_reply
 from app.config import settings
 from app.db.queries import _count
 from app.pancake.client import (
@@ -283,6 +284,71 @@ async def inbox_reply(request: Request) -> RedirectResponse:
             params["error"] = str(exc)[:150]
 
     return RedirectResponse(f"/tin-nhan?{urlencode(params)}", status_code=303)
+
+
+def _last_customer_text(convo: dict) -> str:
+    """Nội dung tin gần nhất CỦA KHÁCH (bỏ tin của shop, bỏ tin không có chữ).
+
+    Tin chỉ có ảnh/tệp (text rỗng) bị bỏ qua vì không nhúng/tra cứu được — lùi
+    về tin có chữ gần nhất của khách.
+    """
+    for m in reversed(convo.get("messages") or []):
+        if not m.get("is_page") and (m.get("text") or "").strip():
+            return m["text"].strip()
+    return ""
+
+
+@router.post("/tin-nhan/goi-y")
+async def inbox_suggest(request: Request) -> JSONResponse:
+    """Soạn GỢI Ý trả lời (RAG + LLM) cho tin cuối của khách — KHÔNG gửi đi.
+
+    Bước 1 của lộ trình (xem README → "Gợi ý lộ trình"): người bấm nút, câu gợi
+    ý được trả về JSON để JS đổ vào ô trả lời cho người sửa rồi TỰ bấm Gửi.
+    Không đọc/ghi phiên, không gọi Pancake gửi tin.
+    """
+    form = parse_qs((await request.body()).decode("utf-8"))
+    get = lambda k: (form.get(k, [""])[0]).strip()  # noqa: E731
+    page_id, conv_id, customer_id = get("page_id"), get("conv_id"), get("customer_id")
+
+    if not (page_id and conv_id):
+        return JSONResponse({"error": "Thiếu page_id/conv_id."}, status_code=400)
+
+    try:
+        convo = await get_conversation(page_id, conv_id, customer_id or None)
+    except (PancakeError, httpx.HTTPError) as exc:
+        return JSONResponse(
+            {"error": f"Không tải được hội thoại: {exc}"}, status_code=502
+        )
+
+    question = _last_customer_text(convo)
+    if not question:
+        return JSONResponse({"error": "Chưa thấy tin nhắn chữ nào của khách để gợi ý."})
+
+    try:
+        result = await suggest_reply(question)
+    except Exception as exc:  # thiếu OPENAI_API_KEY / chưa tạo RPC / lỗi mạng...
+        return JSONResponse({"error": str(exc)[:200]})
+
+    # Không có câu mẫu nào đủ giống -> câu hỏi chưa có trong tri thức: KHÔNG gợi ý.
+    if result.get("no_match") or not (result.get("reply") or "").strip():
+        return JSONResponse(
+            {
+                "no_match": True,
+                "question": question,
+                "nguon_text": "Câu hỏi này chưa có trong tri thức — không gợi ý.",
+            }
+        )
+
+    rows = result.get("nguon") or []
+    scored = [r for r in rows if r.get("similarity") is not None]
+    top = max((r["similarity"] for r in scored), default=None)
+    nguon_text = (
+        f"Dựa trên {len(scored)} câu mẫu · gần nhất {top:.2f}"
+        if top is not None else ""
+    )
+    return JSONResponse(
+        {"reply": result["reply"], "question": question, "nguon_text": nguon_text}
+    )
 
 
 # ---------------------------------------------------------------- khách hàng
