@@ -17,3 +17,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# File dữ liệu tạm / cục bộ (không đẩy lên git)
+pancake_tags_sample.json

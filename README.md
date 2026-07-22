@@ -1,3 +1,5 @@
+    
+
 # FB Sales Bot
 
 Bot bán hàng chạy trên **Pancake (pages.fm)**: xem danh sách page, đọc hội thoại
@@ -277,28 +279,28 @@ uvicorn app.main:app --reload --port 8000
 
 ## Các endpoint
 
-| Endpoint                                                            | Chức năng                                         |
-| ------------------------------------------------------------------- | --------------------------------------------------- |
-| `GET /`                                                           | Chuyển thẳng sang Bảng điều khiển             |
+| Endpoint                                                            | Chức năng                                             |
+| ------------------------------------------------------------------- | ------------------------------------------------------- |
+| `GET /`                                                           | Chuyển thẳng sang Bảng điều khiển                 |
 | `GET /bang-dieu-khien`                                            | **Bảng điều khiển** — số liệu + cấu hình |
-| `GET /tin-nhan`                                                   | **Tin nhắn** — hộp thư 2 cột (list + chat)      |
-| `POST /tin-nhan/tra-loi`                                          | Gửi tin trả lời từ màn 2 cột                 |
-| `GET /tin-nhan/fragment/list`, `.../thread`                     | Fragment auto-refresh của màn Tin nhắn           |
-| `GET /khach-hang`                                                 | **Khách hàng** — bảng khách + tìm nhanh        |
-| `GET /health`                                                     | Kiểm tra server sống (`{"status":"ok"}`)        |
-| `GET /docs`                                                       | Swagger UI (liệt kê toàn bộ endpoint)           |
-| `GET /pancake/webview`                                            | Trang HTML danh sách Page có quyền               |
-| `GET /pancake/pages`                                              | Danh sách Page dạng JSON                          |
-| `GET /pancake/pages/{id}/recent?limit=10`                         | Người nhắn tin (INBOX) mới nhất                |
-| `GET /pancake/pages/{id}/conversations/{conv_id}?customer_id=...` | Khung chat + ô trả lời                           |
-| `POST /pancake/pages/{id}/conversations/{conv_id}/reply`          | Gửi tin trả lời (qua Pancake)                    |
-| `GET .../recent/fragment`, `.../{conv_id}/fragment`             | Fragment cho auto-refresh (JS gọi ngầm)           |
-| `GET /data/kich-ban`                                              | Giao diện thêm/xem/xoá**kịch bản**       |
-| `POST /data/kich-ban`                                             | Thêm 1 bước kịch bản (tự tạo embedding)      |
-| `POST /data/kich-ban/{id}/xoa`                                    | Xoá 1 bước kịch bản                            |
-| `GET /data/hoi-thoai`                                             | Giao diện thêm/xem/xoá**hội thoại mẫu** |
-| `POST /data/hoi-thoai`                                            | Thêm 1 cặp hỏi–đáp (tự tạo embedding)       |
-| `POST /data/hoi-thoai/{id}/xoa`                                   | Xoá 1 cặp hỏi–đáp                             |
+| `GET /tin-nhan`                                                   | **Tin nhắn** — hộp thư 2 cột (list + chat)   |
+| `POST /tin-nhan/tra-loi`                                          | Gửi tin trả lời từ màn 2 cột                      |
+| `GET /tin-nhan/fragment/list`, `.../thread`                     | Fragment auto-refresh của màn Tin nhắn               |
+| `GET /khach-hang`                                                 | **Khách hàng** — bảng khách + tìm nhanh     |
+| `GET /health`                                                     | Kiểm tra server sống (`{"status":"ok"}`)            |
+| `GET /docs`                                                       | Swagger UI (liệt kê toàn bộ endpoint)               |
+| `GET /pancake/webview`                                            | Trang HTML danh sách Page có quyền                   |
+| `GET /pancake/pages`                                              | Danh sách Page dạng JSON                              |
+| `GET /pancake/pages/{id}/recent?limit=10`                         | Người nhắn tin (INBOX) mới nhất                    |
+| `GET /pancake/pages/{id}/conversations/{conv_id}?customer_id=...` | Khung chat + ô trả lời                               |
+| `POST /pancake/pages/{id}/conversations/{conv_id}/reply`          | Gửi tin trả lời (qua Pancake)                        |
+| `GET .../recent/fragment`, `.../{conv_id}/fragment`             | Fragment cho auto-refresh (JS gọi ngầm)               |
+| `GET /data/kich-ban`                                              | Giao diện thêm/xem/xoá**kịch bản**           |
+| `POST /data/kich-ban`                                             | Thêm 1 bước kịch bản (tự tạo embedding)          |
+| `POST /data/kich-ban/{id}/xoa`                                    | Xoá 1 bước kịch bản                                |
+| `GET /data/hoi-thoai`                                             | Giao diện thêm/xem/xoá**hội thoại mẫu**     |
+| `POST /data/hoi-thoai`                                            | Thêm 1 cặp hỏi–đáp (tự tạo embedding)           |
+| `POST /data/hoi-thoai/{id}/xoa`                                   | Xoá 1 cặp hỏi–đáp                                 |
 
 > **Chỉ dùng phần xem Pancake?** Chỉ cần `PANCAKE_ACCESS_TOKEN` là các trang
 > `/pancake/...` chạy được — chưa cần OpenAI/Supabase. Não RAG + gửi liên quan
@@ -313,12 +315,12 @@ Mở [http://127.0.0.1:8000](http://127.0.0.1:8000) là vào thẳng giao diện
 Mọi trang dùng chung một khung: **menu dọc bên trái** + thanh tiêu đề, bố cục rộng
 cho màn hình máy tính (dưới 900px menu tự thu thành thanh ngang có icon).
 
-| Mục menu                       | Đường dẫn            | Nội dung                                                                     |
-| -------------------------------- | ----------------------- | ------------------------------------------------------------------------------ |
+| Mục menu                       | Đường dẫn        | Nội dung                                                                         |
+| ------------------------------- | -------------------- | --------------------------------------------------------------------------------- |
 | 📊**Bảng điều khiển** | `/bang-dieu-khien` | Số page, hội thoại, tin chưa đọc, kho dữ liệu bot, cấu hình đang chạy |
-| 💬**Tin nhắn**              | `/tin-nhan`        | Hộp thư 2 cột: danh sách hội thoại ↔ khung chat + ô trả lời           |
-| 👥**Khách hàng**           | `/khach-hang`      | Bảng khách đã nhắn (tên, FB ID, số tin, chưa đọc, lần cuối) + ô tìm  |
-| 🧠**Dữ liệu bot**          | `/data/kich-ban`   | 3 tab: Kịch bản · Hội thoại mẫu · Thử tin nhắn                          |
+| 💬**Tin nhắn**           | `/tin-nhan`        | Hộp thư 2 cột: danh sách hội thoại ↔ khung chat + ô trả lời             |
+| 👥**Khách hàng**        | `/khach-hang`      | Bảng khách đã nhắn (tên, FB ID, số tin, chưa đọc, lần cuối) + ô tìm |
+| 🧠**Dữ liệu bot**       | `/data/kich-ban`   | 3 tab: Kịch bản · Hội thoại mẫu · Thử tin nhắn                           |
 
 Màn **Tin nhắn** và **Bảng điều khiển** tự chọn page đang hoạt động đầu tiên; đổi
 page bằng ô chọn ở góc phải trên. Danh sách hội thoại làm mới mỗi 10 giây, khung
@@ -329,12 +331,12 @@ chat mỗi 8 giây — không phải F5.
 > Việc làm mới nằm **hoàn toàn ở trình duyệt** (JavaScript trong tab đang mở),
 > **không phải** ở server. Nghĩa là:
 >
-> | Câu hỏi                                              | Trả lời                                                                                 |
-> | ------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
-> | Làm mới bao nhiêu page?                            | **Đúng 1 page** — page đang chọn trong URL. Các page khác không bị đụng tới       |
-> | Thu nhỏ cửa sổ / chuyển tab khác thì sao?       | **Dừng hẳn** (`if (document.hidden) return;`), quay lại mới chạy tiếp — đỡ tốn lượt API |
-> | Đóng trình duyệt thì sao?                           | **Hết luôn.** Không có tiến trình nào chạy nền trên server                            |
-> | Mở 3 tab cùng lúc?                                   | 3 luồng gọi **độc lập** → gấp 3 số lượt gọi Pancake                              |
+> | Câu hỏi                                       | Trả lời                                                                                                   |
+> | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+> | Làm mới bao nhiêu page?                      | **Đúng 1 page** — page đang chọn trong URL. Các page khác không bị đụng tới               |
+> | Thu nhỏ cửa sổ / chuyển tab khác thì sao? | **Dừng hẳn** (`if (document.hidden) return;`), quay lại mới chạy tiếp — đỡ tốn lượt API |
+> | Đóng trình duyệt thì sao?                  | **Hết luôn.** Không có tiến trình nào chạy nền trên server                                  |
+> | Mở 3 tab cùng lúc?                           | 3 luồng gọi**độc lập** → gấp 3 số lượt gọi Pancake                                         |
 >
 > **Hệ quả:** khách nhắn vào **page B** trong lúc bạn đang xem **page A** thì hệ
 > thống **không biết gì cả** — không thông báo, không lưu, không đếm. Chỉ khi bạn
@@ -362,44 +364,44 @@ chỉ nói chuyện với Supabase/OpenAI, **Bảng điều khiển** đọc c�
 
 #### 📊 Bảng điều khiển — `/bang-dieu-khien`
 
-| | |
-| --- | --- |
-| **Lấy dữ liệu** | 3 khối **độc lập**: (1) Pancake — `list_pages()` + `list_conversations(limit=50)`; (2) Supabase — 4 lệnh đếm; (3) cấu hình — đọc `settings` từ `.env`, không gọi mạng |
-| **Xử lý** | Tin chưa đọc = **cộng dồn** `unread_count` của mọi hội thoại. Khách gần nhất = hội thoại đầu danh sách (đã sắp mới→cũ), đổi sang chữ "5 phút trước". Tên chủ token lấy bằng cách **giải mã payload JWT tại chỗ** (`token_owner()`), không gọi API |
-| **Đếm kiểu nhẹ** | `_count()` dùng `select("id", count="exact").limit(1)` — Postgres trả về **con số**, không kéo dòng nào về. Cột `embedding` (1536 số/dòng) không bao giờ bị tải |
-| **Chịu lỗi** | Mỗi khối `try/except` riêng: Pancake hỏng thì khối Supabase vẫn hiện bình thường, lỗi chỉ đỏ trong đúng ô của nó — không 500 trắng màn |
-| **Ghi gì?** | **Không ghi gì cả**, thuần đọc |
-| **File** | [app/ui/routes.py](app/ui/routes.py) → `dashboard()` · [app/ui/webview.py](app/ui/webview.py) → `render_dashboard()` |
+|                            |                                                                                                                                                                                                                                                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Lấy dữ liệu**   | 3 khối**độc lập**: (1) Pancake — `list_pages()` + `list_conversations(limit=50)`; (2) Supabase — 4 lệnh đếm; (3) cấu hình — đọc `settings` từ `.env`, không gọi mạng                                                                                                     |
+| **Xử lý**          | Tin chưa đọc =**cộng dồn** `unread_count` của mọi hội thoại. Khách gần nhất = hội thoại đầu danh sách (đã sắp mới→cũ), đổi sang chữ "5 phút trước". Tên chủ token lấy bằng cách **giải mã payload JWT tại chỗ** (`token_owner()`), không gọi API |
+| **Đếm kiểu nhẹ** | `_count()` dùng `select("id", count="exact").limit(1)` — Postgres trả về **con số**, không kéo dòng nào về. Cột `embedding` (1536 số/dòng) không bao giờ bị tải                                                                                                             |
+| **Chịu lỗi**       | Mỗi khối`try/except` riêng: Pancake hỏng thì khối Supabase vẫn hiện bình thường, lỗi chỉ đỏ trong đúng ô của nó — không 500 trắng màn                                                                                                                                          |
+| **Ghi gì?**         | **Không ghi gì cả**, thuần đọc                                                                                                                                                                                                                                                               |
+| **File**             | [app/ui/routes.py](app/ui/routes.py) → `dashboard()` · [app/ui/webview.py](app/ui/webview.py) → `render_dashboard()`                                                                                                                                                                                |
 
 #### 💬 Tin nhắn — `/tin-nhan`
 
-| | |
-| --- | --- |
-| **Cột trái** | `GET /pages/{id}/conversations?type=INBOX` → `_normalize_conv()` rút gọn còn tên, ảnh, tin cuối, số tin, chưa đọc → **sắp theo `updated_at` giảm dần** rồi cắt 20 dòng |
-| **Cột phải** | Chỉ tải khi đã bấm chọn một hội thoại: `GET .../conversations/{conv_id}/messages` (**bắt buộc kèm `customer_id`**) → `_normalize_msg()` → sắp **cũ → mới**; so `from.id` với `page_id` để biết tin nào của shop (bong bóng xanh phải) hay của khách (xám trái) |
-| **Nội dung tin** | Ưu tiên `original_message`; nếu không có thì bóc thẻ HTML nhưng **giữ xuống dòng** (`<br>`, `</div>` → `\n`). Ảnh/sticker hiện thumbnail, tệp khác hiện link |
-| **Tự cập nhật** | JS gọi 2 endpoint mảnh: `/tin-nhan/fragment/list` (10s) và `/tin-nhan/fragment/thread` (8s). Nhận HTML về **so với lần trước, khác mới thay** → không nháy màn, không mất ảnh đang tải. Nhịp đầu chỉ "mồi" để so sánh. Lỗi mạng trả 502 → JS **bỏ qua nhịp đó**, giữ nguyên nội dung đang xem |
-| **Gửi trả lời** | `POST /tin-nhan/tra-loi` → `send_message()` → `POST .../messages?action=reply_inbox` → redirect **303** về đúng hội thoại kèm `?sent=1` (F5 không gửi lại tin) |
-| **Ghi gì?** | ⚠️ **Gửi tin THẬT tới khách** — chỉ khi bạn tự bấm nút Gửi. Không ghi Supabase |
-| **File** | [app/ui/routes.py](app/ui/routes.py) → `inbox()` · [app/pancake/client.py](app/pancake/client.py) → `list_conversations` / `get_conversation` / `send_message` |
+|                          |                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Cột trái**     | `GET /pages/{id}/conversations?type=INBOX` → `_normalize_conv()` rút gọn còn tên, ảnh, tin cuối, số tin, chưa đọc → **sắp theo `updated_at` giảm dần** rồi cắt 20 dòng                                                                                                                                                 |
+| **Cột phải**     | Chỉ tải khi đã bấm chọn một hội thoại:`GET .../conversations/{conv_id}/messages` (**bắt buộc kèm `customer_id`**) → `_normalize_msg()` → sắp **cũ → mới**; so `from.id` với `page_id` để biết tin nào của shop (bong bóng xanh phải) hay của khách (xám trái)                                    |
+| **Nội dung tin**  | Ưu tiên`original_message`; nếu không có thì bóc thẻ HTML nhưng **giữ xuống dòng** (`<br>`, `</div>` → `\n`). Ảnh/sticker hiện thumbnail, tệp khác hiện link                                                                                                                                                          |
+| **Tự cập nhật** | JS gọi 2 endpoint mảnh:`/tin-nhan/fragment/list` (10s) và `/tin-nhan/fragment/thread` (8s). Nhận HTML về **so với lần trước, khác mới thay** → không nháy màn, không mất ảnh đang tải. Nhịp đầu chỉ "mồi" để so sánh. Lỗi mạng trả 502 → JS **bỏ qua nhịp đó**, giữ nguyên nội dung đang xem |
+| **Gửi trả lời** | `POST /tin-nhan/tra-loi` → `send_message()` → `POST .../messages?action=reply_inbox` → redirect **303** về đúng hội thoại kèm `?sent=1` (F5 không gửi lại tin)                                                                                                                                                             |
+| **Ghi gì?**       | ⚠️**Gửi tin THẬT tới khách** — chỉ khi bạn tự bấm nút Gửi. Không ghi Supabase                                                                                                                                                                                                                                                    |
+| **File**           | [app/ui/routes.py](app/ui/routes.py) → `inbox()` · [app/pancake/client.py](app/pancake/client.py) → `list_conversations` / `get_conversation` / `send_message`                                                                                                                                                                              |
 
 #### 👥 Khách hàng — `/khach-hang`
 
-| | |
-| --- | --- |
-| **Lấy dữ liệu** | **Cùng một nguồn với màn Tin nhắn** — `list_conversations(limit=100)`. Mỗi hội thoại INBOX = một khách |
-| **Xử lý** | Đổ thẳng vào bảng: tên, `fb_id`, `message_count`, `unread_count`, `updated_at` (đổi sang "2 ngày trước", di chuột hiện giờ chính xác). Nút *Nhắn tin* dựng sẵn link kèm `conv_id` + `customer_id` để bấm là mở đúng khung chat |
-| **Ô tìm nhanh** | Lọc **ngay tại trình duyệt** bằng JS trên bảng đã tải (khớp tên + FB ID) — gõ không gọi lại server, không tốn thêm 1 lượt Pancake |
-| **Ghi gì?** | Không ghi. ⚠️ Danh sách khách **chưa được lưu vào Supabase** — mỗi lần mở là đọc mới từ Pancake, nên chưa có lịch sử/ghi chú theo khách |
-| **File** | [app/ui/routes.py](app/ui/routes.py) → `customers()` · [app/ui/webview.py](app/ui/webview.py) → `render_customers()` |
+|                          |                                                                                                                                                                                                                                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Lấy dữ liệu** | **Cùng một nguồn với màn Tin nhắn** — `list_conversations(limit=100)`. Mỗi hội thoại INBOX = một khách                                                                                                                                              |
+| **Xử lý**        | Đổ thẳng vào bảng: tên,`fb_id`, `message_count`, `unread_count`, `updated_at` (đổi sang "2 ngày trước", di chuột hiện giờ chính xác). Nút *Nhắn tin* dựng sẵn link kèm `conv_id` + `customer_id` để bấm là mở đúng khung chat |
+| **Ô tìm nhanh**  | Lọc**ngay tại trình duyệt** bằng JS trên bảng đã tải (khớp tên + FB ID) — gõ không gọi lại server, không tốn thêm 1 lượt Pancake                                                                                                            |
+| **Ghi gì?**       | Không ghi. ⚠️ Danh sách khách**chưa được lưu vào Supabase** — mỗi lần mở là đọc mới từ Pancake, nên chưa có lịch sử/ghi chú theo khách                                                                                                 |
+| **File**           | [app/ui/routes.py](app/ui/routes.py) → `customers()` · [app/ui/webview.py](app/ui/webview.py) → `render_customers()`                                                                                                                                               |
 
 #### 🧠 Dữ liệu bot — `/data/...` (3 tab)
 
-| Tab | Luồng dữ liệu |
-| --- | --- |
-| **Kịch bản** | *Xem*: `list_scripts()` đọc bảng `kich_ban`, **cố ý không lấy cột `embedding`** cho nhẹ, rồi gom nhóm theo tên kịch bản. *Thêm*: nội dung → `embed()` gọi **OpenAI** → nhận vector 1536 chiều → ghi 1 dòng kèm vector dạng literal `[0.1,0.2,…]` |
-| **Hội thoại mẫu** | Giống trên, ghi vào `hoi_thoai_mau`. Điểm khác: **vector hoá CÂU HỎI** (không phải câu trả lời) — vì lúc chạy thật ta so tin nhắn của khách với câu hỏi mẫu |
-| **Thử tin nhắn** | Gõ tin giả làm khách → `embed()` → gọi **2 RPC** `match_documents` + `match_kich_ban`. Phép so sánh cosine `<=>` chạy **trong Postgres** và dùng **index HNSW** — Python chỉ gửi vector rồi nhận về kết quả đã xếp hạng sẵn (không kéo cả bảng về). Tick thêm ô *kèm câu trả lời* thì ghép ngữ cảnh → `build_prompt()` → `complete()` gọi **gpt-4o-mini** |
+| Tab                        | Luồng dữ liệu                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Kịch bản**       | *Xem*: `list_scripts()` đọc bảng `kich_ban`, **cố ý không lấy cột `embedding`** cho nhẹ, rồi gom nhóm theo tên kịch bản. *Thêm*: nội dung → `embed()` gọi **OpenAI** → nhận vector 1536 chiều → ghi 1 dòng kèm vector dạng literal `[0.1,0.2,…]`                                                                                                                                      |
+| **Hội thoại mẫu** | Giống trên, ghi vào`hoi_thoai_mau`. Điểm khác: **vector hoá CÂU HỎI** (không phải câu trả lời) — vì lúc chạy thật ta so tin nhắn của khách với câu hỏi mẫu                                                                                                                                                                                                                                              |
+| **Thử tin nhắn**   | Gõ tin giả làm khách →`embed()` → gọi **2 RPC** `match_documents` + `match_kich_ban`. Phép so sánh cosine `<=>` chạy **trong Postgres** và dùng **index HNSW** — Python chỉ gửi vector rồi nhận về kết quả đã xếp hạng sẵn (không kéo cả bảng về). Tick thêm ô *kèm câu trả lời* thì ghép ngữ cảnh → `build_prompt()` → `complete()` gọi **gpt-4o-mini** |
 
 - **Chống gửi lại form**: mọi thao tác thêm/xoá đều POST rồi **redirect 303** kèm thông báo trên URL — bấm F5 sau khi thêm sẽ không tạo trùng dòng.
 - **Ngưỡng lọc**: `RAG_MATCH_THRESHOLD` trong `.env`. Để `0` là luôn trả top-k; đặt `0.6` thì câu lạc đề sẽ trả **rỗng** (giống cách n8n hoạt động).
@@ -475,11 +477,11 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 
 | Tính năng                                                                      | Trạng thái                                                  |
 | -------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| **Giao diện web có menu trái** (4 mục, bố cục cho máy tính)             | ✅ đã verify (8 trang, HTML hợp lệ)                       |
+| **Giao diện web có menu trái** (4 mục, bố cục cho máy tính)        | ✅ đã verify (8 trang, HTML hợp lệ)                       |
 | Bảng điều khiển / Khách hàng / Tin nhắn 2 cột                            | ✅ đã verify                                                |
 | Xem page / người nhắn / khung chat + trả lời tay (Pancake)                  | ✅ chạy                                                      |
-| Auto-refresh giao diện (poll fragment)                                          | ✅ chạy —**chỉ page đang mở trên trình duyệt**       |
-| Cache danh sách page 60s (tránh Pancake chặn 429)                            | ✅ đã verify (hết 502 khi mở dồn dập)                  |
+| Auto-refresh giao diện (poll fragment)                                          | ✅ chạy —**chỉ page đang mở trên trình duyệt**  |
+| Cache danh sách page 60s (tránh Pancake chặn 429)                             | ✅ đã verify (hết 502 khi mở dồn dập)                   |
 | RAG: embed, retrieve, LLM gpt-4o-mini, insert kèm embedding, distill            | ✅ đã verify                                                |
 | Tìm kiếm vector chạy**trong Postgres** (RPC + index HNSW)               | ✅ đã verify (RPC đã tạo trên DB)                       |
 | Ngưỡng lọc`match_threshold` (lạc đề → trả rỗng)                       | ✅ đã verify (0.6 → 0 dòng với câu lạc đề)           |

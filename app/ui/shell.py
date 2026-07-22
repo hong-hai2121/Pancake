@@ -87,14 +87,22 @@ def flash(ok: str = "", error: str = "") -> str:
     return ""
 
 
-def stat(label: str, value: str, hint: str = "", tone: str = "") -> str:
-    """Ô số liệu cho Bảng điều khiển. `tone` = '' | 'ok' | 'err' | 'warn'."""
+def stat(
+    label: str, value: str, hint: str = "", tone: str = "", href: str = ""
+) -> str:
+    """Ô số liệu cho Bảng điều khiển. `tone` = '' | 'ok' | 'err' | 'warn'.
+
+    href — nếu có, cả ô trở thành liên kết bấm được (hiện chevron ở góc phải).
+    """
     hint_html = f'<div class="s-hint">{hint}</div>' if hint else ""
     tone_cls = f" {tone}" if tone else ""
-    return (
-        f'<div class="stat{tone_cls}"><div class="s-label">{escape(label)}</div>'
-        f'<div class="s-value">{value}</div>{hint_html}</div>'
+    inner = (
+        f'<div class="s-label">{escape(label)}</div>'
+        f'<div class="s-value">{value}</div>{hint_html}'
     )
+    if href:
+        return f'<a class="stat link{tone_cls}" href="{escape(href)}">{inner}</a>'
+    return f'<div class="stat{tone_cls}">{inner}</div>'
 
 
 def render_shell(
@@ -308,6 +316,12 @@ summary{cursor:pointer}
 .stat.ok .s-value{color:var(--ok)}
 .stat.err .s-value{color:var(--err)}
 .stat.warn .s-value{color:var(--warn)}
+a.stat.link{position:relative;display:block;text-decoration:none;color:inherit;
+  transition:border-color .15s}
+a.stat.link:hover{border-color:var(--accent)}
+a.stat.link::after{content:"›";position:absolute;top:12px;right:14px;
+  color:var(--sub);font-size:18px;line-height:1}
+a.stat.link:hover::after{color:var(--accent)}
 .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
 .kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;
   border-bottom:1px solid var(--border);font-size:13px}
@@ -343,6 +357,26 @@ a.name:hover{color:var(--accent)}
 .card.link{text-decoration:none;color:inherit;align-items:flex-start}
 .card.link:hover,.card.link-wrap:hover{border-color:var(--accent)}
 .crow{display:flex;align-items:baseline;gap:8px}
+/* thẻ (tag) của hội thoại, hiện ngay dưới tên để dễ so sánh */
+.ctags{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.ctag{font-size:10px;font-weight:700;line-height:1.7;padding:0 6px;border-radius:9px;
+  color:var(--tc);border:1px solid var(--tc);
+  background:color-mix(in srgb,var(--tc) 13%,transparent)}
+
+/* ---------- lưới danh sách page (tối đa 4 cột, giảm dần theo màn hình) ---------- */
+.pages-grid{list-style:none;margin:0;padding:0;display:grid;gap:12px;
+  grid-template-columns:repeat(4,minmax(0,1fr))}
+.page-card{display:flex;flex-direction:column;gap:10px;padding:14px;
+  transition:border-color .15s}
+.page-card:hover{border-color:var(--accent)}
+.pc-head{display:flex;gap:11px;align-items:center;min-width:0}
+.page-card .info{min-width:0;flex:1}
+.page-card .sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.page-card .badges{margin-top:0}
+.page-card .btn{margin-top:auto;justify-content:center}
+@media (max-width:1080px){.pages-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:800px){.pages-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:520px){.pages-grid{grid-template-columns:1fr}}
 
 /* ---------- bảng ---------- */
 .tbl{width:100%;border-collapse:collapse;background:var(--card);
@@ -361,12 +395,30 @@ a.name:hover{color:var(--accent)}
   display:flex;flex-direction:column;min-height:0}
 .inbox-list .lhead{padding:12px 16px;border-bottom:1px solid var(--border);
   color:var(--sub);font-size:12px;display:flex;align-items:center;gap:8px}
+.lhint{color:var(--sub);font-size:11px;border:1px solid var(--border);
+  border-radius:20px;padding:1px 8px}
 .inbox-list .lbody{overflow-y:auto;padding:8px;flex:1;min-height:0}
 .inbox-list .list{gap:4px}
 .inbox-list .card{border-color:transparent;box-shadow:none;padding:9px 10px;
   border-radius:10px}
 .inbox-list .card:hover{background:var(--bg)}
 .inbox-list .card.on{background:var(--soft);border-color:var(--accent)}
+/* ---------- thanh lọc theo thẻ (giống Pancake) ---------- */
+.tagbar{display:flex;gap:6px;flex-wrap:wrap;padding:8px 12px;
+  border-bottom:1px solid var(--border);background:var(--card);
+  max-height:108px;overflow-y:auto}
+.tchip{display:inline-flex;align-items:center;gap:6px;text-decoration:none;
+  font-size:12px;font-weight:550;color:var(--text);border:1px solid var(--border);
+  background:var(--card);border-radius:20px;padding:3px 10px;line-height:1.7}
+.tchip:hover{border-color:var(--tc,var(--accent))}
+.tchip .tdot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;
+  background:var(--tc,var(--sub))}
+.tchip .tnum{color:var(--sub);font-size:11px;font-weight:600}
+.tchip.on{border-color:var(--tc,var(--accent));
+  background:color-mix(in srgb,var(--tc,var(--accent)) 15%,transparent)}
+.tchip.on .tnum{color:var(--text)}
+.tchip.all{color:var(--sub)}
+.tchip.all.on{color:var(--accent);border-color:var(--accent);background:var(--soft)}
 .pane{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}
 .thread{flex:1;padding:18px 22px;display:flex;flex-direction:column;gap:4px;
   overflow-y:auto;min-height:0}

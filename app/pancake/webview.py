@@ -4,11 +4,15 @@ Chỉ dựng phần THÂN trang rồi bọc bằng `app.ui.shell.render_shell` �
 hình dùng chung menu trái + topbar + stylesheet.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape
 from urllib.parse import urlencode
 
+from app.pancake.client import tag_color_override
 from app.ui.shell import render_shell
+
+# Pancake trả thời gian theo UTC; cộng offset này để hiển thị GIỜ ĐỊA PHƯƠNG (VN=+7).
+_DISPLAY_TZ = timezone(timedelta(hours=7))
 
 # Bảng màu cho avatar chữ cái đầu (ổn định theo id).
 _AVATAR_COLORS = [
@@ -27,6 +31,42 @@ def _avatar(page: dict) -> str:
     return (
         f'<span class="avatar" style="background:{color}">{initial}</span>'
     )
+
+
+# Bảng màu chip thẻ — ổn định theo ID để cùng 1 thẻ luôn 1 màu (khớp thanh lọc).
+_TAG_COLORS = [
+    "#2563eb", "#7c3aed", "#db2777", "#dc2626", "#ea580c",
+    "#ca8a04", "#16a34a", "#0891b2", "#4f46e5", "#0d9488",
+]
+
+
+def _tag_color(tag_id: int, meta: dict | None = None) -> str:
+    """Màu 1 thẻ.
+
+    Ưu tiên: màu khai báo tay (TAG_OVERRIDES) > màu thật public API (`meta`)
+    > xám cho thẻ hệ thống (id<0) > màu ổn định theo ID.
+    """
+    manual = tag_color_override(tag_id)
+    if manual:
+        return manual
+    real = (meta.get(tag_id) or {}).get("color") if meta else ""
+    if real:
+        return real
+    if tag_id < 0:
+        return "#6b7280"
+    return _TAG_COLORS[tag_id % len(_TAG_COLORS)]
+
+
+def _conv_tags_html(tags: list[int]) -> str:
+    """Dãy pill thẻ nhỏ hiển thị dưới tên hội thoại (chỉ thẻ người dùng gắn, id>0).
+
+    Thẻ hệ thống (id âm như -99, -3…) bỏ qua cho gọn. Dùng để nhìn nhanh & so sánh.
+    """
+    pills = "".join(
+        f'<span class="ctag" style="--tc:{_tag_color(tid)}">#{tid}</span>'
+        for tid in tags if tid > 0
+    )
+    return f'<div class="ctags">{pills}</div>' if pills else ""
 
 
 def _page_card(page: dict) -> str:
@@ -48,15 +88,17 @@ def _page_card(page: dict) -> str:
         badges.append(f'<span class="badge role">{escape(str(role))}</span>')
     badges_html = "".join(badges)
 
-    # Bấm vào thẻ -> mở màn Tin nhắn của page đó; tên page vẫn link ra Facebook.
+    # Tên page link vào màn Tin nhắn của page đó; nút riêng mở trang Facebook.
     return f"""
-      <li class="card link-wrap">
-        {_avatar(page)}
-        <div class="info">
-          <a class="name" href="/tin-nhan?page_id={pid}">{name}</a>
-          <div class="sub">{subtitle}</div>
-          <div class="badges">{badges_html}</div>
+      <li class="card page-card">
+        <div class="pc-head">
+          {_avatar(page)}
+          <div class="info">
+            <a class="name" href="/tin-nhan?page_id={pid}">{name}</a>
+            <div class="sub">{subtitle}</div>
+          </div>
         </div>
+        <div class="badges">{badges_html}</div>
         <a class="btn" href="{fb_url}" target="_blank" rel="noopener">Facebook ↗</a>
       </li>"""
 
@@ -90,7 +132,7 @@ def render_pages(pages: list[dict], owner: dict | None = None) -> str:
         sections.append(
             f'<h2 class="grp">{escape(label)} '
             f'<span class="count">{len(items)}</span></h2>'
-            f'<ul class="list">{cards}</ul>'
+            f'<ul class="pages-grid">{cards}</ul>'
         )
     body = "".join(sections) or '<p class="empty">Không có page nào.</p>'
 
@@ -151,23 +193,41 @@ def _relative_time(iso: str) -> str:
 
 
 def _fmt_dt(iso: str) -> str:
-    """Đổi thời điểm -> chuỗi tuyệt đối "HH:MM · dd/mm/yyyy" (dùng cho tooltip)."""
+    """Đổi thời điểm -> chuỗi tuyệt đối "HH:MM · dd/mm/yyyy" theo giờ VN (tooltip)."""
     dt = _parse_dt(iso)
-    return dt.strftime("%H:%M · %d/%m/%Y") if dt else ""
+    return dt.astimezone(_DISPLAY_TZ).strftime("%H:%M · %d/%m/%Y") if dt else ""
 
 
-def conv_href(conv: dict, page_id: str, mode: str = "pancake") -> str:
+def _clock_dt(iso: str) -> str:
+    """Giờ cụ thể (giờ VN), gọn: "HH:MM" nếu hôm nay, else kèm ngày.
+
+    Dùng cho danh sách ảnh chụp (lọc thẻ) — nơi giờ tương đối sẽ bị lệ dần.
+    """
+    dt = _parse_dt(iso)
+    if not dt:
+        return ""
+    local = dt.astimezone(_DISPLAY_TZ)
+    now = datetime.now(_DISPLAY_TZ)
+    if local.date() == now.date():
+        return local.strftime("%H:%M")
+    if local.year == now.year:
+        return local.strftime("%H:%M · %d/%m")
+    return local.strftime("%H:%M · %d/%m/%Y")
+
+
+def conv_href(conv: dict, page_id: str, mode: str = "pancake", tag: str = "") -> str:
     """Đường dẫn mở 1 hội thoại.
 
     mode = "pancake" -> trang chat riêng cũ (/pancake/.../conversations/...)
     mode = "inbox"   -> màn Tin nhắn 2 cột (/tin-nhan?page_id=&conv_id=...)
+    tag  -> giữ bộ lọc thẻ đang chọn khi mở hội thoại (chỉ dùng cho mode "inbox").
     """
     cust = conv.get("customer_id", "")
     if mode == "inbox":
-        query = urlencode(
-            {"page_id": page_id, "conv_id": conv["conv_id"], "customer_id": cust}
-        )
-        return f"/tin-nhan?{query}"
+        params = {"page_id": page_id, "conv_id": conv["conv_id"], "customer_id": cust}
+        if tag:
+            params["tag"] = tag
+        return f"/tin-nhan?{urlencode(params)}"
     query = urlencode({"customer_id": cust})
     return (
         f'/pancake/pages/{escape(str(page_id))}/conversations/'
@@ -176,14 +236,18 @@ def conv_href(conv: dict, page_id: str, mode: str = "pancake") -> str:
 
 
 def _conv_card(
-    conv: dict, page_id: str, mode: str = "pancake", active: str = ""
+    conv: dict, page_id: str, mode: str = "pancake", active: str = "", tag: str = ""
 ) -> str:
     """Dựng 1 thẻ hội thoại (link bấm vào để mở trang chat), có avatar, tên,
-    tin nhắn cuối, thời gian tương đối và badge số tin / chưa đọc."""
+    tin nhắn cuối, thời gian và badge số tin / chưa đọc.
+
+    Cột thời gian hiện GIỜ cụ thể theo giờ VN (vd "16:17", khác ngày kèm ngày);
+    tooltip là giờ + ngày đầy đủ.
+    """
     name = escape(conv["name"])
     who = {"name": conv["name"], "id": conv.get("fb_id") or conv.get("conv_id", "0")}
     snippet = escape(conv["snippet"]) or '<i>(không có nội dung)</i>'
-    rel = escape(_relative_time(conv["updated_at"]))
+    shown_time = escape(_clock_dt(conv["updated_at"]))
     abs_dt = escape(_fmt_dt(conv["updated_at"]))
     unread = conv.get("unread_count", 0)
     unread_html = (
@@ -193,13 +257,14 @@ def _conv_card(
     cls = "card link on" if conv["conv_id"] == active else "card link"
     return f"""
       <li>
-        <a class="{cls}" href="{conv_href(conv, page_id, mode)}">
+        <a class="{cls}" href="{conv_href(conv, page_id, mode, tag)}">
           {_avatar(who)}
           <div class="info">
             <div class="crow">
               <span class="name">{name}</span>
-              <span class="time" title="{abs_dt}">{rel}</span>
+              <span class="time" title="{abs_dt}">{shown_time}</span>
             </div>
+            {_conv_tags_html(conv.get("tags") or [])}
             <div class="snippet">{snippet}</div>
             <div class="badges">
               <span class="badge">{conv.get('message_count', 0)} tin nhắn</span>
@@ -216,10 +281,11 @@ def render_recent_list(
     msg_type: str,
     mode: str = "pancake",
     active: str = "",
+    tag: str = "",
 ) -> str:
     """Chỉ phần danh sách thẻ (dùng cho cả trang đầy đủ lẫn polling fragment)."""
     kind = "nhắn tin" if msg_type == "INBOX" else "bình luận"
-    cards = "".join(_conv_card(c, page_id, mode, active) for c in convs)
+    cards = "".join(_conv_card(c, page_id, mode, active, tag) for c in convs)
     return (
         f'<ul class="list">{cards}</ul>'
         if convs

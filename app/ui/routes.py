@@ -4,6 +4,7 @@ Các màn hình này gọi Pancake API (đọc hội thoại) và Supabase (đ�
 Mọi lỗi đều được bắt lại và hiển thị ngay trên trang — không để 500 trắng màn.
 """
 
+from collections import Counter
 from urllib.parse import parse_qs, urlencode
 
 import httpx
@@ -17,6 +18,7 @@ from app.pancake.client import (
     get_conversation,
     list_conversations,
     list_pages,
+    list_tags,
     send_message,
     token_owner,
 )
@@ -33,6 +35,49 @@ router = APIRouter(tags=["ui"])
 # Số hội thoại nạp mặc định cho màn Tin nhắn / Khách hàng.
 _DEFAULT_LIMIT = 20
 _CUSTOMER_LIMIT = 100
+# Khi LỌC theo thẻ: nạp một mẻ lớn rồi lọc phía Python (Pancake không lọc thẻ ở
+# server), để "gọi ra" gần như toàn bộ hội thoại có gắn thẻ, không chỉ khung 20.
+_TAG_FETCH_LIMIT = 200
+
+
+# Nhớ page đang chọn qua cookie: vào lại /tin-nhan, /khach-hang (kể cả bấm menu,
+# không kèm ?page_id) sẽ dùng lại page gần nhất thay vì nhảy về page đầu.
+_PAGE_COOKIE = "last_page_id"
+_PAGE_COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 ngày
+
+
+def _wanted_page_id(request: Request, page_id: str) -> str:
+    """page_id từ URL; trống thì lấy 'page gần nhất' đã lưu trong cookie."""
+    return page_id or request.cookies.get(_PAGE_COOKIE, "")
+
+
+def _remember_page(resp, page_id: str) -> None:
+    """Ghi nhớ page vừa xem vào cookie (để lần sau vào không mất)."""
+    if page_id:
+        resp.set_cookie(
+            _PAGE_COOKIE, str(page_id),
+            max_age=_PAGE_COOKIE_MAX_AGE, samesite="lax", path="/",
+        )
+
+
+def _tag_facet(convs: list[dict]) -> list[tuple[int, int]]:
+    """Đếm số hội thoại theo từng thẻ -> [(tag_id, số hội thoại)], nhiều nhất trước."""
+    counter: Counter[int] = Counter()
+    for c in convs:
+        for t in c.get("tags", []):
+            counter[t] += 1
+    return sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def _filter_by_tag(convs: list[dict], tag: str) -> list[dict]:
+    """Lọc hội thoại có chứa thẻ `tag` (ID số dạng chuỗi). Rỗng/sai -> giữ nguyên."""
+    if not tag:
+        return convs
+    try:
+        tid = int(tag)
+    except ValueError:
+        return convs
+    return [c for c in convs if tid in c.get("tags", [])]
 
 
 async def _pick_page(page_id: str) -> tuple[list[dict], dict | None]:
@@ -115,15 +160,22 @@ async def dashboard(page_id: str = "") -> HTMLResponse:
 # ------------------------------------------------------------------ tin nhắn
 @router.get("/tin-nhan", response_class=HTMLResponse)
 async def inbox(
+    request: Request,
     page_id: str = "",
     conv_id: str = "",
     customer_id: str = "",
     limit: int = _DEFAULT_LIMIT,
+    tag: str = "",
     sent: int = 0,
     error: str = "",
 ) -> HTMLResponse:
-    """Hộp thư 2 cột: danh sách hội thoại bên trái, khung chat bên phải."""
+    """Hộp thư 2 cột: danh sách hội thoại bên trái, khung chat bên phải.
+
+    `tag` (ID số) -> chỉ hiện hội thoại có gắn thẻ đó (lọc trong khung đã nạp).
+    Không truyền `page_id` thì dùng lại page gần nhất (cookie) trước khi mặc định.
+    """
     limit = max(1, min(limit, 50))
+    page_id = _wanted_page_id(request, page_id)
     try:
         pages, page = await _pick_page(page_id)
         if page is None:
@@ -132,7 +184,15 @@ async def inbox(
                 status_code=502,
             )
         pid = page["id"]
-        convs = await list_conversations(pid, limit=limit)
+        # Có lọc thẻ -> nạp mẻ lớn để lấy hết hội thoại gắn thẻ; không thì nạp gọn.
+        convs = await list_conversations(
+            pid, limit=_TAG_FETCH_LIMIT if tag else limit
+        )
+        # Thanh lọc thẻ dựng từ TẤT CẢ hội thoại đã nạp; danh sách thì lọc theo thẻ.
+        facet = _tag_facet(convs)
+        # Tên + màu thẻ thật (public API); không có page token thì trả {} -> fallback.
+        tags_meta = await list_tags(pid)
+        convs = _filter_by_tag(convs, tag)
         # Chỉ nạp thread khi người dùng đã chọn một hội thoại.
         convo = (
             await get_conversation(pid, conv_id, customer_id or None)
@@ -141,41 +201,55 @@ async def inbox(
     except (PancakeError, httpx.HTTPError) as exc:
         return HTMLResponse(render_error(str(exc), "messages"), status_code=502)
 
-    return HTMLResponse(
+    resp = HTMLResponse(
         render_inbox(
             pages=pages, page_id=pid, page_name=page["name"], convs=convs,
             conv_id=conv_id, customer_id=customer_id, convo=convo, limit=limit,
-            sent=bool(sent), error=error,
+            sent=bool(sent), error=error, tags_facet=facet, active_tag=tag,
+            tags_meta=tags_meta,
         )
     )
+    _remember_page(resp, pid)  # nhớ page vừa xem cho lần sau
+    return resp
 
 
 @router.get("/tin-nhan/fragment/list", response_class=HTMLResponse)
 async def inbox_list_fragment(
-    page_id: str = "", conv_id: str = "", limit: int = _DEFAULT_LIMIT
+    request: Request,
+    page_id: str = "", conv_id: str = "", limit: int = _DEFAULT_LIMIT, tag: str = ""
 ) -> HTMLResponse:
-    """Chỉ cột danh sách hội thoại (JS gọi lại mỗi 10 giây)."""
+    """Chỉ cột danh sách hội thoại (JS gọi lại mỗi 10 giây), giữ nguyên lọc thẻ."""
     limit = max(1, min(limit, 50))
+    page_id = _wanted_page_id(request, page_id)
     try:
         _pages, page = await _pick_page(page_id)
         if page is None:
             return HTMLResponse("", status_code=502)
-        convs = await list_conversations(page["id"], limit=limit)
+        convs = _filter_by_tag(
+            await list_conversations(
+                page["id"], limit=_TAG_FETCH_LIMIT if tag else limit
+            ),
+            tag,
+        )
     except (PancakeError, httpx.HTTPError):
         # 502 -> JS bỏ qua nhịp này, giữ nguyên nội dung đang hiển thị.
         return HTMLResponse("", status_code=502)
     return HTMLResponse(
-        render_recent_list(convs, page["id"], "INBOX", mode="inbox", active=conv_id)
+        render_recent_list(
+            convs, page["id"], "INBOX", mode="inbox", active=conv_id, tag=tag
+        )
     )
 
 
 @router.get("/tin-nhan/fragment/thread", response_class=HTMLResponse)
 async def inbox_thread_fragment(
+    request: Request,
     page_id: str = "", conv_id: str = "", customer_id: str = ""
 ) -> HTMLResponse:
     """Chỉ phần bong bóng chat (JS gọi lại mỗi 8 giây)."""
     if not conv_id:
         return HTMLResponse("", status_code=204)
+    page_id = _wanted_page_id(request, page_id)
     try:
         _pages, page = await _pick_page(page_id)
         if page is None:
@@ -213,8 +287,9 @@ async def inbox_reply(request: Request) -> RedirectResponse:
 
 # ---------------------------------------------------------------- khách hàng
 @router.get("/khach-hang", response_class=HTMLResponse)
-async def customers(page_id: str = "") -> HTMLResponse:
+async def customers(request: Request, page_id: str = "") -> HTMLResponse:
     """Bảng khách đã nhắn tin vào page (nguồn: hội thoại INBOX của Pancake)."""
+    page_id = _wanted_page_id(request, page_id)
     try:
         pages, page = await _pick_page(page_id)
         if page is None:
@@ -226,4 +301,6 @@ async def customers(page_id: str = "") -> HTMLResponse:
     except (PancakeError, httpx.HTTPError) as exc:
         return HTMLResponse(render_error(str(exc), "customers"), status_code=502)
 
-    return HTMLResponse(render_customers(pages, page["id"], page["name"], convs))
+    resp = HTMLResponse(render_customers(pages, page["id"], page["name"], convs))
+    _remember_page(resp, page["id"])
+    return resp

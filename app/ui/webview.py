@@ -5,17 +5,51 @@ Dùng lại các hàm dựng thẻ/bong bóng của Pancake để 2 màn chat gi
 """
 
 from html import escape
+from urllib.parse import urlencode
 
+from app.pancake.client import tag_label as _tag_label
 from app.pancake.webview import (
     _avatar,
     _fmt_dt,
     _relative_time,
+    _tag_color,
     conv_href,
     render_composer,
     render_recent_list,
     render_thread,
 )
 from app.ui.shell import render_shell, stat
+
+
+def render_tag_filter(
+    facet: list[tuple[int, int]],
+    active_tag: str,
+    page_id: str,
+    tags_meta: dict | None = None,
+) -> str:
+    """Thanh chip lọc theo thẻ. `facet` = [(tag_id, số hội thoại)] đã sắp xếp.
+
+    `tags_meta` = {id: {'text','color'}} tên/màu thật từ public API (nếu có).
+    Bấm 1 chip -> lọc; bấm 'Tất cả' -> bỏ lọc. Chip đang chọn được tô đậm.
+    """
+    if not facet:
+        return ""
+    all_cls = "tchip all on" if not active_tag else "tchip all"
+    chips = (
+        f'<a class="{all_cls}" href="/tin-nhan?page_id={escape(page_id)}">'
+        f"Tất cả</a>"
+    )
+    for tid, count in facet:
+        href = "/tin-nhan?" + urlencode({"page_id": page_id, "tag": tid})
+        on = " on" if active_tag == str(tid) else ""
+        color = _tag_color(tid, tags_meta)
+        chips += (
+            f'<a class="tchip{on}" href="{href}" '
+            f'style="--tc:{color}" title="{count} hội thoại">'
+            f'<span class="tdot"></span>{escape(_tag_label(tid, tags_meta))}'
+            f'<span class="tnum">{count}</span></a>'
+        )
+    return f'<div class="tagbar">{chips}</div>'
 
 
 def _page_select(pages: list[dict], current: str, base: str) -> str:
@@ -49,7 +83,8 @@ def render_dashboard(
         pancake_stats = (
             '<div class="stats">'
             + stat("Page truy cập được", str(pancake["total_pages"]),
-                   f'{pancake["active_pages"]} page đang hoạt động')
+                   f'{pancake["active_pages"]} page đang hoạt động',
+                   href="/pancake/webview")
             + stat("Hội thoại đang mở", str(pancake["conv_count"]),
                    escape(pancake["page_name"]))
             + stat("Tin chưa đọc", str(pancake["unread"]),
@@ -142,15 +177,29 @@ def render_inbox(
     limit: int,
     sent: bool = False,
     error: str = "",
+    tags_facet: list[tuple[int, int]] | None = None,
+    active_tag: str = "",
+    tags_meta: dict | None = None,
 ) -> str:
     """Màn Tin nhắn 2 cột: trái = danh sách hội thoại, phải = khung chat."""
+    lhead_label = (
+        f"{len(convs)} hội thoại có thẻ « {escape(_tag_label(int(active_tag), tags_meta))} »"
+        if active_tag and active_tag.lstrip("-").isdigit()
+        else f"{len(convs)} hội thoại mới nhất"
+    )
+    # Đang lọc thẻ -> danh sách là "ảnh chụp" mẻ lớn, không tự cập nhật (cho nhẹ).
+    live_html = (
+        '<span class="live" style="margin-left:auto">'
+        '<span class="dot"></span>tự cập nhật</span>'
+        if not active_tag
+        else '<span class="lhint" style="margin-left:auto">ảnh chụp</span>'
+    )
     left = (
         '<div class="inbox-list">'
-        f'<div class="lhead"><b>{len(convs)}</b> hội thoại mới nhất'
-        '<span class="live" style="margin-left:auto">'
-        '<span class="dot"></span>tự cập nhật</span></div>'
+        f'<div class="lhead">{lhead_label}{live_html}</div>'
+        f'{render_tag_filter(tags_facet or [], active_tag, page_id, tags_meta)}'
         f'<div class="lbody" id="feed">'
-        f'{render_recent_list(convs, page_id, "INBOX", mode="inbox", active=conv_id)}'
+        f'{render_recent_list(convs, page_id, "INBOX", mode="inbox", active=conv_id, tag=active_tag)}'
         "</div></div>"
     )
 
@@ -288,7 +337,8 @@ _INBOX_JS = """
         .catch(function(){});
     }, ms);
   }
-  poll('feed', '/tin-nhan/fragment/list' + q, 10000, false);
+  // Đang lọc thẻ (?tag=): danh sách là ảnh chụp mẻ lớn -> không tự nạp lại.
+  if (!/[?&]tag=/.test(q)) poll('feed', '/tin-nhan/fragment/list' + q, 10000, false);
   poll('thread', '/tin-nhan/fragment/thread' + q, 8000, true);
 
   var t = document.getElementById('thread');

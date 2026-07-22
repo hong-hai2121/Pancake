@@ -19,7 +19,15 @@ class Settings(BaseSettings):
 
     # --- Pancake (pages.fm) ---
     pancake_access_token: str = ""                       # JWT lấy từ Pancake POS
-    pancake_base_url: str = "https://pages.fm/api/v1"    # gốc API, ít khi đổi
+    pancake_base_url: str = "https://pages.fm/api/v1"    # gốc API nội bộ, ít khi đổi
+    # Public API (để lấy TÊN + MÀU thẻ): cần page_access_token riêng mỗi page.
+    pancake_public_base_url: str = "https://pages.fm/api/public_api/v1"
+    # JSON map {"page_id": "page_access_token"} — tự sinh & lưu lại, hoặc điền tay.
+    # Thiếu page nào thì màn Tin nhắn tự hiện "Thẻ #<id>" cho page đó.
+    pancake_page_tokens: str = ""
+    # Các page (ID, phân tách bởi dấu phẩy) được phép TỰ SINH page_access_token
+    # khi chưa có (cần token Pancake quyền Admin). Để trống = không tự sinh page nào.
+    pancake_tag_page_ids: str = ""
 
     # --- Facebook Messenger (luồng Graph cũ, hiện không dùng) ---
     fb_page_access_token: str = ""      # token page để gọi Send API
