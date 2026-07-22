@@ -226,7 +226,9 @@ def render_inbox(
             f'<div class="info"><div class="name">{cust_name}</div>'
             f'<div class="sub">{escape(page_name)}</div></div>'
             f'<a class="btn" href="{conv_href({"conv_id": conv_id, "customer_id": customer_id}, page_id)}">'
-            "Mở toàn màn hình</a></div>"
+            "Mở toàn màn hình</a>"
+            '<button type="button" id="btn-copy" class="btn" '
+            'title="Sao chép toàn bộ hội thoại">📋 Copy</button></div>'
             + flash_html
             + f'<div class="thread" id="thread">'
               f'{render_thread(convo.get("messages") or [])}</div>'
@@ -407,6 +409,46 @@ _INBOX_JS = """
         sug.disabled = false; sug.textContent = old;
         if (hint) { hint.textContent = '⚠ Lỗi mạng, thử lại.'; hint.classList.add('warn'); }
       });
+    });
+  }
+
+  // Nút "Copy": gom toàn bộ hội thoại đang hiển thị (#thread) thành text rồi chép
+  // vào clipboard. Đọc DOM lúc bấm nên luôn khớp nội dung mới nhất (kể cả sau
+  // auto-refresh). Có fallback execCommand cho trình duyệt không hỗ trợ clipboard.
+  var cp = document.getElementById('btn-copy');
+  if (cp) {
+    cp.addEventListener('click', function(){
+      var th = document.getElementById('thread');
+      if (!th) return;
+      var nameEl = document.querySelector('.chead .name');
+      var lines = nameEl ? ['Hội thoại với ' + nameEl.textContent.trim(), ''] : [];
+      var msgs = th.querySelectorAll('.msg');
+      for (var i = 0; i < msgs.length; i++) {
+        var who = msgs[i].classList.contains('out') ? 'Shop' : 'Khách';
+        var b = msgs[i].querySelector('.bubble');
+        var txt = b ? b.textContent.trim() : '';
+        var tmEl = msgs[i].querySelector('.mtime');
+        var tm = tmEl ? tmEl.textContent.trim() : '';
+        if (txt) lines.push(who + (tm ? ' (' + tm + ')' : '') + ': ' + txt);
+      }
+      var text = lines.join('\\n');
+      var old = cp.textContent;
+      function done(ok){
+        cp.textContent = ok ? '✓ Đã copy' : '✕ Lỗi copy';
+        setTimeout(function(){ cp.textContent = old; }, 1500);
+      }
+      function fallback(){
+        try {
+          var t = document.createElement('textarea');
+          t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+          document.body.appendChild(t); t.focus(); t.select();
+          var ok = document.execCommand('copy');
+          document.body.removeChild(t); done(ok);
+        } catch (e) { done(false); }
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function(){ done(true); }, fallback);
+      } else { fallback(); }
     });
   }
 })();

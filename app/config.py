@@ -51,11 +51,13 @@ class Settings(BaseSettings):
     # Ngưỡng điểm tương đồng: chỉ nhận dòng có similarity >= ngưỡng.
     # 0.0 = không lọc (luôn trả top-k). Đặt ~0.6 để "không đủ giống thì trả rỗng".
     rag_match_threshold: float = 0.0
-    # Bộ SÀNG THÔ (tuỳ chọn) cho nút "Gợi ý trả lời": bỏ bớt câu mẫu có
-    # similarity < ngưỡng TRƯỚC khi đưa lên GPT. Mặc định 0 = TẮT — để GPT tự phán
-    # xử "có câu nào phù hợp không" (đúng logic: GPT là người chọn, không phải cosine).
-    # Chỉ đặt > 0 nếu muốn tiết kiệm: câu quá lạc đề thì khỏi tốn 1 lượt gọi GPT.
-    rag_suggest_threshold: float = 0.0
+    # NGƯỠNG CHẶN (code, trước LLM) cho nút "Gợi ý trả lời": bỏ câu mẫu có
+    # similarity < ngưỡng TRƯỚC khi đưa lên GPT. Nếu không câu nào đạt -> trả
+    # NO_MATCH luôn, KHÔNG gọi LLM (chặn model "nặn" câu từ mẩu tri thức lạc đề +
+    # tiết kiệm tiền). GPT chỉ chọn trong số đã đạt ngưỡng. PHẢI tune trên bộ test
+    # thật: xem điểm ở trang "Thử tin nhắn" — quá cao thì hay "chưa có", quá thấp
+    # thì lọt câu lạc đề. 0 = tắt (để GPT tự quyết hoàn toàn).
+    rag_suggest_threshold: float = 0.55
 
     # --- Supabase / Postgres ---
     supabase_url: str = ""      # https://<project>.supabase.co

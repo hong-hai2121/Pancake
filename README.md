@@ -91,7 +91,7 @@ Tin khách ──> bot/brain ──┬── bot/flow (kịch bản) ──> tr�
 | `EMBEDDING_PROVIDER=openai` · `EMBEDDING_MODEL=text-embedding-3-small` · `EMBEDDING_DIM=1536` | Vector hóa;**1536 phải khớp cột `embedding` trong DB**                               |
 | `SUPABASE_URL` · `SUPABASE_KEY`                                                                  | `SUPABASE_KEY` = **secret key** `sb_secret_...` (chạy phía server)                   |
 | `RAG_TOP_K=5` · `RAG_MATCH_THRESHOLD=0.0`                                                        | Số kết quả lấy về · ngưỡng lọc (đặt`0.6` để "không đủ giống thì trả rỗng") |
-| `RAG_SUGGEST_THRESHOLD=0.0`                                                                         | Bộ **sàng thô** cho nút **"Gợi ý trả lời"**: bỏ câu mẫu quá lạc đề TRƯỚC khi đưa lên GPT. Mặc định `0` = **tắt, để GPT tự quyết** "có câu nào phù hợp không". Đặt > 0 chỉ để tiết kiệm lượt gọi GPT |
+| `RAG_SUGGEST_THRESHOLD=0.55`                                                                        | **Ngưỡng chặn (code)** cho nút **"Gợi ý trả lời"**: bỏ câu mẫu có similarity < ngưỡng **TRƯỚC** khi gọi LLM; không câu nào đạt → NO_MATCH luôn, **không tốn 1 lượt gọi model**. **PHẢI tune** trên bộ test thật (xem điểm ở trang Thử tin nhắn). `0` = tắt |
 | `FB_*`, `GEMINI_API_KEY`, `DATABASE_URL`                                                        | Không bắt buộc (luồng Graph/Gemini hiện không dùng)                                       |
 
 ## Database (Supabase)
@@ -403,7 +403,7 @@ chỉ nói chuyện với Supabase/OpenAI, **Bảng điều khiển** đọc c�
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Kịch bản**       | *Xem*: `list_scripts()` đọc bảng `kich_ban`, **cố ý không lấy cột `embedding`** cho nhẹ, rồi gom nhóm theo tên kịch bản. *Thêm*: nội dung → `embed()` gọi **OpenAI** → nhận vector 1536 chiều → ghi 1 dòng kèm vector dạng literal `[0.1,0.2,…]`                                                                                                                                      |
 | **Hội thoại mẫu** | Giống trên, ghi vào`hoi_thoai_mau`. Điểm khác: **vector hoá CÂU HỎI** (không phải câu trả lời) — vì lúc chạy thật ta so tin nhắn của khách với câu hỏi mẫu                                                                                                                                                                                                                                              |
-| **Thử tin nhắn**   | Gõ tin giả làm khách →`embed()` → gọi **2 RPC** `match_documents` + `match_kich_ban`. Phép so sánh cosine `<=>` chạy **trong Postgres** và dùng **index HNSW** — Python chỉ gửi vector rồi nhận về kết quả đã xếp hạng sẵn (không kéo cả bảng về). Tick ô *kèm câu trả lời* hiện **2 ô để đối chiếu**: **Bước 4 — Trả lời tự do** (`build_prompt()` ghép toàn bộ ngữ cảnh, LLM tự viết) và **Bước 5 — Gợi ý trả lời** (`choose_reply()` — GPT **chọn** trong top 3 câu mẫu, không hợp → **NO_MATCH → không gợi ý**, đúng logic nút "Gợi ý trả lời" ở màn Tin nhắn) |
+| **Thử tin nhắn**   | Gõ tin giả làm khách →`embed()` → gọi **2 RPC** `match_documents` + `match_kich_ban`. Phép so sánh cosine `<=>` chạy **trong Postgres** và dùng **index HNSW** — Python chỉ gửi vector rồi nhận về kết quả đã xếp hạng sẵn (không kéo cả bảng về). Tick ô *kèm câu trả lời* hiện **2 ô để đối chiếu**: **Bước 4 — Trả lời theo toàn bộ tri thức** (`build_prompt()` để LLM **tự viết** — chỉ để đối chiếu, KHÔNG gửi khách vì có thể sửa nghĩa) và **Bước 5 — Gợi ý trả lời** (`choose_reply()` — GPT **chỉ CHỌN** 1 trong top 3 câu mẫu rồi trả **NGUYÊN VĂN** câu đã duyệt, không hợp → **NO_MATCH → không gợi ý**; đúng logic nút "Gợi ý trả lời" ở màn Tin nhắn) |
 
 - **Chống gửi lại form**: mọi thao tác thêm/xoá đều POST rồi **redirect 303** kèm thông báo trên URL — bấm F5 sau khi thêm sẽ không tạo trùng dòng.
 - **Ngưỡng lọc**: `RAG_MATCH_THRESHOLD` trong `.env`. Để `0` là luôn trả top-k; đặt `0.6` thì câu lạc đề sẽ trả **rỗng** (giống cách n8n hoạt động).
@@ -484,6 +484,7 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 | Xem page / người nhắn / khung chat + trả lời tay (Pancake)                  | ✅ chạy                                                      |
 | Auto-refresh giao diện (poll fragment)                                          | ✅ chạy —**chỉ page đang mở trên trình duyệt**  |
 | Cache danh sách page 60s (tránh Pancake chặn 429)                             | ✅ đã verify (hết 502 khi mở dồn dập)                   |
+| Cache **SWR** `list_conversations` (chuyển trang lần sau hết khựng)         | ✅ đã verify (trả bản cũ ngay + refresh nền, gọi đồng bộ chỉ lần đầu/ quá 10ph) |
 | RAG: embed, retrieve, LLM gpt-4o-mini, insert kèm embedding, distill            | ✅ đã verify                                                |
 | Tìm kiếm vector chạy**trong Postgres** (RPC + index HNSW)               | ✅ đã verify (RPC đã tạo trên DB)                       |
 | Ngưỡng lọc`match_threshold` (lạc đề → trả rỗng)                       | ✅ đã verify (0.6 → 0 dòng với câu lạc đề)           |
@@ -516,10 +517,21 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
    **Logic (GPT là người chọn, không phải cosine):**
    1. Nhúng câu hỏi → Supabase lấy **top 5** câu mẫu tương đồng (`hoi_thoai_mau`),
       **không cắt cứng** theo điểm cosine.
-   2. Gửi câu hỏi + **top 3** câu mẫu lên GPT để **chọn/soạn câu trả lời phù hợp
-      nhất**, chỉ dựa vào các câu mẫu (không được bịa).
+   2. Gửi câu hỏi + **top 3** câu mẫu (có đánh SỐ) lên GPT để GPT **CHỌN** câu phù
+      hợp nhất (trả về SỐ). Câu gửi khách lấy **NGUYÊN VĂN** câu trả lời đã duyệt —
+      **model KHÔNG được viết lại** (an toàn y tế: tránh lược vế điều kiện, đổi sắc
+      thái, hay trộn câu mẫu). Model chỉ đóng vai *người chọn*, không phải *người viết*.
    3. GPT thấy **không câu nào hợp → trả `NO_MATCH` → KHÔNG gợi ý** (chỉ hiện dòng
-      "Câu hỏi này chưa có trong tri thức — không gợi ý", giữ nguyên ô soạn).
+      "Câu hỏi này chưa có trong tri thức — không gợi ý", giữ nguyên ô soạn). Output
+      lạ / số ngoài phạm vi cũng coi là không gợi ý (an toàn).
+
+   **3 lớp chặn (defense-in-depth) trong `choose_reply`:** (a) **ngưỡng code**
+   `RAG_SUGGEST_THRESHOLD` (0.55, tune được) bỏ câu lạc đề **trước khi gọi LLM** —
+   dưới ngưỡng thì NO_MATCH luôn, không tốn tiền; (b) model trả **JSON** `{"chon":
+   <số>}` (0 = không có) nên **hết lệ thuộc so chuỗi** NO_MATCH; (c) tin khách được
+   bọc trong ranh giới `<<<KHACH … KHACH>>>` + dặn model coi là **dữ liệu, không
+   phải mệnh lệnh** (chống prompt injection). Câu gửi khách **luôn nguyên văn câu
+   mẫu hoặc NO_MATCH** — kể cả khi khách cố "bỏ qua hướng dẫn, kê liều thuốc…".
    `RAG_SUGGEST_THRESHOLD` chỉ là bộ **sàng thô tuỳ chọn** (mặc định `0` = tắt, để
    GPT tự phán xử). Kho tri thức rỗng thì bỏ qua luôn, không gọi GPT.
    *File*: [app/bot/brain.py](app/bot/brain.py) `suggest_reply` ·

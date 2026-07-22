@@ -1,5 +1,6 @@
 """Client gọi Pancake API (pages.fm) bằng access token trong .env."""
 
+import asyncio
 import base64
 import binascii
 import json
@@ -328,15 +329,10 @@ def _normalize_conv(conv: dict) -> dict:
     }
 
 
-async def list_conversations(
-    page_id: str, msg_type: str = "INBOX", limit: int | None = None
+async def _fetch_conversations(
+    page_id: str, msg_type: str, limit: int | None
 ) -> list[dict]:
-    """Danh sách hội thoại của 1 page, mới nhất trước.
-
-    `msg_type` = "INBOX" (tin nhắn riêng) hoặc "COMMENT" (bình luận).
-    `limit` được gửi thẳng cho API (API nhận tham số `limit`, mặc định ~60) rồi
-    vẫn cắt lại phía Python cho chắc. Mỗi phần tử đã chuẩn hóa (xem `_normalize_conv`).
-    """
+    """Gọi Pancake THẬT (không cache) lấy danh sách hội thoại đã chuẩn hoá."""
     params: dict = {"type": msg_type}
     if limit is not None:
         params["limit"] = limit
@@ -346,6 +342,63 @@ async def list_conversations(
     items.sort(key=lambda c: c["updated_at"], reverse=True)
     if limit is not None:
         items = items[:limit]
+    return items
+
+
+# Cache stale-while-revalidate cho danh sách hội thoại. Mục tiêu: lần đầu vào 1
+# trang thì chịu delay gọi Pancake; các lần sau **trả bản cũ NGAY** rồi làm mới
+# ngầm — nên chuyển trang không còn khựng. Khoá theo (page, loại, limit) để mỗi
+# màn (inbox 20 / khách 100 / dashboard 50 / lọc thẻ 200) có bản riêng, không lẫn.
+_CONV_CACHE: dict[tuple, dict] = {}
+_CONV_FRESH = 8.0     # <8s: coi là còn mới -> trả luôn, khỏi gọi lại
+_CONV_STALE = 600.0   # >10 phút: coi như quá cũ -> gọi đồng bộ lại cho chắc
+
+
+async def _refresh_conversations(
+    key: tuple, page_id: str, msg_type: str, limit: int | None
+) -> None:
+    """Làm mới cache ngầm (cho SWR). Lỗi thì GIỮ bản cũ, chỉ mở lại khoá refresh."""
+    try:
+        items = await _fetch_conversations(page_id, msg_type, limit)
+        _CONV_CACHE[key] = {"at": time.monotonic(), "data": items, "refreshing": False}
+    except Exception:  # best-effort nền: không để bản cũ bị mất vì 1 lần lỗi mạng
+        entry = _CONV_CACHE.get(key)
+        if entry:
+            entry["refreshing"] = False
+
+
+async def list_conversations(
+    page_id: str, msg_type: str = "INBOX", limit: int | None = None
+) -> list[dict]:
+    """Danh sách hội thoại của 1 page, mới nhất trước (có cache SWR).
+
+    `msg_type` = "INBOX" (tin nhắn riêng) hoặc "COMMENT" (bình luận).
+    `limit` được gửi thẳng cho API rồi vẫn cắt lại phía Python cho chắc. Mỗi phần
+    tử đã chuẩn hóa (xem `_normalize_conv`).
+
+    Cache: còn mới (<8s) trả ngay; cũ hơn nhưng chưa quá hạn thì **trả bản cũ ngay
+    lập tức** và gọi Pancake làm mới NỀN (lần vào sau thấy dữ liệu mới); chưa có
+    cache / quá cũ thì gọi đồng bộ (chỉ lần đầu chịu delay).
+    """
+    key = (str(page_id), msg_type, limit)
+    now = time.monotonic()
+    entry = _CONV_CACHE.get(key)
+
+    if entry:
+        age = now - entry["at"]
+        if age < _CONV_FRESH:
+            return entry["data"]                     # còn mới -> trả ngay
+        if age < _CONV_STALE:
+            if not entry.get("refreshing"):          # tránh nhiều refresh chồng nhau
+                entry["refreshing"] = True
+                asyncio.create_task(
+                    _refresh_conversations(key, page_id, msg_type, limit)
+                )
+            return entry["data"]                      # SWR: trả bản cũ ngay
+
+    # Không có cache hoặc đã quá cũ -> gọi đồng bộ (lần đầu chịu delay).
+    items = await _fetch_conversations(page_id, msg_type, limit)
+    _CONV_CACHE[key] = {"at": time.monotonic(), "data": items, "refreshing": False}
     return items
 
 

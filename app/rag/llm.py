@@ -18,16 +18,25 @@ def _client():
     return AsyncOpenAI(api_key=settings.openai_api_key)
 
 
-async def complete(prompt: str, temperature: float = 0.4) -> str:
-    """Sinh câu trả lời từ prompt đã ghép sẵn (xem bot/prompt.build_prompt)."""
+async def complete(
+    prompt: str, temperature: float = 0.4, response_format: dict | None = None
+) -> str:
+    """Sinh câu trả lời từ prompt đã ghép sẵn (xem bot/prompt.build_prompt).
+
+    `response_format` — truyền thẳng cho OpenAI, vd {"type": "json_object"} để ép
+    model trả JSON hợp lệ (dùng cho bước CHỌN câu mẫu). None = trả text thường.
+    """
     if settings.llm_provider != "openai":
         raise LLMError(
             f"Chỉ hỗ trợ llm_provider=openai (đang là '{settings.llm_provider}'). "
             f"Đặt LLM_PROVIDER=openai."
         )
-    resp = await _client().chat.completions.create(
-        model=settings.llm_model,             # gpt-4o-mini
-        messages=[{"role": "user", "content": prompt}],
-        temperature=temperature,
-    )
+    kwargs: dict = {
+        "model": settings.llm_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+    }
+    if response_format is not None:
+        kwargs["response_format"] = response_format
+    resp = await _client().chat.completions.create(**kwargs)
     return (resp.choices[0].message.content or "").strip()

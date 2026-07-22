@@ -1,7 +1,9 @@
 """Vector hóa câu (gọi API embedding).
 
-Provider mặc định: OpenAI text-embedding-3-small, rút gọn về `embedding_dim`
-(768) để khớp cột vector(768) trong scripts/init_db.sql.
+Provider mặc định: OpenAI text-embedding-3-small (chiều gốc 1536). Số chiều lấy
+từ `settings.embedding_dim` (đặt trong .env = 1536) để khớp cột embedding
+`vector(1536)` trong DB thật. Truyền `dimensions=1536` = dùng TRỌN kích thước gốc
+của model, KHÔNG cắt bớt (không mất thông tin).
 """
 
 from functools import lru_cache
@@ -32,7 +34,7 @@ async def _openai_embed(texts: list[str]) -> list[list[float]]:
     resp = await _client().embeddings.create(
         model=settings.embedding_model,       # text-embedding-3-small
         input=inputs,
-        dimensions=settings.embedding_dim,    # 768 -> khớp schema
+        dimensions=settings.embedding_dim,    # 1536 = full, khớp cột vector(1536) DB thật
     )
     return [d.embedding for d in resp.data]
 

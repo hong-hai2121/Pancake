@@ -4,8 +4,10 @@ Thứ tự ưu tiên: (1) đi theo KỊCH BẢN bán hàng nếu khớp, (2) n�
 RAG (tìm hội thoại mẫu tương tự) + LLM để trả lời tự nhiên.
 """
 
+import json
+
 from app.bot.flow import next_step
-from app.bot.prompt import NO_MATCH_SENTINEL, build_prompt, build_suggest_prompt
+from app.bot.prompt import build_prompt, build_suggest_prompt
 from app.bot.session import get_session, save_session
 from app.config import settings
 from app.db.queries import search_similar
@@ -17,28 +19,71 @@ from app.rag.retriever import retrieve
 _SUGGEST_CANDIDATES = 3
 
 
-async def choose_reply(question: str, candidates: list[dict]) -> dict:
-    """GPT CHỌN/soạn câu trả lời từ các câu mẫu ĐÃ TÌM SẴN (không tự tìm lại).
+def _parse_choice_json(raw: str, n: int) -> int | None:
+    """Đọc {"chon": <số>} từ output JSON của model -> index 0-based (hoặc None).
 
-    Tách riêng để nút "Gợi ý trả lời" và trang "Thử tin nhắn" dùng CHUNG một
-    logic. `candidates` = list {cau_hoi, cau_tra_loi, ...} đã xếp theo tương đồng;
-    chỉ lấy top `_SUGGEST_CANDIDATES` đưa lên GPT.
-
-    Trả về {"reply": <câu>, "no_match": False} nếu chọn được;
-    {"reply": None, "no_match": True} nếu không có câu mẫu / GPT trả NO_MATCH.
+    AN TOÀN: JSON hỏng / thiếu "chon" / chon=0 / ngoài [1, n] -> None (không gợi ý).
+    Dùng SỐ thay chuỗi NO_MATCH nên hết lệ thuộc so chuỗi ("NO_MATCH." / **NO_MATCH**
+    / "tôi phải trả về NO_MATCH" đều không còn làm trượt).
     """
-    cands = candidates[:_SUGGEST_CANDIDATES]
-    if not cands:
-        return {"reply": None, "no_match": True}
+    try:
+        data = json.loads(raw or "")
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    chon = data.get("chon")
+    if not isinstance(chon, int) or isinstance(chon, bool):
+        try:                                   # phòng model trả "2" dạng chuỗi
+            chon = int(str(chon).strip())
+        except (ValueError, TypeError, AttributeError):
+            return None
+    return chon - 1 if 1 <= chon <= n else None
+
+
+async def choose_reply(question: str, candidates: list[dict]) -> dict:
+    """GPT CHỌN 1 câu mẫu, ta trả về câu trả lời NGUYÊN VĂN (KHÔNG cho model viết).
+
+    An toàn y tế: câu trả lời mẫu do Bác Sĩ Hội soạn & kiểm chứng nên model chỉ
+    được đóng vai NGƯỜI CHỌN — trả JSON {"chon": <số>} (0 = không có câu nào hợp).
+    Câu gửi khách lấy y nguyên `cau_tra_loi` của câu mẫu đó, không sửa một chữ,
+    tránh việc model lược mất vế điều kiện / đổi sắc thái / trộn câu.
+
+    3 lớp chặn (defense-in-depth):
+      1. NGƯỠNG (code): bỏ câu mẫu có similarity < `rag_suggest_threshold` TRƯỚC khi
+         gọi LLM. Không câu nào đạt -> NO_MATCH luôn, KHÔNG tốn 1 lượt gọi model.
+      2. JSON `{"chon": <số>}` — parse chắc, không lệ thuộc so chuỗi.
+      3. output lạ / số ngoài phạm vi -> coi là không gợi ý.
+
+    Tách riêng để nút "Gợi ý trả lời" và trang "Thử tin nhắn" dùng CHUNG một logic.
+    `candidates` = list {cau_hoi, cau_tra_loi, similarity, ...} đã xếp theo tương đồng.
+
+    Trả về:
+      - chọn được: {"reply": <cau_tra_loi NGUYÊN VĂN>, "no_match": False,
+                    "chosen": <câu mẫu được chọn>}
+      - không đạt ngưỡng / chon=0 / output lạ: {"reply": None, "no_match": True,
+                    "chosen": None}
+    """
+    # Lớp 1 — chặn bằng code: chỉ giữ câu đạt ngưỡng rồi lấy top N.
+    floor = settings.rag_suggest_threshold
+    cands = [c for c in candidates if (c.get("similarity") or 0) >= floor]
+    cands = cands[:_SUGGEST_CANDIDATES]
+    if not cands:                          # lạc đề hết -> NO_MATCH, KHÔNG gọi LLM
+        return {"reply": None, "no_match": True, "chosen": None}
 
     prompt = build_suggest_prompt(question, cands)
-    raw = await complete(prompt, temperature=0.3)   # chọn -> cần ổn định
-    reply = (raw or "").strip()
+    raw = await complete(
+        prompt, temperature=0.0, response_format={"type": "json_object"}
+    )
+    idx = _parse_choice_json(raw, len(cands))
+    if idx is None:                        # chon=0 / JSON hỏng / ngoài phạm vi
+        return {"reply": None, "no_match": True, "chosen": None}
 
-    # GPT tự quyết: không câu mẫu nào phù hợp -> NO_MATCH -> không gợi ý.
-    if not reply or NO_MATCH_SENTINEL in reply.upper():
-        return {"reply": None, "no_match": True}
-    return {"reply": reply, "no_match": False}
+    chosen = cands[idx]
+    reply = (chosen.get("cau_tra_loi") or "").strip()   # NGUYÊN VĂN, không sửa
+    if not reply:                          # câu mẫu rỗng bất thường -> coi như không có
+        return {"reply": None, "no_match": True, "chosen": None}
+    return {"reply": reply, "no_match": False, "chosen": chosen}
 
 
 async def suggest_reply(text: str) -> dict:
@@ -49,32 +94,27 @@ async def suggest_reply(text: str) -> dict:
     gửi tin đi và KHÔNG đọc/ghi phiên khách (tránh lệ thuộc bảng trang_thai_khach
     còn lệch schema — việc căn lại thuộc Tầng 2 của lộ trình).
 
-    Luồng (đúng logic mong muốn):
-      1. Nhúng câu hỏi rồi lấy **top-k** câu mẫu tương đồng từ Supabase (mặc định
-         KHÔNG cắt cứng theo cosine — để GPT tự phán xử; `rag_suggest_threshold`
-         chỉ là bộ sàng thô tuỳ chọn, mặc định 0 = tắt).
-      2. Gửi câu hỏi + **top {_SUGGEST_CANDIDATES}** câu mẫu lên GPT để CHỌN/soạn
-         câu trả lời phù hợp nhất, chỉ dựa vào các câu mẫu.
-      3. GPT thấy không câu nào hợp -> trả `NO_MATCH` -> ta coi là "câu hỏi chưa
-         có trong tri thức" -> KHÔNG gợi ý.
+    Luồng:
+      1. Nhúng câu hỏi rồi lấy **top-k** câu mẫu tương đồng (kèm điểm similarity).
+      2. `choose_reply` lo phần còn lại: chặn ngưỡng (code) -> GPT CHỌN (JSON) ->
+         trả NGUYÊN VĂN câu mẫu được chọn, hoặc NO_MATCH.
 
     Trả về:
-      - có gợi ý:  {"reply": <câu>, "nguon": [<câu mẫu đã gửi GPT>...]}
+      - có gợi ý:  {"reply": <NGUYÊN VĂN>, "nguon": [<câu mẫu được chọn>]}
       - không hợp: {"reply": None, "nguon": [], "no_match": True}
     """
     vector = await embed(text)
-    # Top-k câu mẫu tương đồng; threshold mặc định 0 -> lấy đủ để GPT xét.
-    rows = await search_similar(
-        vector, k=settings.rag_top_k, threshold=settings.rag_suggest_threshold
-    )
+    # Lấy top-k kèm điểm; việc lọc ngưỡng + chọn dồn hết vào choose_reply cho nhất quán.
+    rows = await search_similar(vector, k=settings.rag_top_k)
     if not rows:                       # kho tri thức chưa có gì để đối chiếu
         return {"reply": None, "nguon": [], "no_match": True}
 
-    candidates = rows[:_SUGGEST_CANDIDATES]
-    result = await choose_reply(text, candidates)   # GPT chọn / NO_MATCH
+    result = await choose_reply(text, rows)   # chặn ngưỡng + GPT chọn / NO_MATCH
     if result["no_match"]:
         return {"reply": None, "nguon": [], "no_match": True}
-    return {"reply": result["reply"], "nguon": candidates}
+    # nguon = đúng câu mẫu được chọn (reply là NGUYÊN VĂN câu trả lời của nó).
+    chosen = result.get("chosen")
+    return {"reply": result["reply"], "nguon": [chosen] if chosen else rows}
 
 
 async def generate_reply(sender_id: str, text: str) -> str:

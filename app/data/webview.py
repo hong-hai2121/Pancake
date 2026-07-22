@@ -11,6 +11,8 @@ Phần khung (menu trái, topbar, CSS) lấy từ `app.ui.shell`.
 from datetime import datetime, timezone
 from html import escape
 
+from app.bot.prompt import NO_MATCH_SENTINEL
+from app.config import settings
 from app.ui.shell import flash as flash_bar
 from app.ui.shell import render_shell, tabs_bar
 
@@ -238,7 +240,7 @@ def render_simulate(
         </div>
         <label class="check">
           <input type="checkbox" name="tra_loi" value="1" {checked}>
-          Kèm câu trả lời của bot (gọi gpt-4o-mini — tốn thêm 1 lượt API)
+          Kèm câu trả lời của bot (gọi {settings.llm_model} — tốn thêm 1 lượt API)
         </label>
         <button type="submit">Thử truy xuất</button>
       </form>"""
@@ -329,27 +331,38 @@ def render_simulate(
           f'ở đây để bạn đối chiếu.</p>'
     )
 
-    # --- Bước 4 (tuỳ chọn): trả lời TỰ DO — ghép toàn bộ ngữ cảnh cho LLM ---
+    # --- Bước 4 (tuỳ chọn): trả lời dựa TOÀN BỘ tri thức truy xuất được ---
     step4 = ""
     if tra_loi:
+        prompt_details = (
+            f'<details><summary>Xem prompt đã gửi cho {settings.llm_model}</summary>'
+            f'<pre class="prompt">{escape(prompt)}</pre></details>'
+        )
         if answer_error:
             body = f'<div class="flash err">✕ {escape(answer_error)}</div>'
+        elif NO_MATCH_SENTINEL in (answer or "").upper():
+            # Theo persona mới: tri thức không đủ -> bot trả NO_MATCH, không tự bịa.
+            body = (
+                '<div class="flash err" style="background:'
+                'color-mix(in srgb,var(--warn) 14%,transparent);color:var(--warn)">'
+                f'∅ Tri thức không có thông tin phù hợp → bot trả <b>{NO_MATCH_SENTINEL}'
+                '</b> (không tự trả lời)</div>' + prompt_details
+            )
         else:
             n_ctx = len(r["qa"])
             canh_bao = (
-                '<p class="note">⚠️ Ngữ cảnh <b>rỗng</b> (không dòng nào đạt '
-                'ngưỡng) — câu trả lời dưới đây do LLM tự bịa, không dựa trên '
-                'dữ liệu của bạn.</p>' if n_ctx == 0 else
-                f'<p class="note">Dùng <b>{n_ctx}</b> đoạn ngữ cảnh ở Bước 3.</p>'
+                '<p class="note">Tri thức <b>rỗng</b> (không dòng nào đạt ngưỡng) '
+                '— theo nguyên tắc, bot phải trả <b>NO_MATCH</b> chứ không tự '
+                'trả lời.</p>' if n_ctx == 0 else
+                f'<p class="note">Dựa trên <b>{n_ctx}</b> đoạn tri thức ở Bước 3.</p>'
             )
-            body = (
-                f'<div class="answer">{escape(answer)}</div>{canh_bao}'
-                f'<details><summary>Xem prompt đã gửi cho gpt-4o-mini</summary>'
-                f'<pre class="prompt">{escape(prompt)}</pre></details>'
-            )
-        step4 = ('<h3 class="grp">Bước 4 — Trả lời tự do '
-                 '<span class="count">gpt-4o-mini · để đối chiếu</span></h3>'
-                 f'<div class="card">{body}</div>')
+            body = f'<div class="answer">{escape(answer)}</div>{canh_bao}{prompt_details}'
+        step4 = ('<h3 class="grp">Bước 4 — Trả lời theo toàn bộ tri thức '
+                 f'<span class="count">{settings.llm_model} · để đối chiếu</span></h3>'
+                 f'<div class="card">{body}</div>'
+                 '<p class="note">⚠️ Ô này để model <b>tự viết</b> từ ngữ cảnh — có '
+                 'thể sửa nghĩa câu mẫu (lược điều kiện, đổi sắc thái). <b>KHÔNG dùng '
+                 'gửi khách</b>; câu gửi khách lấy ở Bước 5 (chọn + nguyên văn).</p>')
 
     # --- Bước 5 (tuỳ chọn): GIỐNG nút "Gợi ý trả lời" — GPT CHỌN / NO_MATCH ---
     step5 = ""
@@ -359,9 +372,9 @@ def render_simulate(
         elif suggest and not suggest.get("no_match"):
             body = (
                 f'<div class="answer">{escape(suggest.get("reply") or "")}</div>'
-                '<p class="note">GPT đã <b>chọn/soạn</b> từ <b>top 3</b> câu mẫu ở '
-                'Bước 3 — đây đúng là câu sẽ hiện khi bấm nút <b>Gợi ý trả lời</b> '
-                'ở màn Tin nhắn.</p>'
+                '<p class="note">GPT chỉ <b>CHỌN</b> 1 câu mẫu ở Bước 3, câu trên là '
+                '<b>NGUYÊN VĂN</b> câu trả lời đã duyệt (không sửa chữ nào) — đúng '
+                'câu sẽ hiện khi bấm nút <b>Gợi ý trả lời</b> ở màn Tin nhắn.</p>'
             )
         else:  # suggest is None hoặc no_match
             body = (
@@ -375,10 +388,11 @@ def render_simulate(
         step5 = ('<h3 class="grp">Bước 5 — Gợi ý trả lời '
                  '<span class="count">GPT chọn · NO_MATCH → không gợi ý</span></h3>'
                  f'<div class="card">{body}</div>'
-                 '<p class="note">Khác Bước 4: ở đây GPT chỉ được <b>chọn</b> trong '
-                 'các câu mẫu (không bịa), và được phép nói "không có câu phù hợp". '
-                 'Nút thật trên màn Tin nhắn lấy <b>top 5</b> rồi đưa <b>top 3</b> '
-                 'lên GPT.</p>')
+                 '<p class="note">Khác Bước 4 (để model tự VIẾT — có thể lược mất vế '
+                 'điều kiện, đổi sắc thái, trộn câu): Bước 5 chỉ <b>CHỌN</b> câu mẫu '
+                 'rồi trả <b>NGUYÊN VĂN</b>, hoặc <b>NO_MATCH</b> nếu không câu nào '
+                 'hợp. Đây là cách dùng cho nút Gợi ý thật. Nút thật lấy <b>top 5</b> '
+                 'rồi đưa <b>top 3</b> lên GPT.</p>')
 
     return _page(
         title="Thử tin nhắn", active="thu", sub=_SIM_SUB, intro=_SIM_INTRO,
