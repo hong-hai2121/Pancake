@@ -23,6 +23,7 @@ from app.pancake.client import (
     send_message,
     token_owner,
 )
+from app.pancake.switches import disable_all, enable_all, toggle_page
 from app.pancake.webview import _relative_time, render_recent_list, render_thread
 from app.ui.webview import (
     render_customers,
@@ -115,6 +116,7 @@ async def dashboard(page_id: str = "") -> HTMLResponse:
     errors: dict[str, str] = {}
 
     pancake: dict = {}
+    pages: list[dict] = []       # để render danh sách page ngay trên bảng điều khiển
     try:
         pages, page = await _pick_page(page_id)
         convs = await list_conversations(page["id"], limit=50) if page else []
@@ -155,7 +157,46 @@ async def dashboard(page_id: str = "") -> HTMLResponse:
     # `token_owner` chỉ giải mã JWT tại chỗ, không gọi mạng nên không cần try.
     config["owner"] = token_owner().get("name") or ""
 
-    return HTMLResponse(render_dashboard(pancake, data, config, errors))
+    return HTMLResponse(render_dashboard(pancake, data, config, errors, pages))
+
+
+def _switch_response(request: Request, payload: dict):
+    """Gọi ngầm (có header X-Requested-With) -> JSON (không reload); còn lại -> redirect."""
+    if request.headers.get("x-requested-with"):
+        return JSONResponse(payload)
+    return RedirectResponse("/bang-dieu-khien#ds-page", status_code=303)
+
+
+@router.post("/bang-dieu-khien/page-switch")
+async def dashboard_page_switch(request: Request):
+    """Lật công tắc BẬT/TẮT 1 page.
+
+    TẮT = chặn lấy/gửi tin của page đó ở MỌI nơi (guard trong pancake/client).
+    Bản thân thao tác chỉ ghi file JSON, KHÔNG gọi Pancake/OpenAI. Gọi ngầm (AJAX)
+    thì trả JSON để trình duyệt cập nhật nút tại chỗ, không tải lại trang.
+    """
+    form = parse_qs((await request.body()).decode("utf-8"))
+    page_id = (form.get("page_id", [""])[0]).strip()
+    enabled = True
+    if page_id:
+        enabled = toggle_page(page_id)
+    return _switch_response(request, {"page_id": page_id, "enabled": enabled})
+
+
+@router.post("/bang-dieu-khien/page-switch-all")
+async def dashboard_page_switch_all(request: Request):
+    """BẬT/TẮT tất cả page cùng lúc (nút 'Bật tất cả' / 'Tắt tất cả')."""
+    form = parse_qs((await request.body()).decode("utf-8"))
+    action = (form.get("action", [""])[0]).strip()
+    if action == "on":
+        enable_all()
+    elif action == "off":
+        try:
+            pages = await list_pages()
+        except (PancakeError, httpx.HTTPError):
+            pages = []
+        disable_all([p["id"] for p in pages])
+    return _switch_response(request, {"action": action})
 
 
 # ------------------------------------------------------------------ tin nhắn

@@ -117,15 +117,20 @@ async def suggest_reply(text: str) -> dict:
     return {"reply": result["reply"], "nguon": [chosen] if chosen else rows}
 
 
-async def generate_reply(sender_id: str, text: str) -> str:
-    """Nhận tin nhắn `text` của khách `sender_id`, trả về câu trả lời của bot."""
-    # Đọc phiên hiện tại của khách (trạng thái đang ở bước nào, lịch sử chat...).
-    session = await get_session(sender_id)
+async def generate_reply(page_id: str, psid: str, text: str) -> str:
+    """Nhận tin `text` của khách (page_id, psid), trả về câu trả lời của bot.
 
-    # 1) Ưu tiên đi theo kịch bản (Bảng 1). Khớp -> lưu phiên & trả lời luôn.
+    ⚠️ Đây là luồng bot TỰ ĐỘNG (Tầng 2) — hiện CHƯA nối vào endpoint nào; giữ ở
+    đây làm khung. Khi nối thật cần: (a) code `flow.next_step`, (b) xử lý trường
+    hợp RAG trả về NO_MATCH (không gửi chuỗi "NO_MATCH" cho khách).
+    """
+    # Đọc phiên hiện tại của khách (đang ở kịch bản/bước nào, ngữ cảnh...).
+    session = await get_session(page_id, psid)
+
+    # 1) Ưu tiên đi theo kịch bản (luồng nhiều bước). Khớp -> lưu phiên & trả lời.
     scripted = next_step(session, text)
     if scripted is not None:
-        await save_session(sender_id, session)
+        await save_session(page_id, psid, session)
         return scripted
 
     # 2) Không khớp kịch bản -> RAG + LLM.
@@ -133,7 +138,9 @@ async def generate_reply(sender_id: str, text: str) -> str:
     prompt = build_prompt(session, context, text)   # ghép persona + ngữ cảnh + câu hỏi
     reply = await complete(prompt)                  # gọi LLM sinh câu trả lời
 
-    # Lưu lại cặp hỏi–đáp vào lịch sử phiên rồi ghi xuống DB.
-    session.setdefault("history", []).append({"user": text, "bot": reply})
-    await save_session(sender_id, session)
+    # Lưu lịch sử vào ngữ cảnh phiên (ngu_canh jsonb) rồi ghi xuống DB.
+    session.setdefault("ngu_canh", {}).setdefault("history", []).append(
+        {"user": text, "bot": reply}
+    )
+    await save_session(page_id, psid, session)
     return reply

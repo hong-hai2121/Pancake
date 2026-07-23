@@ -12,6 +12,7 @@ from pathlib import Path
 import httpx
 
 from app.config import settings
+from app.pancake.switches import is_page_enabled
 
 # Nhãn tiếng Việt cho từng nhóm page mà Pancake trả về trong `categorized`.
 # Bỏ qua `activated_page_ids` vì đó là list id, không phải list page.
@@ -379,7 +380,11 @@ async def list_conversations(
     Cache: còn mới (<8s) trả ngay; cũ hơn nhưng chưa quá hạn thì **trả bản cũ ngay
     lập tức** và gọi Pancake làm mới NỀN (lần vào sau thấy dữ liệu mới); chưa có
     cache / quá cũ thì gọi đồng bộ (chỉ lần đầu chịu delay).
+
+    Page đang TẮT (xem pancake/switches) -> trả rỗng, KHÔNG gọi Pancake.
     """
+    if not is_page_enabled(page_id):
+        return []
     key = (str(page_id), msg_type, limit)
     now = time.monotonic()
     entry = _CONV_CACHE.get(key)
@@ -443,7 +448,10 @@ async def get_conversation(
     """Toàn bộ tin nhắn của 1 hội thoại, sắp xếp cũ -> mới.
 
     Trả về {conv_id, customer_name, messages: [...]}.
+    Page đang TẮT -> trả rỗng, KHÔNG gọi Pancake.
     """
+    if not is_page_enabled(page_id):
+        return {"conv_id": conv_id, "customer_name": "", "messages": []}
     params = {"customer_id": customer_id} if customer_id else None
     data = await _get(f"pages/{page_id}/conversations/{conv_id}/messages", params)
     raw = data.get("messages") or []
@@ -462,7 +470,10 @@ async def send_message(
     """Gửi 1 tin nhắn trả lời vào hội thoại (action=reply_inbox).
 
     ⚠️ Đây là hành động GỬI THẬT tới khách qua Pancake — không hoàn tác được.
+    Page đang TẮT -> CHẶN, không gửi.
     """
+    if not is_page_enabled(page_id):
+        raise PancakeError("Page đang TẮT — không cho phép gửi tin. Bật lại ở Bảng điều khiển.")
     params = {"action": "reply_inbox", "message": message}
     if customer_id:
         params["customer_id"] = customer_id

@@ -8,6 +8,7 @@ from html import escape
 from urllib.parse import urlencode
 
 from app.pancake.client import tag_label as _tag_label
+from app.pancake.switches import is_page_enabled
 from app.pancake.webview import (
     _avatar,
     _fmt_dt,
@@ -67,8 +68,61 @@ def _page_select(pages: list[dict], current: str, base: str) -> str:
 
 
 # ---------------------------------------------------------- bảng điều khiển
+def _dashboard_page_list(pages: list[dict]) -> str:
+    """Panel danh sách page hiện NGAY trên bảng điều khiển (ẩn, bấm ô stat mới mở).
+
+    Dùng CSS `:target` (không JS): ô "Page truy cập được" trỏ tới #ds-page ->
+    bấm là panel hiện ra tại chỗ, không rời trang. Bấm "Đóng" (href="#") thì ẩn lại.
+    """
+    if not pages:
+        return ""
+    rows = ""
+    for p in pages:
+        pid = escape(str(p.get("id", "")))
+        on = is_page_enabled(p.get("id", ""))
+        sw_cls = "pgsw on" if on else "pgsw off"
+        sw_label = "● BẬT" if on else "○ TẮT"
+        sw_title = (
+            "Đang BẬT — bấm để TẮT (chặn lấy/gửi tin của page này)" if on
+            else "Đang TẮT — bấm để BẬT lại"
+        )
+        switch = (
+            '<form method="post" action="/bang-dieu-khien/page-switch" '
+            'style="flex:0 0 auto;margin:0">'
+            f'<input type="hidden" name="page_id" value="{pid}">'
+            f'<button type="submit" class="{sw_cls}" title="{sw_title}">{sw_label}</button>'
+            "</form>"
+        )
+        rows += f"""
+          <li class="row" style="align-items:center">
+            {_avatar(p).replace('class="avatar"', 'class="avatar sm"')}
+            <div class="rbody">
+              <div class="name">{escape(p.get("name") or "(không tên)")}</div>
+              <div class="rmeta">ID {pid} · {escape(p.get("platform") or "")}</div>
+            </div>
+            {switch}
+            <a class="btn" style="flex:0 0 auto" href="/tin-nhan?page_id={pid}">Mở tin nhắn</a>
+          </li>"""
+    return (
+        '<section id="ds-page" class="ds-page"><div class="card">'
+        '<div class="ds-page-head">'
+        f'<b>Danh sách page ({len(pages)})</b>'
+        '<form method="post" action="/bang-dieu-khien/page-switch-all" '
+        'style="margin:0 0 0 auto">'
+        '<input type="hidden" name="action" value="on">'
+        '<button type="submit" class="btn">Bật tất cả</button></form>'
+        '<form method="post" action="/bang-dieu-khien/page-switch-all" style="margin:0">'
+        '<input type="hidden" name="action" value="off">'
+        '<button type="submit" class="btn">Tắt tất cả</button></form>'
+        '<a class="btn" href="#">Đóng</a></div>'
+        f'<ul class="list">{rows}</ul>'
+        "</div></section>"
+    )
+
+
 def render_dashboard(
-    pancake: dict, data: dict, config: dict, errors: dict
+    pancake: dict, data: dict, config: dict, errors: dict,
+    pages: list[dict] | None = None,
 ) -> str:
     """Trang tổng quan: số liệu Pancake + kho dữ liệu bot + cấu hình hệ thống."""
 
@@ -83,8 +137,8 @@ def render_dashboard(
         pancake_stats = (
             '<div class="stats">'
             + stat("Page truy cập được", str(pancake["total_pages"]),
-                   f'{pancake["active_pages"]} page đang hoạt động',
-                   href="/pancake/webview")
+                   f'{pancake["active_pages"]} page đang hoạt động · bấm để xem',
+                   href="#ds-page")
             + stat("Hội thoại đang mở", str(pancake["conv_count"]),
                    escape(pancake["page_name"]))
             + stat("Tin chưa đọc", str(pancake["unread"]),
@@ -145,13 +199,14 @@ def render_dashboard(
         '<a class="btn" href="/khach-hang">Danh sách khách</a>'
         '<a class="btn" href="/data/hoi-thoai">Thêm hội thoại mẫu</a>'
         '<a class="btn" href="/data/thu-tin-nhan">Thử câu hỏi</a>'
-        '<a class="btn" href="/pancake/webview">Danh sách page</a>'
+        '<a class="btn" href="#ds-page">Danh sách page</a>'
         '<a class="btn" href="/docs" target="_blank">API docs ↗</a>'
         "</div></div>"
     )
 
     body = (
         '<h2 class="grp">Pancake</h2>' + pancake_stats
+        + _dashboard_page_list(pages or [])
         + '<h2 class="grp">Kho dữ liệu bot</h2>' + data_stats
         + '<h2 class="grp">Lối tắt</h2>' + links
         + '<h2 class="grp">Cấu hình hệ thống</h2>' + cfg
@@ -162,6 +217,7 @@ def render_dashboard(
         heading="Bảng điều khiển",
         sub="Tổng quan hệ thống bán hàng qua Pancake + bot RAG",
         body=body,
+        script=_DASHBOARD_JS,
     )
 
 
@@ -424,7 +480,7 @@ _INBOX_JS = """
       var lines = nameEl ? ['Hội thoại với ' + nameEl.textContent.trim(), ''] : [];
       var msgs = th.querySelectorAll('.msg');
       for (var i = 0; i < msgs.length; i++) {
-        var who = msgs[i].classList.contains('out') ? 'Shop' : 'Khách';
+        var who = msgs[i].classList.contains('out') ? 'Bác sĩ' : 'Khách';
         var b = msgs[i].querySelector('.bubble');
         var txt = b ? b.textContent.trim() : '';
         var tmEl = msgs[i].querySelector('.mtime');
@@ -468,5 +524,58 @@ _SEARCH_JS = """
       rows[i].style.display = txt.toLowerCase().indexOf(kw) === -1 ? 'none' : '';
     }
   });
+})();
+"""
+
+# Bật/tắt page NGAY tại chỗ (AJAX) — không reload, không gọi lại số liệu dashboard.
+# Thao tác chỉ ghi file JSON phía server; JS chỉ đổi nhãn/màu nút sau khi nhận JSON.
+_DASHBOARD_JS = """
+(function(){
+  function setBtn(btn, on){
+    btn.className = 'pgsw ' + (on ? 'on' : 'off');
+    btn.textContent = on ? '● BẬT' : '○ TẮT';
+    btn.title = on ? 'Đang BẬT — bấm để TẮT (chặn lấy/gửi tin của page này)'
+                   : 'Đang TẮT — bấm để BẬT lại';
+  }
+  function post(url, data){
+    return fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'fetch'},
+      body: new URLSearchParams(data).toString()
+    }).then(function(r){ return r.ok ? r.json() : null; });
+  }
+  // Bật/tắt 1 page
+  var one = document.querySelectorAll('form[action="/bang-dieu-khien/page-switch"]');
+  for (var i = 0; i < one.length; i++) {
+    one[i].addEventListener('submit', function(e){
+      e.preventDefault();
+      var f = e.currentTarget;
+      var btn = f.querySelector('button');
+      var el = f.querySelector('input[name=page_id]');
+      var pid = el ? el.value : '';
+      if (!pid) return;
+      btn.disabled = true;
+      post('/bang-dieu-khien/page-switch', {page_id: pid})
+        .then(function(d){ btn.disabled = false; if (d) setBtn(btn, d.enabled); })
+        .catch(function(){ btn.disabled = false; });
+    });
+  }
+  // Bật/tắt TẤT CẢ
+  var all = document.querySelectorAll('form[action="/bang-dieu-khien/page-switch-all"]');
+  for (var j = 0; j < all.length; j++) {
+    all[j].addEventListener('submit', function(e){
+      e.preventDefault();
+      var f = e.currentTarget;
+      var el = f.querySelector('input[name=action]');
+      var action = el ? el.value : '';
+      if (action === 'off' &&
+          !confirm('Tắt tất cả page? Sẽ ngừng lấy/gửi tin của MỌI page.')) return;
+      post('/bang-dieu-khien/page-switch-all', {action: action}).then(function(d){
+        if (!d) return;
+        var btns = document.querySelectorAll('.ds-page .pgsw');
+        for (var k = 0; k < btns.length; k++) setBtn(btns[k], action === 'on');
+      });
+    });
+  }
 })();
 """

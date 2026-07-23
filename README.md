@@ -39,7 +39,7 @@ pancakebot/
 │   ├── bot/                # "não" quyết định trả lời
 │   │   ├── brain.py         # điều phối: kịch bản trước, không thì RAG + LLM
 │   │   ├── flow.py          # kịch bản Bảng 1 (khung, chưa cài logic khớp)
-│   │   ├── session.py       # phiên khách (⚠ lệch schema trang_thai_khach)
+│   │   ├── session.py       # phiên khách theo (page_id, psid) — đã căn schema
 │   │   └── prompt.py        # ghép persona + ngữ cảnh RAG + câu hỏi
 │   │
 │   ├── rag/                # tìm kiếm ngữ nghĩa + sinh câu trả lời
@@ -225,7 +225,7 @@ Mọi truy vấn Supabase đều nằm ở đây.
 | **Tìm kiếm (RPC)** | `search_similar()`                                    | Gọi`match_documents` → **Postgres tính**, trả Q&A gần nhất                                                                  |
 |                            | `search_similar_scripts()`                            | Gọi`match_kich_ban` → bước kịch bản gần nhất                                                                                    |
 |                            | `debug_search()`                                      | Gọi cả 2 RPC + số liệu chẩn đoán (cho tab "Thử tin nhắn")                                                                        |
-| `trang_thai_khach`       | `load_customer_state()` / `upsert_customer_state()` | Phiên khách — ⚠️**đang lệch schema thật** (dùng `sender_id`/`du_lieu`, DB thật là `page_id`/`psid`/`ngu_canh`) |
+| `trang_thai_khach`       | `load_customer_state(page_id, psid)` / `upsert_customer_state(...)` | Phiên khách theo **(page_id, psid)** — ✅ đã căn đúng schema thật (`kich_ban`/`buoc_hien_tai`/`ngu_canh`/`trang_thai`), upsert `on_conflict=page_id,psid` |
 
 ### 3. SQL phải chạy trên Supabase
 
@@ -485,13 +485,14 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 | Auto-refresh giao diện (poll fragment)                                          | ✅ chạy —**chỉ page đang mở trên trình duyệt**  |
 | Cache danh sách page 60s (tránh Pancake chặn 429)                             | ✅ đã verify (hết 502 khi mở dồn dập)                   |
 | Cache **SWR** `list_conversations` (chuyển trang lần sau hết khựng)         | ✅ đã verify (trả bản cũ ngay + refresh nền, gọi đồng bộ chỉ lần đầu/ quá 10ph) |
+| **Công tắc BẬT/TẮT từng page** (Bảng điều khiển → danh sách page)             | ✅ đã verify — TẮT chặn lấy+gửi tin của page đó ở MỌI nơi (guard trong `pancake/client`), lưu `page_switches.json`, mặc định BẬT |
 | RAG: embed, retrieve, LLM gpt-4o-mini, insert kèm embedding, distill            | ✅ đã verify                                                |
 | Tìm kiếm vector chạy**trong Postgres** (RPC + index HNSW)               | ✅ đã verify (RPC đã tạo trên DB)                       |
 | Ngưỡng lọc`match_threshold` (lạc đề → trả rỗng)                       | ✅ đã verify (0.6 → 0 dòng với câu lạc đề)           |
 | Giao diện tự nhập**kịch bản** &**hội thoại mẫu** (`/data`) | ✅ đã verify (thêm/xoá/báo lỗi trùng)                  |
 | Nút**"Gợi ý trả lời"** trong khung chat (human-in-the-loop, không tự gửi) | ✅ đã verify (test mock: happy-path, thiếu tin, lỗi LLM không 500) |
 | Bot**tự động poll + gợi ý/trả lời** hội thoại                     | 🟡 đã chốt thiết kế,**chưa code**                 |
-| Phiên khách`trang_thai_khach` (session.py)                                   | ⚠️ lệch schema thật (sender_id vs psid) — cần căn lại |
+| Phiên khách`trang_thai_khach` (session.py)                                   | ✅ đã căn theo schema thật (page_id/psid/ngu_canh) — round-trip verify trên bảng thật |
 | Kịch bản Bảng 1 (`bot/flow`)                                                | ⏳ khung, chưa cài logic khớp                              |
 | Tab**Thử tin nhắn** kèm câu trả lời của bot                         | ✅ đã verify (tick ô để gọi gpt-4o-mini)                |
 | API`/api/chat` cho phần mềm ngoài + bảo mật API key                       | 📋 chưa làm — xem mục*Kế hoạch: mở API* ở cuối     |
@@ -502,8 +503,8 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 > nhưng **chưa nối vào nhau và chưa chạm dữ liệu thật**. Cụ thể:
 > `bot/brain.generate_reply` đã xong nhưng **không endpoint nào gọi** (mồ côi);
 > `ingestion` đọc từ `data/chats.json` **chép tay**, chưa kéo từ Pancake;
-> `bot/flow.next_step` còn là stub; `bot/session` **lệch schema thật**
-> (`sender_id` vs `page_id/psid/ngu_canh`) — sẽ vỡ khi nối poll.
+> `bot/flow.next_step` còn là stub; `bot/session` ✅ **đã căn schema thật**
+> (`page_id/psid/ngu_canh`) — sẵn sàng cho poll/Tầng 2.
 > Thứ thiếu **không phải mảnh mới, mà là những "cây cầu"** nối mảnh sẵn có.
 > Làm theo 3 tầng dưới (an toàn → tự động dần):
 
@@ -511,7 +512,7 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 
 1. ✅ **ĐÃ LÀM — Nút "Gợi ý trả lời" trong khung chat `/tin-nhan`**. Bấm nút →
    `POST /tin-nhan/goi-y` lấy **tin chữ gần nhất của khách** → `bot.suggest_reply`
-   (**không đụng phiên** để tránh schema `trang_thai_khach` còn lệch, **không gửi
+   (**không đụng phiên** — nút Gợi ý stateless theo thiết kế, **không gửi
    tin**) → câu gợi ý **đổ sẵn vào ô trả lời để người sửa rồi tự bấm Gửi**
    (human-in-the-loop).
    **Logic (GPT là người chọn, không phải cosine):**
@@ -546,8 +547,11 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 
 ### Tầng 2 — nền cho tự động
 
-3. **Căn lại `session.py` theo schema thật** (`page_id/psid/ngu_canh`).
-   Đây là **bug chờ nổ**: poll bot vừa lưu phiên là hỏng.
+3. ✅ **ĐÃ LÀM — Căn lại `session.py` theo schema thật** (`page_id/psid/ngu_canh`):
+   `get/save/reset_session(page_id, psid, …)`, `upsert on_conflict=page_id,psid`,
+   history lưu vào `ngu_canh`. `generate_reply` đổi sang `(page_id, psid, text)`.
+   Đã verify round-trip trên bảng thật. (Động cơ luồng `flow.next_step` vẫn là
+   việc kế tiếp.)
 4. **Vòng lặp poll nền trên server** (đã chốt thiết kế, chưa code): con trỏ
    `last_seen` mỗi hội thoại để phát hiện tin mới trên **mọi page kể cả khi không
    mở trình duyệt**.

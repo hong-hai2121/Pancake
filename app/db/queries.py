@@ -218,31 +218,36 @@ async def debug_search(
     }
 
 
-# ---------- trang_thai_khach ----------
-# ⚠️ CHÚ Ý: schema THẬT của bảng này là (page_id, psid, kich_ban, buoc_hien_tai,
-# ngu_canh, trang_thai) — KHÁC với code session.py hiện dùng (sender_id, du_lieu).
-# Giữ nguyên bản cũ để không làm gãy luồng bot webhook; việc căn lại theo schema
-# thật là một task riêng (xem tóm tắt / follow-up), không thuộc phần RAG này.
-async def load_customer_state(sender_id: str) -> dict | None:
-    """Đọc phiên hội thoại của một khách; None nếu chưa có."""
+# ---------- trang_thai_khach (phiên khách cho LUỒNG nhiều bước) ----------
+# Schema thật: (page_id, psid, kich_ban, buoc_hien_tai int, ngu_canh jsonb,
+# trang_thai) — khoá duy nhất (page_id, psid). Một khách = 1 dòng: nhớ đang ở kịch
+# bản/bước nào + ngữ cảnh gom được. Dùng cho động cơ luồng (bot/flow) + bot tự động
+# Tầng 2; nút "Gợi ý trả lời" hiện KHÔNG dùng bảng này (stateless).
+async def load_customer_state(page_id: str, psid: str) -> dict | None:
+    """Đọc trạng thái phiên của 1 khách theo (page_id, psid); None nếu chưa có."""
     sb = get_supabase()
     res = (
         sb.table("trang_thai_khach")
         .select("*")
-        .eq("sender_id", sender_id)
+        .eq("page_id", str(page_id))
+        .eq("psid", str(psid))
         .maybe_single()
         .execute()
     )
     return res.data if res and res.data else None
 
 
-async def upsert_customer_state(sender_id: str, state: dict) -> None:
-    """Tạo/ cập nhật phiên hội thoại của một khách."""
+async def upsert_customer_state(page_id: str, psid: str, state: dict) -> None:
+    """Tạo/cập nhật phiên của 1 khách. Khoá xung đột = (page_id, psid)."""
     sb = get_supabase()
     sb.table("trang_thai_khach").upsert(
         {
-            "sender_id": sender_id,
-            "trang_thai": state.get("trang_thai", "moi"),
-            "du_lieu": {"history": state.get("history", [])},
-        }
+            "page_id": str(page_id),
+            "psid": str(psid),
+            "kich_ban": state.get("kich_ban"),
+            "buoc_hien_tai": state.get("buoc_hien_tai"),
+            "ngu_canh": state.get("ngu_canh") or {},
+            "trang_thai": state.get("trang_thai", "active"),
+        },
+        on_conflict="page_id,psid",
     ).execute()

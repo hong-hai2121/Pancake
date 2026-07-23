@@ -333,6 +333,17 @@ a.stat.link:hover::after{color:var(--accent)}
 .pill.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
 .pill.err{color:var(--err);border-color:color-mix(in srgb,var(--err) 40%,transparent)}
 .links{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+/* Danh sách page hiện ngay trên bảng điều khiển: ẩn, bấm ô stat (#ds-page) mới mở */
+.ds-page{display:none;margin-top:12px}
+.ds-page:target{display:block}
+.ds-page-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+/* Công tắc BẬT/TẮT page: BẬT = xanh đặc, TẮT = xám nhạt */
+.pgsw{border:1px solid var(--border);background:var(--card);color:var(--sub);
+  border-radius:20px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;
+  white-space:nowrap}
+.pgsw.on{background:var(--ok);border-color:var(--ok);color:#fff}
+.pgsw.off{background:var(--bg);border-color:var(--border);color:var(--sub)}
+.pgsw:hover{opacity:.9}
 
 /* ---------- thẻ page / hội thoại / khách ---------- */
 .avatar{flex:0 0 auto;width:40px;height:40px;border-radius:50%;display:grid;
