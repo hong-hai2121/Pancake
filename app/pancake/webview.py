@@ -448,7 +448,9 @@ _POLL_JS = """
       })
       .catch(function(){});
   }
-  setInterval(tick, __MS__);
+  // Đăng ký vào __pjaxTimers để _NAV_JS (app/ui/shell.py) huỷ khi rời trang
+  // bằng AJAX — không thì mỗi lần quay lại lại chồng thêm 1 vòng poll.
+  (window.__pjaxTimers = window.__pjaxTimers || []).push(setInterval(tick, __MS__));
 })();
 """
 
@@ -467,7 +469,11 @@ _CHAT_JS = """
   ta.addEventListener('keydown', function(e){
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (ta.value.trim()) form.submit();
+      // form.submit() không phát sự kiện 'submit' (_NAV_JS sẽ không bắt được
+      // -> tải lại cả trang) nên phải dùng requestSubmit().
+      if (ta.value.trim()) {
+        if (form.requestSubmit) form.requestSubmit(); else form.submit();
+      }
     }
   });
 })();

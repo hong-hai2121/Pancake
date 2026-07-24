@@ -7,7 +7,7 @@ RAG (tìm hội thoại mẫu tương tự) + LLM để trả lời tự nhiên.
 import json
 
 from app.bot.flow import next_step
-from app.bot.prompt import build_prompt, build_suggest_prompt
+from app.bot.prompt import build_extract_prompt, build_prompt, build_suggest_prompt
 from app.bot.session import get_session, save_session
 from app.config import settings
 from app.db.queries import search_similar
@@ -17,6 +17,11 @@ from app.rag.retriever import retrieve
 
 # Số câu mẫu tương đồng gửi lên GPT để CHỌN (top N trong số top-k đã tìm được).
 _SUGGEST_CANDIDATES = 3
+
+# Chặn trên số đề xuất trích tri thức/lần gọi (phòng model trả về danh sách bất
+# thường dài) — 1 đoạn hội thoại thật hiếm khi có quá chừng này cặp hỏi-đáp giá
+# trị dùng chung.
+_EXTRACT_MAX_ITEMS = 20
 
 
 def _parse_choice_json(raw: str, n: int) -> int | None:
@@ -144,3 +149,46 @@ async def generate_reply(page_id: str, psid: str, text: str) -> str:
     )
     await save_session(page_id, psid, session)
     return reply
+
+
+def _parse_extract_json(raw: str) -> list[dict]:
+    """Đọc {"de_xuat": [{cau_hoi, cau_tra_loi}]} từ output model -> list đã lọc sạch.
+
+    AN TOÀN: JSON hỏng / sai dạng / thiếu chữ -> bỏ qua phần tử đó (không ném lỗi
+    cả loạt); ai gọi hàm này nhận về [] nếu model không trích được gì hợp lệ.
+    """
+    try:
+        data = json.loads(raw or "")
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    items = data.get("de_xuat")
+    if not isinstance(items, list):
+        return []
+    out: list[dict] = []
+    for it in items[:_EXTRACT_MAX_ITEMS]:
+        if not isinstance(it, dict):
+            continue
+        cau_hoi = str(it.get("cau_hoi") or "").strip()
+        cau_tra_loi = str(it.get("cau_tra_loi") or "").strip()
+        if cau_hoi and cau_tra_loi:
+            out.append({"cau_hoi": cau_hoi, "cau_tra_loi": cau_tra_loi})
+    return out
+
+
+async def extract_qa_candidates(transcript: str) -> list[dict]:
+    """Trích đề xuất cặp hỏi-đáp từ 1 đoạn hội thoại thật (nút "Trích tri thức").
+
+    CHỈ đề xuất — KHÔNG ghi DB (người dùng xem/sửa/bỏ ở màn hình trước khi bấm
+    Lưu, xem app/ui/routes.py). Hội thoại rỗng hoặc model không trích được gì
+    hợp lệ -> trả về [].
+    """
+    transcript = (transcript or "").strip()
+    if not transcript:
+        return []
+    prompt = build_extract_prompt(transcript)
+    raw = await complete(
+        prompt, temperature=0.0, response_format={"type": "json_object"}
+    )
+    return _parse_extract_json(raw)

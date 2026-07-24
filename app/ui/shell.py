@@ -125,13 +125,16 @@ def render_shell(
     sub     — dòng mô tả nhỏ dưới tiêu đề (đã là HTML)
     tabs    — dải tab con (dùng `tabs_bar`)
     actions — HTML nút/điều khiển đặt bên phải topbar
-    script  — JS thêm vào cuối trang
+    script  — JS riêng của trang, thêm vào cuối (vd polling ở màn Tin nhắn).
+              Được đánh dấu `data-page-script` để `_NAV_JS` tìm và chạy lại
+              sau mỗi lần điều hướng bằng AJAX (xem _NAV_JS).
     full    — True: nội dung chiếm hết chiều cao, tự cuộn (dùng cho màn chat)
     """
     heading = heading or title
     sub_html = f'<div class="page-sub">{sub}</div>' if sub else ""
     actions_html = f'<div class="page-actions">{actions}</div>' if actions else ""
-    script_html = f"<script>{script}</script>" if script else ""
+    page_script_html = f"<script data-page-script>{script}</script>" if script else ""
+    script_html = f"<script>{_NAV_JS}</script>{page_script_html}"
     content_cls = "content full" if full else "content"
 
     return (
@@ -156,6 +159,13 @@ def render_shell(
 # phải nhân đôi dấu ngoặc nhọn của CSS.
 # ---------------------------------------------------------------------------
 _CSS = """
+/* Chuyển trang mượt: trình duyệt crossfade giữa 2 lần tải thay vì chớp trắng.
+   Đặt tên ổn định cho các khối lặp lại y hệt ở mọi trang (sidebar/topbar/tab)
+   để chúng được giữ nguyên vị trí, chỉ phần nội dung bên dưới mới crossfade. */
+@view-transition{navigation:auto}
+.side{view-transition-name:side}
+.topbar{view-transition-name:topbar}
+.tabs{view-transition-name:tabs}
 :root{
   --bg:#f4f5f7; --card:#fff; --text:#111827; --sub:#6b7280; --border:#e4e7eb;
   --accent:#2563eb; --soft:#eef4ff; --ok:#16a34a; --err:#dc2626; --warn:#d97706;
@@ -478,4 +488,132 @@ a.name:hover{color:var(--accent)}
   .inbox-list{flex:0 0 auto;max-height:38vh;border-right:0;
     border-bottom:1px solid var(--border)}
 }
+
+/* ---------- điều hướng kiểu AJAX (_NAV_JS) ---------- */
+html.pjax-loading{cursor:progress}
+html.pjax-loading .main{opacity:.55;transition:opacity .15s linear}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Điều hướng kiểu SPA (PJAX): chặn click link nội bộ + submit form, gọi fetch
+# tới CHÍNH route đó (server vẫn trả nguyên trang HTML như cũ, không cần thêm
+# route/endpoint riêng cho từng màn), rồi chỉ thay <title>, .side (menu trái)
+# và .main (topbar + tab + nội dung) của trang HIỆN TẠI thay vì để trình duyệt
+# điều hướng thật — nhờ vậy sidebar/topbar không bị trình duyệt huỷ và vẽ lại
+# (đó chính là nguồn gốc hiện tượng nhấp nháy khi chuyển trang/tab).
+#
+# Một số trang có thêm JS riêng (script[data-page-script], vd polling ở màn
+# Tin nhắn) — đoạn này KHÔNG tự chạy lại khi ta gán innerHTML nên phải tự tạo
+# lại thẻ <script> để trình duyệt thực thi sau mỗi lần thay nội dung; các
+# setInterval của lần trước cũng phải tự huỷ (qua window.__pjaxTimers) kẻo
+# rò rỉ khi người dùng ra vào lại cùng 1 trang nhiều lần.
+_NAV_JS = """
+(function(){
+  function sameOrigin(url){
+    try { return new URL(url, location.href).origin === location.origin; }
+    catch (e) { return false; }
+  }
+
+  function runPageScript(doc){
+    (window.__pjaxTimers || []).forEach(clearInterval);
+    window.__pjaxTimers = [];
+    var old = document.querySelector('script[data-page-script]');
+    if (old) old.remove();
+    var fresh = doc.querySelector('script[data-page-script]');
+    if (fresh && fresh.textContent.trim()) {
+      var s = document.createElement('script');
+      s.setAttribute('data-page-script', '');
+      s.textContent = fresh.textContent;
+      document.body.appendChild(s);
+    }
+  }
+
+  function applyDoc(doc, url){
+    document.title = doc.title;
+    var newSide = doc.querySelector('.side');
+    var newMain = doc.querySelector('.main');
+    var curSide = document.querySelector('.side');
+    var curMain = document.querySelector('.main');
+    if (newSide && curSide) curSide.innerHTML = newSide.innerHTML;
+    if (newMain && curMain) curMain.innerHTML = newMain.innerHTML;
+    runPageScript(doc);
+    window.scrollTo({top: 0});
+    var hash = (url.split('#')[1]) || '';
+    var target = hash && document.getElementById(hash);
+    if (target) target.scrollIntoView();
+  }
+
+  function swap(doc, url){
+    if (document.startViewTransition) {
+      document.startViewTransition(function(){ applyDoc(doc, url); });
+    } else {
+      applyDoc(doc, url);
+    }
+  }
+
+  function go(url, opts, push){
+    document.documentElement.classList.add('pjax-loading');
+    fetch(url, opts || {})
+      .then(function(r){
+        return r.text().then(function(html){ return {html: html, url: r.url}; });
+      })
+      .then(function(res){
+        var doc = new DOMParser().parseFromString(res.html, 'text/html');
+        swap(doc, res.url);
+        if (push) history.pushState({pjax: true}, '', res.url);
+      })
+      .catch(function(){ location.href = url; })
+      .then(function(){ document.documentElement.classList.remove('pjax-loading'); });
+  }
+
+  // Click link nội bộ -> AJAX thay vì điều hướng thật. Bỏ qua: mở tab mới
+  // (Ctrl/Cmd/Shift/giữa chuột), target khác _self, link tải file, neo cùng
+  // trang (#...), mailto/tel, hoặc khác origin.
+  document.addEventListener('click', function(e){
+    if (e.defaultPrevented || e.button !== 0 ||
+        e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest('a[href]');
+    if (!a || a.target || a.hasAttribute('download')) return;
+    var href = a.getAttribute('href');
+    if (!href || href.charAt(0) === '#' || /^(mailto|tel):/i.test(href)) return;
+    if (!sameOrigin(href)) return;
+    e.preventDefault();
+    go(href, {cache: 'no-store'}, true);
+  });
+
+  // Submit form (GET hoặc POST) -> AJAX. e.defaultPrevented tôn trọng các
+  // handler khác chạy trước (vd confirm() huỷ ở nút Xoá, hoặc trang đã tự xử
+  // lý AJAX riêng như công tắc BẬT/TẮT page ở Bảng điều khiển).
+  document.addEventListener('submit', function(e){
+    if (e.defaultPrevented) return;
+    var f = e.target;
+    if (f.target || !sameOrigin(f.action)) return;
+    e.preventDefault();
+    var qs = new URLSearchParams(new FormData(f)).toString();
+    if ((f.method || 'get').toLowerCase() === 'post') {
+      go(f.action, {
+        method: 'POST', body: qs,
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      }, true);
+    } else {
+      var base = f.action.split('?')[0];
+      go(base + (qs ? '?' + qs : ''), {cache: 'no-store'}, true);
+    }
+  });
+
+  // <select data-nav-tpl="/tin-nhan?page_id="> đổi lựa chọn -> AJAX (thay vì
+  // gán thẳng location.href khiến trình duyệt điều hướng thật).
+  document.addEventListener('change', function(e){
+    var tpl = e.target.getAttribute && e.target.getAttribute('data-nav-tpl');
+    if (tpl == null) return;
+    go(tpl + encodeURIComponent(e.target.value), {cache: 'no-store'}, true);
+  });
+
+  // Back/Forward: trang đã đổi qua AJAX nên không có bfcache riêng -> tải lại
+  // nội dung cho khớp URL, vẫn không đụng sidebar/topbar (không push state mới).
+  window.addEventListener('popstate', function(){
+    go(location.href, {cache: 'no-store'}, false);
+  });
+})();
 """

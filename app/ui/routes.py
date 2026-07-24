@@ -4,6 +4,7 @@ Các màn hình này gọi Pancake API (đọc hội thoại) và Supabase (đ�
 Mọi lỗi đều được bắt lại và hiển thị ngay trên trang — không để 500 trắng màn.
 """
 
+import json
 from collections import Counter
 from urllib.parse import parse_qs, urlencode
 
@@ -11,9 +12,9 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from app.bot.brain import suggest_reply
+from app.bot.brain import extract_qa_candidates, suggest_reply
 from app.config import settings
-from app.db.queries import _count
+from app.db.queries import _count, insert_qa
 from app.pancake.client import (
     PancakeError,
     get_conversation,
@@ -390,6 +391,96 @@ async def inbox_suggest(request: Request) -> JSONResponse:
     return JSONResponse(
         {"reply": result["reply"], "question": question, "nguon_text": nguon_text}
     )
+
+
+# Chặn trên độ dài transcript gửi cho LLM (ký tự) — phòng hội thoại quá dài
+# tốn prompt/tiền; giữ lại đoạn GẦN NHẤT (thường chứa nội dung tư vấn thật sự).
+_TRANSCRIPT_MAX_CHARS = 12000
+
+
+def _transcript(messages: list[dict]) -> str:
+    """Chuyển list tin nhắn Pancake -> văn bản 'Khách: ...\\nNhân viên: ...' cho LLM đọc.
+
+    Chỉ lấy tin có chữ (ảnh/tệp không có text bị bỏ qua, LLM không đọc được).
+    """
+    lines = [
+        f'{"Nhân viên" if m.get("is_page") else "Khách"}: {text}'
+        for m in (messages or [])
+        if (text := (m.get("text") or "").strip())
+    ]
+    return "\n".join(lines)[-_TRANSCRIPT_MAX_CHARS:]
+
+
+@router.post("/tin-nhan/trich-tri-thuc")
+async def inbox_extract(request: Request) -> JSONResponse:
+    """Trích ĐỀ XUẤT cặp hỏi-đáp từ TOÀN BỘ hội thoại — CHỈ đề xuất, KHÔNG ghi DB.
+
+    Người dùng xem/sửa/bỏ ở màn hình (JS) rồi mới bấm Lưu (route .../luu bên
+    dưới) — human-in-the-loop, tri thức không tự động vào DB khi chưa ai duyệt.
+    """
+    form = parse_qs((await request.body()).decode("utf-8"))
+    get = lambda k: (form.get(k, [""])[0]).strip()  # noqa: E731
+    page_id, conv_id, customer_id = get("page_id"), get("conv_id"), get("customer_id")
+
+    if not (page_id and conv_id):
+        return JSONResponse({"error": "Thiếu page_id/conv_id."}, status_code=400)
+
+    try:
+        convo = await get_conversation(page_id, conv_id, customer_id or None)
+    except (PancakeError, httpx.HTTPError) as exc:
+        return JSONResponse(
+            {"error": f"Không tải được hội thoại: {exc}"}, status_code=502
+        )
+
+    transcript = _transcript(convo.get("messages") or [])
+    if not transcript:
+        return JSONResponse({"error": "Hội thoại chưa có tin nhắn nào có chữ."})
+
+    try:
+        items = await extract_qa_candidates(transcript)
+    except Exception as exc:  # thiếu OPENAI_API_KEY / lỗi mạng...
+        return JSONResponse({"error": str(exc)[:200]})
+
+    if not items:
+        return JSONResponse(
+            {"items": [],
+             "note": "Không thấy cặp hỏi-đáp nào đáng trích trong hội thoại này."}
+        )
+    return JSONResponse({"items": items})
+
+
+@router.post("/tin-nhan/trich-tri-thuc/luu")
+async def inbox_extract_save(request: Request) -> JSONResponse:
+    """Lưu các cặp hỏi-đáp NGƯỜI DÙNG ĐÃ DUYỆT (có thể đã sửa) vào hoi_thoai_mau.
+
+    `items` = chuỗi JSON [{"cau_hoi":..,"cau_tra_loi":..,"nguon":..}, ...] — chỉ
+    gồm những dòng người dùng còn tick + đã điền đủ 2 trường. Từng dòng lỗi (vd
+    Supabase từ chối) bị bỏ qua riêng, không làm hỏng cả lượt lưu.
+    """
+    form = parse_qs((await request.body()).decode("utf-8"))
+    try:
+        items = json.loads((form.get("items", ["[]"])[0]))
+    except (ValueError, TypeError):
+        items = None
+    if not isinstance(items, list):
+        return JSONResponse({"error": "Dữ liệu gửi lên không hợp lệ."}, status_code=400)
+
+    saved, errors = 0, []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        cau_hoi = str(it.get("cau_hoi") or "").strip()
+        cau_tra_loi = str(it.get("cau_tra_loi") or "").strip()
+        if not (cau_hoi and cau_tra_loi):
+            continue
+        nguon = str(it.get("nguon") or "").strip() or None
+        try:
+            await insert_qa(cau_hoi=cau_hoi, cau_tra_loi=cau_tra_loi, nguon=nguon)
+            saved += 1
+        except Exception as exc:
+            errors.append(str(exc)[:150])
+
+    return JSONResponse({"saved": saved, "errors": errors})
 
 
 # ---------------------------------------------------------------- khách hàng
