@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Pancake Watcher</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Tin nhắn mới phát hiện</h1>
+      <div class="actions">
+        <button id="markAllBtn">Đánh dấu tất cả đã xem</button>
+        <button id="exportBtn">Xuất log (JSON)</button>
+      </div>
+    </header>
+    <ul id="list"></ul>
+    <p id="empty" class="empty" hidden>Chưa phát hiện tin nhắn mới nào.</p>
+    <script src="popup.js"></script>
+  </body>
+</html>

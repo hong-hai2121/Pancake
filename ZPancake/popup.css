@@ -1,0 +1,134 @@
+body {
+  width: 360px;
+  max-height: 480px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: #fff;
+  color: #1f2937;
+}
+
+header {
+  position: sticky;
+  top: 0;
+  background: #fff;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+h1 {
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  flex: 1;
+  font-size: 12px;
+  padding: 6px 8px;
+  border: 1px solid #d1d5db;
+  background: #f9fafb;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #f3f4f6;
+}
+
+#list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  cursor: pointer;
+  background: #fff;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.25s ease, transform 0.25s ease, background-color 0.2s ease;
+}
+
+.item.enter {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.item:hover {
+  background: #f8fafc;
+}
+
+.item.read {
+  opacity: 0.5;
+}
+
+.item:not(.read) {
+  background: #fef6f6;
+}
+
+.row1 {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.time {
+  font-weight: 400;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.snippet {
+  font-size: 12px;
+  color: #374151;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: #9ca3af;
+}
+
+.badge-count {
+  margin-left: auto;
+  background: #e2474f;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.hit-count {
+  background: #eef2ff;
+  color: #4f46e5;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.empty {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 12px;
+  padding: 24px 12px;
+}
