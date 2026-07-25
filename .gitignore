@@ -21,3 +21,8 @@ Thumbs.db
 # File dữ liệu tạm / cục bộ (không đẩy lên git)
 pancake_tags_sample.json
 page_switches.json
+
+# ZPancake/server: SQLite DB local, không đẩy lên git
+ZPancake/server/data/*.db
+ZPancake/server/data/*.db-journal
+ZPancake/server/server.pid

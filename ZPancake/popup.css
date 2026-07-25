@@ -19,12 +19,40 @@ header {
 
 h1 {
   font-size: 14px;
-  margin: 0 0 8px;
+  margin: 0;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.power-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #16a34a;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.power-toggle:has(input:not(:checked)) {
+  color: #ef4444;
 }
 
 .actions {
   display: flex;
   gap: 8px;
+  margin-bottom: 6px;
+}
+
+.actions:last-of-type {
+  margin-bottom: 0;
 }
 
 button {
@@ -39,6 +67,39 @@ button {
 
 button:hover {
   background: #f3f4f6;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#sweepBtn {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4338ca;
+  font-weight: 600;
+}
+
+#sweepBtn:hover {
+  background: #e0e7ff;
+}
+
+.auto-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+.sweep-status {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #6b7280;
+  min-height: 14px;
 }
 
 #list {
@@ -62,6 +123,15 @@ button:hover {
   transform: translateY(-6px);
 }
 
+.item.just-arrived {
+  animation: flashNew 1.6s ease-out;
+}
+
+@keyframes flashNew {
+  0% { background: #fde047; }
+  100% { background: transparent; }
+}
+
 .item:hover {
   background: #f8fafc;
 }
@@ -72,6 +142,18 @@ button:hover {
 
 .item:not(.read) {
   background: #fef6f6;
+}
+
+.item.negative {
+  border-left: 4px solid #dc2626;
+}
+
+.sentiment-warn {
+  background: #fee2e2;
+  color: #b91c1c;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
 }
 
 .row1 {
@@ -125,6 +207,15 @@ button:hover {
   padding: 2px 6px;
   border-radius: 999px;
 }
+
+.server-status {
+  font-size: 10px;
+  cursor: default;
+}
+
+.server-status.sent { color: #16a34a; }
+.server-status.failed { color: #ef4444; }
+.server-status.pending { color: #9ca3af; }
 
 .empty {
   text-align: center;

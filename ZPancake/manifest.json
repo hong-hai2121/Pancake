@@ -1,17 +1,17 @@
 {
   "manifest_version": 3,
   "name": "Pancake New Message Watcher",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "description": "Theo dõi danh sách hội thoại trên pancake.vn để phát hiện tin nhắn mới.",
-  "permissions": ["storage"],
-  "host_permissions": ["https://pancake.vn/*"],
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://pancake.vn/*", "http://localhost:8787/*"],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
       "matches": ["https://pancake.vn/*"],
-      "js": ["content.js"],
+      "js": ["content.js", "panel.js"],
       "run_at": "document_idle"
     }
   ],

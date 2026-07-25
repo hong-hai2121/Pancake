@@ -7,6 +7,98 @@
 
 const EVENTS_KEY = "pancake_events";
 const MAX_CONVERSATIONS = 300;
+const LOCAL_SERVER_URL = "http://localhost:8787/api/messages";
+const SENTIMENT_URL = "http://localhost:8787/api/sentiment";
+const SENTIMENT_ALARM_NAME = "pancake_sentiment_poll";
+
+let localServerWarned = false;
+
+// Hàng đợi gửi sang server local — gộp theo rawId (Map) thay vì mảng các đợt
+// riêng lẻ. Trong lúc đang gửi 1 đợt (hoặc đang chờ giữa các lần thử lại), tin
+// mới đến sẽ được GỘP THẲNG vào đợi tiếp theo (ghi đè nếu trùng rawId, vì chỉ
+// cần bản mới nhất) thay vì xếp thành 1 request riêng — gửi xong đợt hiện tại
+// là gom hết những gì vừa tích luỹ được thành 1 request duy nhất, ít request
+// hơn hẳn so với gửi từng đợt một lúc bấm "Cập nhật" (sweep quét dồn dập).
+const pendingEvents = new Map(); // rawId -> event mới nhất chưa gửi
+let sendingInProgress = false;
+const MAX_SEND_ATTEMPTS = 3;
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Cập nhật trạng thái gửi server (serverStatus) cho từng rawId, để popup/panel
+// hiển thị cho người dùng biết tin đã lưu vào SQLite chưa hay server đang tắt.
+function updateServerStatus(rawIds, status) {
+  chrome.storage.local.get(EVENTS_KEY, (res) => {
+    const store = res[EVENTS_KEY] || {};
+    let changed = false;
+    rawIds.forEach((id) => {
+      if (store[id]) {
+        store[id].serverStatus = status; // "sending" | "sent" | "failed"
+        store[id].serverStatusAt = new Date().toISOString();
+        changed = true;
+      }
+    });
+    if (changed) chrome.storage.local.set({ [EVENTS_KEY]: store });
+  });
+}
+
+async function sendWithRetry(events, attempt = 1) {
+  const rawIds = events.map((e) => e.rawId);
+  try {
+    const res = await fetch(LOCAL_SERVER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    localServerWarned = false;
+    updateServerStatus(rawIds, "sent");
+  } catch (err) {
+    if (attempt < MAX_SEND_ATTEMPTS) {
+      await wait(attempt * 600); // chờ tăng dần giữa các lần thử (600ms, 1200ms...)
+      return sendWithRetry(events, attempt + 1);
+    }
+    if (!localServerWarned) {
+      console.log(
+        "[Pancake Watcher][background] Không gửi được tới server local " +
+          `(${LOCAL_SERVER_URL}) sau ${MAX_SEND_ATTEMPTS} lần thử — có thể server chưa ` +
+          "chạy. Sẽ không log lại lỗi này liên tục, chỉ log 1 lần cho tới khi gửi " +
+          "thành công trở lại.",
+        err
+      );
+      localServerWarned = true;
+    }
+    updateServerStatus(rawIds, "failed");
+  }
+}
+
+async function processSendQueue() {
+  if (sendingInProgress) return;
+  if (pendingEvents.size === 0) return;
+  sendingInProgress = true;
+
+  // Lấy toàn bộ những gì đang chờ rồi xoá khỏi hàng đợi NGAY — để bất kỳ tin
+  // nào đến trong lúc fetch() này đang chạy sẽ gộp vào đợt KẾ TIẾP, không lẫn
+  // vào đợt đang gửi dở.
+  const batch = Array.from(pendingEvents.values());
+  pendingEvents.clear();
+
+  await sendWithRetry(batch);
+
+  sendingInProgress = false;
+  // Trong lúc gửi đợt vừa rồi, nếu có tin mới tích luỹ thêm thì gửi tiếp luôn.
+  processSendQueue();
+}
+
+// Bắn dữ liệu sang server Python chạy ở máy (ZPancake/server) để lưu SQLite.
+// Best-effort: server có thể chưa bật, không được để lỗi này làm hỏng luồng
+// lưu chrome.storage.local (vẫn phải chạy dù server local có sống hay không).
+function forwardToLocalServer(events) {
+  events.forEach((ev) => pendingEvents.set(ev.rawId, ev));
+  processSendQueue();
+}
 
 function updateBadge(store) {
   const unread = Object.values(store).filter((e) => !e.read).length;
@@ -32,6 +124,8 @@ chrome.runtime.onMessage.addListener((message) => {
 
   console.log("[Pancake Watcher][background] Nhận", events.length, "sự kiện tin nhắn mới:", events);
 
+  forwardToLocalServer(events);
+
   chrome.storage.local.get(EVENTS_KEY, (res) => {
     const store = res[EVENTS_KEY] || {};
     events.forEach((ev) => {
@@ -42,11 +136,53 @@ chrome.runtime.onMessage.addListener((message) => {
         firstDetectedAt: prev ? prev.firstDetectedAt : ev.detectedAt,
         lastDetectedAt: ev.detectedAt,
         hitCount: (prev?.hitCount || 0) + 1,
+        serverStatus: "sending", // updateServerStatus() sẽ ghi đè thành sent/failed ngay sau
       };
     });
     const capped = capByRecency(store, MAX_CONVERSATIONS);
     chrome.storage.local.set({ [EVENTS_KEY]: capped }, () => updateBadge(capped));
   });
 });
+
+// Lấy kết quả quét cảm xúc (server chạy nền, xem ZPancake/server/main.py) và
+// gộp vào danh sách đang hiển thị — popup/panel sẽ tự vẽ lại (storage.onChanged)
+// để hiện cảnh báo cho hội thoại có dấu hiệu tiêu cực, không cần thao tác gì thêm.
+function pollSentiment() {
+  fetch(SENTIMENT_URL)
+    .then((res) => {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    })
+    .then((data) => {
+      const items = data.items || [];
+      if (!items.length) return;
+      chrome.storage.local.get(EVENTS_KEY, (res) => {
+        const store = res[EVENTS_KEY] || {};
+        let changed = false;
+        items.forEach((item) => {
+          const ev = store[item.rawId];
+          if (ev && ev.sentiment !== item.sentiment) {
+            ev.sentiment = item.sentiment;
+            ev.sentimentMethod = item.sentimentMethod;
+            changed = true;
+          }
+        });
+        if (changed) chrome.storage.local.set({ [EVENTS_KEY]: store });
+      });
+    })
+    .catch(() => {
+      // Best-effort — server có thể chưa bật, đã có log riêng ở forwardToLocalServer
+      // rồi nên không log lại nữa ở đây để tránh trùng lặp.
+    });
+}
+
+// chrome.alarms thay vì setInterval — service worker MV3 có thể bị tạm ngưng,
+// setInterval sẽ mất theo, còn alarms được Chrome tự đánh thức lại đúng giờ.
+// 1 phút là chu kỳ tối thiểu Chrome cho phép với alarm lặp lại.
+chrome.alarms.create(SENTIMENT_ALARM_NAME, { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === SENTIMENT_ALARM_NAME) pollSentiment();
+});
+pollSentiment(); // gọi ngay lúc service worker khởi động, không cần chờ đủ 1 phút đầu
 
 chrome.storage.local.get(EVENTS_KEY, (res) => updateBadge(res[EVENTS_KEY] || {}));

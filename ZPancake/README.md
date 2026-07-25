@@ -2,30 +2,76 @@
 
 Extension Chrome (Manifest V3) theo dõi div danh sách hội thoại trên
 `pancake.vn` (`#conversationList .rc-virtual-list-holder-inner`) để phát hiện
-khi có tin nhắn mới, hiện tại **chỉ log lại để xem** — chưa gọi ra hệ thống
-nào khác.
+khi có tin nhắn mới, hiển thị qua popup/panel nổi, và **gửi sang server Python
+chạy ở máy** (`ZPancake/server/`, xem README riêng ở đó) để lưu vào SQLite.
 
-## Trạng thái (cập nhật 2026-07-24)
+## Trạng thái (cập nhật 2026-07-25)
 
 **Đã xong:**
-- `manifest.json`, `content.js`, `background.js`, `popup.*` — đủ chạy được ở
-  chế độ unpacked.
 - Phát hiện tin mới theo 2 lớp (id hội thoại + vị trí đầu danh sách, xem mục
-  "Cách hoạt động" bên dưới) + quét dự phòng mỗi 3 giây kể cả khi không có
-  mutation, để bắt được cả trường hợp để im màn hình không cuộn/thao tác gì.
-- Popup: 1 hội thoại/dòng (không trùng lặp), tự nổi lên đầu khi có tin mới,
-  tự vẽ lại khi đang mở, đánh dấu đã xem, xuất log JSON.
+  "Cách hoạt động") + quét dự phòng mỗi 3 giây kể cả khi không có mutation,
+  để bắt được cả lúc để im màn hình.
+- **Chủ trương hiện tại: ưu tiên bắt được nhiều tin nhất, chấp nhận có thể lẫn
+  cả hội thoại cũ khi cuộn tay xuống xem lịch sử** (đã thử phiên bản chặt chẽ
+  hơn — chỉ báo khi chắc chắn ở đỉnh danh sách hoặc hội thoại đã có lịch sử —
+  nhưng bị bỏ sót quá nhiều nên quay lại kiểu báo rộng rãi này theo yêu cầu).
+  Có log `[debug] items=... nearTop=... suppressNew=... newEvents=...` ở mỗi
+  lượt quét trong Console để dễ dò khi cần.
+- Nút "Cập nhật" (tự cuộn quét toàn bộ danh sách) + tuỳ chọn tự động chạy mỗi
+  khi mở trang — bắt tin nhắn đến trong lúc không mở tab.
+- **Panel nổi ngay trên trang pancake.vn** (`panel.js`) — kéo thả di chuyển tự
+  do, bấm nút thu gọn/mở rộng, nhớ vị trí + trạng thái thu gọn qua
+  `chrome.storage.local` (key `pancake_panel_state`). Dùng Shadow DOM nên CSS
+  của Pancake và của panel không đụng nhau. Dùng chung dữ liệu với popup — 2
+  giao diện luôn đồng bộ real-time qua `chrome.storage.onChanged`. Popup ở
+  icon extension vẫn giữ nguyên làm phương án dự phòng (vì popup gốc của
+  Chrome **không kéo thả được** — giới hạn cứng của trình duyệt, không phải
+  do code). Đã bỏ nút "Đánh dấu tất cả đã xem" và "Xuất log (JSON)" ở cả 2
+  giao diện (không dùng tới) — muốn đánh dấu đã xem thì bấm trực tiếp vào
+  từng dòng.
+- Tự phát hiện và dừng gọn khi extension bị reload trong lúc tab đang mở
+  (lỗi "Extension context invalidated") — log 1 dòng nhắc F5 lại tab thay vì
+  báo lỗi liên tục.
+- **Server local (`ZPancake/server/`, FastAPI + SQLite)** — mỗi sự kiện tin
+  nhắn mới đều được `background.js` bắn (best-effort, `fetch`) sang
+  `http://localhost:8787/api/messages`, server lưu vào `data/pancake_watcher.db`
+  (bảng `customers` duy nhất, mỗi khách 1 dòng chứa tin nhắn cuối cùng gửi
+  đến). Độc lập hoàn toàn với backend chính `app/` ở gốc repo — không dùng
+  chung DB, không gọi API Pancake nào, chỉ dùng đúng dữ liệu extension tự
+  quét được từ DOM. **Mỗi dòng tin nhắn trong popup/panel hiện luôn trạng
+  thái gửi server** (☁️✓ đã lưu / ☁️✗ chưa gửi được — server có đang chạy
+  không / ☁️… đang gửi) để bạn quan sát trực tiếp, không cần mở DB xem.
+- **An toàn khi nhiều tin đến dồn dập**: `background.js` gộp các tin đang chờ
+  theo hội thoại (không tạo nhiều request nhỏ), server dùng upsert nguyên tử +
+  SQLite WAL mode. Đã kiểm thử 60 lượt ghi đồng thời (kể cả cùng 1 hội thoại)
+  → 0 lỗi. Xem chi tiết ở `server/README.md`.
+- **Quét cảm xúc tiêu cực** (`server/sentiment.py`) — chạy **nền, tách hẳn
+  khỏi lúc lưu tin** (không làm chậm việc lưu/ping của extension): mỗi ~8s,
+  server tự quét các hội thoại có snippet mới chưa được chấm cảm xúc. 2 cách,
+  đổi qua biến `SENTIMENT_METHOD` trong `server/.env` (copy từ
+  `.env.example`): `keyword` (mặc định, offline, khớp từ khoá tiếng Việt) hoặc
+  `llm` (gọi OpenAI, chính xác hơn, cần `OPENAI_API_KEY` riêng + tốn phí nhỏ).
+  Extension poll kết quả mỗi phút (`chrome.alarms`) — hội thoại "negative"
+  hiện viền đỏ + nhãn "⚠️ Tiêu cực" ngay trên popup/panel.
+- **GUI desktop quản lý server** (`server/gui.py`, tkinter) — bật/tắt server,
+  hiện 🟢/🔴 trạng thái đang chạy hay không (tự kiểm tra `/health` mỗi 2s), và
+  chỉnh cách quét cảm xúc + OpenAI API Key ngay trên giao diện (ghi vào
+  `.env`, tự khởi động lại server nếu đang chạy để áp dụng ngay). Đã tạo sẵn
+  shortcut **"Pancake Watcher"** trên Desktop để mở nhanh.
 
-**Việc tiếp theo (mai làm):**
-1. **Xác nhận lại trên trang thật** — để tab pancake.vn im, chờ có tin nhắn
-   khách hàng thật tới, xem trong ~3 giây console có log
-   `[Pancake Watcher] Phát hiện N hội thoại có tin mới` không. Nếu vẫn không
-   thấy: kiểm tra trước đó có log `Đã nạp baseline...` (xác nhận selector
-   đúng `#conversationList`) và có dòng `CẢNH BÁO` nào không.
-2. Xử lý các mục ở phần "Giới hạn hiện tại" bên dưới (nội dung tin nhắn đầy
-   đủ, mở đúng hội thoại khi bấm popup...) — tuỳ độ ưu tiên lúc đó.
-3. Extension hiện chưa có icon riêng (dùng icon mặc định của Chrome) — thêm
-   sau nếu cần, không ảnh hưởng chức năng.
+**Việc tiếp theo:**
+1. Double-click shortcut "Pancake Watcher" trên Desktop (hoặc chạy
+   `ZPancake/server/gui.py`) rồi thử trên trang thật xem tin nhắn có ghi đúng
+   vào SQLite không.
+2. Nếu muốn dùng cách quét cảm xúc bằng LLM: mở GUI, chọn "llm" + điền
+   OpenAI API Key, bấm "Lưu cài đặt" — hoặc chỉnh tay `cp server/.env.example
+   server/.env` rồi đổi `SENTIMENT_METHOD=llm` + điền `OPENAI_API_KEY`.
+3. Thử kéo thả + thu gọn panel nổi trên trang thật, kiểm tra panel không bị
+   che khuất bởi UI của Pancake (z-index) và ngược lại.
+4. Thử nút "Cập nhật" trên trang thật (đóng tab vài tiếng, mở lại, bấm Cập
+   nhật, xem có bắt đúng các hội thoại có tin đến trong lúc vắng mặt không).
+5. Xử lý các mục ở phần "Giới hạn hiện tại" bên dưới — tuỳ độ ưu tiên.
+6. Extension hiện chưa có icon riêng (dùng icon mặc định của Chrome).
 
 ## Cài đặt (chế độ unpacked, để dev)
 
@@ -34,35 +80,80 @@ nào khác.
 3. Bấm **Tải tiện ích đã giải nén** (Load unpacked) → chọn thư mục `ZPancake/`.
 4. Mở `https://pancake.vn/` và đăng nhập, để trang hiển thị danh sách hội thoại.
 
+> **Lưu ý khi dev:** mỗi lần sửa code rồi bấm reload extension ở
+> `chrome://extensions`, phải **F5 lại tab pancake.vn đang mở** — nếu không,
+> script cũ trong tab đó mất kết nối tới extension và sẽ báo lỗi
+> `Extension context invalidated` (không phải bug, xem mục "Cách hoạt động").
+
 ## Cách hoạt động
 
-- `content.js` gắn `MutationObserver` vào div danh sách, và **đồng thời quét
-  định kỳ mỗi 3 giây bất kể có mutation hay không** (dự phòng), rồi so sánh
-  với snapshot cũ theo 2 lớp:
-  1. **Theo id hội thoại** — bắt tin mới khi 1 hội thoại vẫn hiển thị đúng id
-     cũ nhưng nội dung/số chưa đọc đổi.
-  2. **Theo vị trí ở đầu danh sách** (bỏ mục ghim) — vì đây là virtual list,
-     Pancake **tái dùng luôn node đang render** để hiện hội thoại mới lên đầu
-     ngay cả khi không cuộn/thao tác gì (đẩy hội thoại ở cuối khung nhìn ra
-     khỏi vùng render); node đó khi ấy mang 1 id không nằm trong lịch sử đã
-     biết, nên lớp 1 một mình sẽ bỏ sót — lớp 2 so sánh trực tiếp nội dung ở
-     từng vị trí, không quan tâm trước đó id nào từng đứng ở đó.
-- Lần quét đầu tiên sau khi mở trang chỉ dùng để lập baseline (không báo toàn
-  bộ tin chưa đọc có sẵn là "mới"), để tránh spam log lúc vừa load trang.
-- Từ id hội thoại (`pzl_g_<page>_<conv>`, `pzl_u_<page>_<conv>` cho Zalo,
-  `<page>_<conv>` cho Facebook) suy ra được `platform`, `pageId`, `convId`.
-- Khi phát hiện thay đổi (số tin chưa đọc tăng, snippet đổi, hoặc hội thoại
-  mới xuất hiện đang có tín hiệu chưa đọc) → gửi sự kiện cho `background.js`,
-  log ra console.
-- `background.js` lưu vào `chrome.storage.local` dưới dạng
-  `{ [id hội thoại]: {...} }` — **mỗi hội thoại 1 bản ghi**, tin mới tới thì
-  đè lên bản ghi cũ (không cộng dồn thành nhiều dòng trùng), giữ tối đa 300
-  hội thoại gần hoạt động nhất; đồng thời cập nhật số đếm trên icon.
-- Popup sắp xếp theo `lastDetectedAt` giảm dần — hội thoại vừa có tin mới
-  nhất luôn nổi lên đầu, giống hệt cách Pancake tự đẩy hội thoại lên đầu
-  danh sách — và tự vẽ lại ngay khi có tin mới trong lúc popup đang mở
-  (không cần đóng/mở lại). Bấm icon extension để xem, bấm 1 dòng để đánh dấu
-  đã xem, hoặc **Xuất log (JSON)** để tải file log về máy.
+### Phát hiện tin nhắn mới
+
+`content.js` gắn `MutationObserver` vào div danh sách, và **đồng thời quét
+định kỳ mỗi 3 giây bất kể có mutation hay không** (dự phòng), rồi so sánh với
+snapshot cũ theo 2 lớp:
+
+1. **Theo id hội thoại** — báo khi 1 hội thoại đã biết mà nội dung/số chưa
+   đọc đổi khác, **hoặc** hội thoại chưa từng thấy id nhưng đang có tín hiệu
+   chưa đọc (kể cả khi đó chỉ là hội thoại cũ vừa cuộn tới lần đầu trong
+   phiên này — chấp nhận báo lẫn để không bỏ sót tin thật).
+2. **Theo vị trí ở đầu danh sách** (bỏ mục ghim) — vì Pancake luôn đẩy hội
+   thoại vừa có tin mới lên đầu (kể cả không cuộn/thao tác gì, virtual list
+   tái dùng luôn node đang render để hiện hội thoại mới), lớp này so sánh nội
+   dung ở từng vị trí trong 5 vị trí đầu, không quan tâm trước đó id nào từng
+   đứng ở đó. Chạy bất kể đang cuộn ở đâu.
+
+Chỉ chặn báo backlog khi **thật sự là lần cài đặt đầu tiên** (chưa từng lưu
+lịch sử gì) — không phải mỗi lần mở trang — để lần mở lại sau khi đóng tab
+lâu vẫn bắt được tin đến trong lúc vắng mặt ngay từ lượt quét đầu tiên.
+
+Từ id hội thoại (`pzl_g_<page>_<conv>`, `pzl_u_<page>_<conv>` cho Zalo,
+`<page>_<conv>` cho Facebook) suy ra được `platform`, `pageId`, `convId`.
+
+### Nút "Cập nhật" (bắt tin đến trong lúc đóng tab)
+
+Vì Pancake chỉ render những hội thoại đang trong khung nhìn, hội thoại có tin
+mới nhưng nằm ngoài màn hình lúc vừa mở trang sẽ chưa được quét tới. Nút
+**"Cập nhật"** trong popup gửi message tới content script (`chrome.tabs.query`
+tìm tab pancake.vn đang mở + `chrome.tabs.sendMessage`), content script sẽ:
+tự cuộn khung danh sách (`.rc-virtual-list-holder`) theo từng bước lớn từ đầu
+xuống cuối, dừng ~220ms mỗi bước để React kịp render rồi quét-so sánh ngay,
+sau đó cuộn trả lại đúng vị trí ban đầu. Bật tuỳ chọn **"Tự động cập nhật mỗi
+khi mở trang"** (checkbox trong popup, lưu ở `chrome.storage.local` key
+`pancake_settings`) để việc này tự chạy 1 lượt mỗi khi content script khởi
+động, không cần bấm tay.
+
+### Lưu trữ & hiển thị
+
+Khi phát hiện thay đổi → gửi sự kiện cho `background.js`, log ra console.
+`background.js` lưu vào `chrome.storage.local` dưới dạng
+`{ [id hội thoại]: {...} }` (key `pancake_events`) — **mỗi hội thoại 1 bản
+ghi**, tin mới tới thì đè lên bản ghi cũ (không cộng dồn thành nhiều dòng
+trùng), giữ tối đa 300 hội thoại gần hoạt động nhất; đồng thời cập nhật số
+đếm trên icon.
+
+Cả **panel nổi** (`panel.js`, chèn trực tiếp vào trang pancake.vn) và
+**popup** (`popup.html/js`, mở từ icon extension) đều đọc/ghi cùng key
+`pancake_events`/`pancake_settings`/`pancake_sweep_status`, và cùng lắng nghe
+`chrome.storage.onChanged` — nên mở đồng thời cả 2 vẫn luôn khớp dữ liệu,
+không cần đóng/mở lại. Cả hai đều sắp theo `lastDetectedAt` giảm dần (hội
+thoại vừa có tin mới nhất nổi lên đầu, giống Pancake), bấm 1 dòng để đánh dấu
+đã xem, có nút **Xuất log (JSON)** để tải file log về máy.
+
+Panel nổi kéo thả bằng cách rê thanh tiêu đề (nút thu gọn ở góc phải không
+kích hoạt kéo); vị trí cuối cùng (`x`, `y`) và trạng thái thu gọn được lưu ở
+key `pancake_panel_state`, tự áp dụng lại mỗi lần vào trang.
+
+### Server local (SQLite)
+
+Ngoài lưu vào `chrome.storage.local`, mỗi khi `background.js` nhận sự kiện
+tin mới, nó **đồng thời** gọi `fetch()` (best-effort, không chặn luồng cũ)
+sang `http://localhost:8787/api/messages` — endpoint của server FastAPI chạy
+ở `ZPancake/server/`. Server upsert vào bảng `customers` (1 dòng/hội thoại)
+và insert 1 dòng log vào bảng `messages`, cả 2 nằm trong file SQLite
+`server/data/pancake_watcher.db`. Nếu server chưa chạy, extension vẫn hoạt
+động bình thường — chỉ log 1 dòng cảnh báo (không lặp lại liên tục) mỗi lần
+gửi thất bại. Chi tiết schema/API/cách chạy: xem `server/README.md`.
 
 ## Xem log kỹ hơn khi debug
 
@@ -70,15 +161,27 @@ nào khác.
   tab Console, tìm dòng bắt đầu bằng `[Pancake Watcher]`.
 - Log của background service worker: vào `chrome://extensions` → tìm
   extension này → bấm **service worker** để mở DevTools riêng của nó.
+- Dòng `This script is on the debugger's ignore list` cạnh 1 frame trong
+  stack trace **không phải lỗi** — chỉ là nhãn của DevTools báo script đó bị
+  bỏ qua khi step-through. Muốn debug được thì vào tab Sources → chuột phải
+  file đó → "Remove from ignore list".
 
 ## Giới hạn hiện tại / việc để phát triển sau
 
 - Chưa lấy được nội dung tin nhắn đầy đủ, chỉ có đoạn snippet rút gọn hiển
   thị trong danh sách.
-- Chưa tự mở/điều hướng tới đúng hội thoại khi bấm vào 1 dòng trong popup.
-- Chưa nối với bất kỳ backend/API nào khác — hoàn toàn độc lập trong phạm vi
-  trình duyệt (đúng theo yêu cầu: đây là dự án riêng, không liên quan tới
-  `app/` ở thư mục gốc repo).
+- Chưa tự mở/điều hướng tới đúng hội thoại khi bấm vào 1 dòng (cả popup lẫn
+  panel nổi).
+- Nút "Cập nhật" ở popup gửi lệnh tới **tab pancake.vn đầu tiên** tìm thấy
+  nếu bạn mở nhiều tab cùng lúc (bấm ngay trên panel nổi thì luôn đúng tab vì
+  panel nằm sẵn trong tab đó).
+- Panel nổi chỉ giới hạn kéo trong phạm vi khung nhìn hiện tại — nếu thu nhỏ
+  cửa sổ trình duyệt sau khi đã kéo panel ra ngoài vùng mới, panel có thể bị
+  che khuất tới khi kéo lại (chưa tự căn lại vị trí khi resize cửa sổ).
+- Server local (`ZPancake/server/`) chưa có auth, chỉ nên chạy trên máy cá
+  nhân; chưa có giao diện xem dữ liệu (dùng DB Browser for SQLite).
+- Vẫn hoàn toàn độc lập với `app/` ở thư mục gốc repo — server local của
+  ZPancake dùng SQLite riêng, không đụng tới Supabase/access token của `app/`.
 - Nếu Pancake đổi cấu trúc HTML (tên class `snippet-text`, `time-modul`,
-  `ant-badge-count`, `name-text`...) thì cần cập nhật lại selector trong
-  `content.js`.
+  `ant-badge-count`, `name-text`, id `conversationList`...) thì cần cập nhật
+  lại selector trong `content.js`.
