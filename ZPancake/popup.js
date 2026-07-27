@@ -157,20 +157,12 @@ function applyEnabled(enabled) {
 function loadSettings() {
   chrome.storage.local.get(SETTINGS_KEY, (res) => {
     const settings = res[SETTINGS_KEY] || {};
-    document.getElementById("autoSweepToggle").checked = !!settings.autoSweepOnLoad;
     applyEnabled(settings.enabled !== false);
   });
   chrome.storage.local.get(SWEEP_STATUS_KEY, (res) => renderSweepStatus(res[SWEEP_STATUS_KEY]));
 }
 
 document.getElementById("sweepBtn").addEventListener("click", triggerSweep);
-document.getElementById("autoSweepToggle").addEventListener("change", (e) => {
-  chrome.storage.local.get(SETTINGS_KEY, (res) => {
-    const settings = res[SETTINGS_KEY] || {};
-    settings.autoSweepOnLoad = e.target.checked;
-    chrome.storage.local.set({ [SETTINGS_KEY]: settings });
-  });
-});
 // Công tắc tổng — tắt thì content.js dừng quét ngay (áp dụng qua storage.onChanged
 // bên content.js/panel.js, không cần F5 lại trang pancake.vn).
 document.getElementById("enabledToggle").addEventListener("change", (e) => {

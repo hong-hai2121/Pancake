@@ -85,16 +85,6 @@ button:disabled {
   background: #e0e7ff;
 }
 
-.auto-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  font-size: 11px;
-  color: #4b5563;
-  cursor: pointer;
-}
-
 .sweep-status {
   margin: 4px 0 0;
   font-size: 11px;

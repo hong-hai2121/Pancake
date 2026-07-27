@@ -65,7 +65,7 @@ first_seen_at, last_seen_at,
 sentiment, sentiment_method, sentiment_checked_at
 ```
 
-Xem dữ liệu bằng [DB Browser for SQLite](https://sqlitebrowser.org/) (miễn phí) — mở file `data/pancake_watcher.db`.
+Xem nhanh qua webview `/history` (xem mục bên dưới), hoặc dùng [DB Browser for SQLite](https://sqlitebrowser.org/) (miễn phí) — mở file `data/pancake_watcher.db` — khi cần truy vấn SQL tuỳ ý.
 
 ## Quét cảm xúc tiêu cực (`sentiment.py`)
 
@@ -123,6 +123,25 @@ không mất/lỗi dữ liệu:
 - `GET /api/sentiment` → `{"items": [{"rawId", "sentiment", "sentimentMethod",
   "sentimentCheckedAt"}, ...]}` — tối đa 200 kết quả gần nhất, cho extension
   poll định kỳ.
+- `GET /api/customers?sort=<cột>&order=asc|desc` → `{"items": [...]}` — toàn bộ
+  khách hàng (không phân trang), dùng cho webview `/history`. `sort` chỉ nhận
+  các cột trong whitelist `SORTABLE_COLUMNS` (`db.py`), sai tên tự rơi về
+  `detected_at`.
+- `DELETE /api/customers/{raw_id}` — xoá hẳn 1 khách hàng khỏi SQLite (không
+  thể hoàn tác). 404 nếu `raw_id` không tồn tại.
+
+## Webview lịch sử (`/history`)
+
+Mở `http://127.0.0.1:8787/history` (hoặc bấm **"📜 Xem lịch sử hội thoại"**
+trong `gui.py`) để xem toàn bộ hội thoại đã lưu, kèm trạng thái quét cảm xúc
+("⏳ Chưa quét" / "✅ Đã quét" / "⚠️ Tiêu cực"). Bấm tiêu đề cột (Khách hàng,
+Nền tảng, Phát hiện lúc, Lần cuối thấy, Trạng thái quét) để sắp xếp; có ô lọc
+theo tên/nội dung/trang, và nút **Xóa** mỗi dòng (có xác nhận trước khi xoá —
+xoá thẳng khỏi DB, không có thùng rác).
+
+Trang này là 1 file HTML tĩnh tự chứa (`history.html`, CSS/JS inline), server
+chỉ đọc và trả về — không cần build/bundle gì. Không có xác thực (giống toàn
+bộ server) — chỉ nên truy cập từ máy cá nhân.
 
 ## Giới hạn / việc để phát triển sau
 
@@ -138,10 +157,9 @@ không mất/lỗi dữ liệu:
   nếu Chrome tắt hẳn service worker giữa lúc hàng đợi còn phần tử chưa gửi
   (hiếm, thường chỉ xảy ra khi rất nhiều lượt dồn lại), phần đó sẽ mất; tin
   nhắn thật sự mới hơn từ cùng hội thoại sẽ tự ghi đè đúng ở lần gửi kế tiếp.
-- Chưa có giao diện xem dữ liệu — dùng DB Browser for SQLite hoặc viết script
-  Python/SQL riêng khi cần truy vấn.
 - Chạy local, không có auth — chỉ nên chạy trên máy cá nhân, không expose ra
-  mạng ngoài.
+  mạng ngoài. Webview `/history` cho xoá dữ liệu trực tiếp (DELETE), cũng
+  không có auth nên áp dụng đúng giới hạn này.
 - GUI (`gui.py`) chỉ quản lý được tiến trình do chính nó bật (nhờ file
   `server.pid`, vẫn tắt được kể cả sau khi đóng rồi mở lại GUI) — nếu bạn tự
   chạy `python main.py` bằng terminal riêng, GUI thấy server "đang chạy"

@@ -209,6 +209,45 @@ def update_sentiment(raw_id: str, sentiment: str, method: str, checked_at: str) 
         )
 
 
+SORTABLE_COLUMNS = {
+    "name",
+    "platform",
+    "detected_at",
+    "first_seen_at",
+    "last_seen_at",
+    "sentiment",
+    "sentiment_checked_at",
+    "unread_count",
+}
+
+
+def get_all_customers(order_by: str = "detected_at", direction: str = "desc") -> list[sqlite3.Row]:
+    """Lấy toàn bộ khách hàng cho webview lịch sử (`/history`) — không phân
+    trang (dữ liệu chỉ 1 dòng/khách nên số lượng nhỏ). `order_by` được whitelist
+    qua SORTABLE_COLUMNS trước khi ghép vào câu SQL (không nhận thẳng từ query
+    string) để tránh SQL injection qua tên cột."""
+    if order_by not in SORTABLE_COLUMNS:
+        order_by = "detected_at"
+    direction = "ASC" if direction.lower() == "asc" else "DESC"
+    with get_conn() as conn:
+        return conn.execute(
+            f"""
+            SELECT raw_id, platform, kind, page_id, conv_id, name,
+                   snippet, time_text, unread_count, reason, detected_at,
+                   first_seen_at, last_seen_at,
+                   sentiment, sentiment_method, sentiment_checked_at
+            FROM customers
+            ORDER BY {order_by} {direction}
+            """
+        ).fetchall()
+
+
+def delete_customer(raw_id: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute("DELETE FROM customers WHERE raw_id = ?", (raw_id,))
+        return cur.rowcount > 0
+
+
 def get_recent_sentiments(limit: int = 200) -> list[sqlite3.Row]:
     """Cho extension poll định kỳ để lấy kết quả sentiment mới nhất, gộp vào
     danh sách đang hiển thị trên popup/panel."""

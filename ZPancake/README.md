@@ -5,6 +5,34 @@ Extension Chrome (Manifest V3) theo dõi div danh sách hội thoại trên
 khi có tin nhắn mới, hiển thị qua popup/panel nổi, và **gửi sang server Python
 chạy ở máy** (`ZPancake/server/`, xem README riêng ở đó) để lưu vào SQLite.
 
+## Cấu trúc thư mục & chức năng từng file
+
+**Extension (thư mục gốc `ZPancake/`):**
+
+| File | Chức năng |
+|---|---|
+| `manifest.json` | Khai báo Manifest V3: quyền (`storage`, `alarms`), host permissions (`pancake.vn`, `localhost:8787`), đăng ký `background.js` làm service worker, `content.js` + `panel.js` làm content script chạy trên `pancake.vn`, và `popup.html` làm popup của icon extension. |
+| `content.js` | Script chèn vào trang `pancake.vn`, đảm nhiệm việc **quét**: gắn `MutationObserver` vào danh sách hội thoại + quét dự phòng mỗi 3 giây, so sánh snapshot để phát hiện tin nhắn mới (2 lớp: theo id hội thoại và theo vị trí đầu danh sách), tự phát hiện `Extension context invalidated`, và xử lý logic cuộn quét toàn bộ danh sách khi bấm nút "Cập nhật" (`sweepFullList`). Gửi sự kiện phát hiện được cho `background.js` qua `chrome.runtime.sendMessage`. |
+| `background.js` | Service worker nền: nhận sự kiện tin nhắn mới từ `content.js`, lưu vào `chrome.storage.local` (key `pancake_events`, mỗi hội thoại 1 bản ghi, tối đa 300 hội thoại), cập nhật số đếm trên icon, gộp và chuyển tiếp (best-effort, tự thử lại) dữ liệu sang server local (`server/`), và định kỳ (`chrome.alarms`, mỗi phút) gọi `GET /api/sentiment` để lấy kết quả quét cảm xúc rồi gộp vào dữ liệu hiển thị. |
+| `panel.js` | Dựng **panel nổi** ngay trên trang `pancake.vn` (Shadow DOM, kéo thả di chuyển tự do, thu gọn/mở rộng, nhớ vị trí qua `pancake_panel_state`). Chỉ đọc/ghi `chrome.storage.local` (không tự quét DOM), luôn đồng bộ real-time với popup qua `chrome.storage.onChanged`. |
+| `popup.html` | Khung giao diện popup hiện ra khi bấm icon extension: tiêu đề, công tắc bật/tắt theo dõi, nút "Cập nhật", danh sách hội thoại. |
+| `popup.js` | Logic cho `popup.html`: đọc `pancake_events` để vẽ danh sách (sắp theo tin mới nhất lên đầu, hiện trạng thái gửi server ☁️, nhãn cảnh báo "⚠️ Tiêu cực"), xử lý bấm đánh dấu đã đọc, bật/tắt công tắc tổng, và gửi lệnh "Cập nhật" tới content script qua `chrome.tabs.sendMessage`. |
+| `popup.css` | Style riêng cho `popup.html` (kích thước popup, màu trạng thái, hiệu ứng dòng mới nhấp nháy vàng...). |
+
+**Server local (`ZPancake/server/`, FastAPI + SQLite — xem chi tiết ở `server/README.md`):**
+
+| File | Chức năng |
+|---|---|
+| `main.py` | Điểm khởi động server FastAPI (`127.0.0.1:8787`): định nghĩa endpoint `GET /health`, `POST /api/messages` (nhận sự kiện từ extension), `GET /api/sentiment` (trả kết quả quét cảm xúc cho extension poll), và chạy vòng lặp nền `sentiment_worker()` quét cảm xúc mỗi ~8 giây tách biệt khỏi luồng lưu tin. |
+| `db.py` | Lớp truy cập SQLite: tạo/migrate bảng `customers` (1 dòng/hội thoại), `save_event()` upsert nguyên tử, `get_unanalyzed()` lấy khách chưa quét cảm xúc, `update_sentiment()` ghi kết quả, `get_recent_sentiments()` cho endpoint poll. Bật `PRAGMA journal_mode=WAL` để an toàn khi nhiều request ghi đồng thời. |
+| `sentiment.py` | Logic phân loại cảm xúc tiêu cực từ snippet: `keyword` (khớp danh sách từ khoá tiếng Việt, offline) hoặc `llm` (gọi OpenAI `gpt-4o-mini`), chọn qua biến `SENTIMENT_METHOD` trong `.env`. |
+| `gui.py` | GUI desktop (tkinter) để bật/tắt server và chỉnh `SENTIMENT_METHOD`/`OPENAI_API_KEY` mà không cần sửa `.env` bằng tay; tự kiểm tra `/health` mỗi 2s để hiện trạng thái 🟢/🔴, tự khởi động lại server khi lưu cài đặt mới. |
+| `start_gui.bat` | Script khởi chạy `gui.py` bằng `pythonw.exe` (không hiện cửa sổ console), dùng làm target cho shortcut "Pancake Watcher" trên Desktop. |
+| `requirements.txt` | Các thư viện Python cần cài (`fastapi`, `uvicorn`, `python-dotenv`, `httpx`). |
+| `.env.example` | Mẫu file cấu hình (`SENTIMENT_METHOD`, `OPENAI_API_KEY`), copy thành `.env` rồi chỉnh lại (`.env` đã bị `.gitignore` bỏ qua). |
+| `data/pancake_watcher.db` | File SQLite chứa bảng `customers`, tự tạo khi chạy server lần đầu. |
+| `README.md` | Tài liệu riêng cho server: cài đặt, schema DB, API, cơ chế an toàn khi ghi đồng thời, giới hạn hiện tại. |
+
 ## Trạng thái (cập nhật 2026-07-25)
 
 **Đã xong:**
@@ -17,8 +45,9 @@ chạy ở máy** (`ZPancake/server/`, xem README riêng ở đó) để lưu v�
   nhưng bị bỏ sót quá nhiều nên quay lại kiểu báo rộng rãi này theo yêu cầu).
   Có log `[debug] items=... nearTop=... suppressNew=... newEvents=...` ở mỗi
   lượt quét trong Console để dễ dò khi cần.
-- Nút "Cập nhật" (tự cuộn quét toàn bộ danh sách) + tuỳ chọn tự động chạy mỗi
-  khi mở trang — bắt tin nhắn đến trong lúc không mở tab.
+- Nút "Cập nhật" (tự cuộn quét toàn bộ danh sách) — luôn tự chạy 1 lượt ngay
+  khi mở trang (không có tuỳ chọn tắt) — bắt tin nhắn đến trong lúc không mở
+  tab.
 - **Panel nổi ngay trên trang pancake.vn** (`panel.js`) — kéo thả di chuyển tự
   do, bấm nút thu gọn/mở rộng, nhớ vị trí + trạng thái thu gọn qua
   `chrome.storage.local` (key `pancake_panel_state`). Dùng Shadow DOM nên CSS
@@ -63,9 +92,14 @@ chạy ở máy** (`ZPancake/server/`, xem README riêng ở đó) để lưu v�
 1. Double-click shortcut "Pancake Watcher" trên Desktop (hoặc chạy
    `ZPancake/server/gui.py`) rồi thử trên trang thật xem tin nhắn có ghi đúng
    vào SQLite không.
-2. Nếu muốn dùng cách quét cảm xúc bằng LLM: mở GUI, chọn "llm" + điền
-   OpenAI API Key, bấm "Lưu cài đặt" — hoặc chỉnh tay `cp server/.env.example
-   server/.env` rồi đổi `SENTIMENT_METHOD=llm` + điền `OPENAI_API_KEY`.
+2. Nếu muốn dùng cách quét cảm xúc bằng LLM: mở GUI, chọn "llm" + điền OpenAI
+   API Key, bấm "Lưu cài đặt". Hoặc chỉnh tay:
+
+   ```bash
+   cp server/.env.example server/.env
+   ```
+
+   rồi đổi `SENTIMENT_METHOD=llm` + điền `OPENAI_API_KEY` trong file đó.
 3. Thử kéo thả + thu gọn panel nổi trên trang thật, kiểm tra panel không bị
    che khuất bởi UI của Pancake (z-index) và ngược lại.
 4. Thử nút "Cập nhật" trên trang thật (đóng tab vài tiếng, mở lại, bấm Cập
@@ -80,10 +114,10 @@ chạy ở máy** (`ZPancake/server/`, xem README riêng ở đó) để lưu v�
 3. Bấm **Tải tiện ích đã giải nén** (Load unpacked) → chọn thư mục `ZPancake/`.
 4. Mở `https://pancake.vn/` và đăng nhập, để trang hiển thị danh sách hội thoại.
 
-> **Lưu ý khi dev:** mỗi lần sửa code rồi bấm reload extension ở
-> `chrome://extensions`, phải **F5 lại tab pancake.vn đang mở** — nếu không,
-> script cũ trong tab đó mất kết nối tới extension và sẽ báo lỗi
-> `Extension context invalidated` (không phải bug, xem mục "Cách hoạt động").
+**Lưu ý khi dev:** mỗi lần sửa code rồi bấm reload extension ở
+`chrome://extensions`, phải **F5 lại tab pancake.vn đang mở** — nếu không,
+script cũ trong tab đó mất kết nối tới extension và sẽ báo lỗi
+`Extension context invalidated` (không phải bug, xem mục "Cách hoạt động").
 
 ## Cách hoạt động
 
@@ -118,10 +152,9 @@ mới nhưng nằm ngoài màn hình lúc vừa mở trang sẽ chưa được q
 tìm tab pancake.vn đang mở + `chrome.tabs.sendMessage`), content script sẽ:
 tự cuộn khung danh sách (`.rc-virtual-list-holder`) theo từng bước lớn từ đầu
 xuống cuối, dừng ~220ms mỗi bước để React kịp render rồi quét-so sánh ngay,
-sau đó cuộn trả lại đúng vị trí ban đầu. Bật tuỳ chọn **"Tự động cập nhật mỗi
-khi mở trang"** (checkbox trong popup, lưu ở `chrome.storage.local` key
-`pancake_settings`) để việc này tự chạy 1 lượt mỗi khi content script khởi
-động, không cần bấm tay.
+sau đó cuộn trả lại đúng vị trí ban đầu. Việc này **luôn tự chạy 1 lượt ngay
+sau khi mở trang** (không cần bấm tay, và không có tuỳ chọn tắt) — đảm bảo
+luôn bắt được tin đến trong lúc tab đóng ngay từ lúc mở lại trang.
 
 ### Lưu trữ & hiển thị
 

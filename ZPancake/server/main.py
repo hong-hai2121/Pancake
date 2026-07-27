@@ -10,15 +10,27 @@ extension quét được (snippet rút gọn + metadata hội thoại).
 
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 import sentiment
-from db import get_recent_sentiments, get_unanalyzed, init_db, save_event, update_sentiment
+from db import (
+    delete_customer,
+    get_all_customers,
+    get_recent_sentiments,
+    get_unanalyzed,
+    init_db,
+    save_event,
+    update_sentiment,
+)
+
+HISTORY_HTML_PATH = Path(__file__).parent / "history.html"
 
 load_dotenv()  # đọc .env riêng của ZPancake/server (SENTIMENT_METHOD, OPENAI_API_KEY...)
 
@@ -115,6 +127,49 @@ def sentiment_updates() -> dict:
             for row in rows
         ]
     }
+
+
+@app.get("/history", response_class=HTMLResponse)
+def history_page() -> str:
+    """Webview xem lịch sử toàn bộ khách hàng đã quét được, sắp xếp theo thời
+    gian — chỉ đọc file HTML tĩnh (tự chứa CSS/JS, không cần build gì) rồi trả
+    thẳng về, trang tự gọi /api/customers qua fetch()."""
+    return HISTORY_HTML_PATH.read_text(encoding="utf-8")
+
+
+@app.get("/api/customers")
+def list_customers(sort: str = "detected_at", order: str = "desc") -> dict:
+    rows = get_all_customers(order_by=sort, direction=order)
+    return {
+        "items": [
+            {
+                "rawId": row["raw_id"],
+                "platform": row["platform"],
+                "kind": row["kind"],
+                "pageId": row["page_id"],
+                "convId": row["conv_id"],
+                "name": row["name"],
+                "snippet": row["snippet"],
+                "time": row["time_text"],
+                "unreadCount": row["unread_count"],
+                "reason": row["reason"],
+                "detectedAt": row["detected_at"],
+                "firstSeenAt": row["first_seen_at"],
+                "lastSeenAt": row["last_seen_at"],
+                "sentiment": row["sentiment"],
+                "sentimentMethod": row["sentiment_method"],
+                "sentimentCheckedAt": row["sentiment_checked_at"],
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.delete("/api/customers/{raw_id}")
+def delete_customer_endpoint(raw_id: str) -> dict:
+    if not delete_customer(raw_id):
+        raise HTTPException(status_code=404, detail="raw_id không tồn tại")
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":

@@ -134,7 +134,7 @@
       .power-btn.off { background: #ef4444; }
       .body { max-height: 420px; display: flex; flex-direction: column; }
       .off-body { display: none; padding: 18px 12px; text-align: center; }
-      .off-msg { font-size: 12px; color: #6b7280; margin: 0 0 10px; }
+      .off-msg { font-size: 12px; color: #6b7280; margin: 0; }
       .panel.watcher-off .body { display: none; }
       .panel.watcher-off .off-body { display: block; }
       .panel.collapsed .body,
@@ -153,15 +153,6 @@
       button.act:hover { background: #f3f4f6; }
       button.act:disabled { opacity: 0.5; cursor: default; }
       button.act.primary { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; font-weight: 600; }
-      .auto-toggle {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 8px 0;
-        font-size: 10px;
-        color: #4b5563;
-        cursor: pointer;
-      }
       .status { padding: 4px 8px 0; font-size: 10px; color: #6b7280; min-height: 12px; }
       #list { list-style: none; margin: 8px 0 0; padding: 0; overflow-y: auto; }
       .item { padding: 8px 10px; border-top: 1px solid #f1f5f9; cursor: pointer; }
@@ -197,17 +188,12 @@
         <div class="actions">
           <button class="act primary" id="sweepBtn">🔄 Cập nhật</button>
         </div>
-        <label class="auto-toggle">
-          <input type="checkbox" id="autoSweepToggle" data-no-drag />
-          Tự động cập nhật mỗi khi mở trang
-        </label>
         <p class="status" id="sweepStatus"></p>
         <ul id="list"></ul>
         <p class="empty" id="empty" hidden>Chưa phát hiện tin nhắn mới nào.</p>
       </div>
       <div class="off-body" id="offBody">
-        <p class="off-msg">Đã tắt — không quét tin nhắn mới.</p>
-        <button class="act primary" id="turnOnBtn" data-no-drag>▶ Bật lại</button>
+        <p class="off-msg">Đã tắt — không quét tin nhắn mới. Bấm ⏻ ở góc trên để bật lại.</p>
       </div>
     </div>
   `;
@@ -221,8 +207,6 @@
   const emptyEl = shadow.getElementById("empty");
   const statusEl = shadow.getElementById("sweepStatus");
   const sweepBtn = shadow.getElementById("sweepBtn");
-  const autoToggle = shadow.getElementById("autoSweepToggle");
-  const turnOnBtn = shadow.getElementById("turnOnBtn");
 
   // -------------------------------------------------------- vị trí & thu gọn
 
@@ -346,11 +330,6 @@
     setEnabled(currentlyOff); // đang tắt -> bật lại; đang bật -> tắt
   });
 
-  turnOnBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    setEnabled(true);
-  });
-
   // -------------------------------------------------------------- dữ liệu
 
   // Nhớ id đang đứng đầu ở lần vẽ trước, để nhấp nháy vàng dòng nào vừa nhảy
@@ -431,19 +410,6 @@
     }
   });
 
-  autoToggle.addEventListener("change", (e) => {
-    if (!isExtensionContextValid()) return;
-    try {
-      chrome.storage.local.get(SETTINGS_KEY, (res) => {
-        const settings = res[SETTINGS_KEY] || {};
-        settings.autoSweepOnLoad = e.target.checked;
-        chrome.storage.local.set({ [SETTINGS_KEY]: settings });
-      });
-    } catch (err) {
-      // bỏ qua
-    }
-  });
-
   function renderSweepStatus(status) {
     if (!status) {
       statusEl.textContent = "";
@@ -466,7 +432,6 @@
     try {
       chrome.storage.local.get(SETTINGS_KEY, (res) => {
         const settings = res[SETTINGS_KEY] || {};
-        autoToggle.checked = !!settings.autoSweepOnLoad;
         applyEnabled(settings.enabled !== false);
       });
       chrome.storage.local.get(SWEEP_STATUS_KEY, (res) => renderSweepStatus(res[SWEEP_STATUS_KEY]));

@@ -13,7 +13,7 @@
   const SCAN_DEBOUNCE_MS = 400;
   const POLL_FALLBACK_MS = 3000;
   const STATE_KEY = "pancake_seen_state"; // { [convRawId]: { unreadCount, snippet, time } }
-  const SETTINGS_KEY = "pancake_settings"; // { autoSweepOnLoad: boolean, enabled: boolean }
+  const SETTINGS_KEY = "pancake_settings"; // { enabled: boolean }
   const SWEEP_STATUS_KEY = "pancake_sweep_status";
   const SWEEP_STEP_WAIT_MS = 220; // chờ React render xong sau mỗi bước cuộn trước khi quét
   const SWEEP_MAX_STEPS = 400; // chặn an toàn, phòng danh sách vô hạn/lỗi tính scrollHeight
@@ -414,9 +414,10 @@
           attachObserverIfNeeded();
           scanAndDiff();
 
-          // Nếu bạn bật "tự động quét khi mở trang" trong popup, chạy 1 lượt cập
-          // nhật ngay sau khi có baseline — không cần bấm nút thủ công mỗi lần.
-          if (watcherEnabled && settings.autoSweepOnLoad) {
+          // Luôn tự chạy 1 lượt "Cập nhật" ngay sau khi có baseline — không cần
+          // bấm nút thủ công mỗi lần, và không có tuỳ chọn tắt việc này (đảm bảo
+          // luôn bắt được tin đến trong lúc tab đóng ngay từ lúc mở lại trang).
+          if (watcherEnabled) {
             setTimeout(sweepFullList, 800);
           }
         });

@@ -15,14 +15,21 @@ thể thiếu ngữ cảnh.
   mỗi lần gọi + cần internet.
 """
 
+import json
 import os
+from pathlib import Path
 
 SENTIMENT_METHOD = os.getenv("SENTIMENT_METHOD", "keyword").strip().lower()
 
-# Danh sách từ khoá/cụm từ tiêu cực tiếng Việt thường gặp khi khách phàn nàn
-# về dịch vụ tư vấn — chỉ cần khớp 1 cụm là coi như "negative". Thêm/bớt tuỳ
-# thực tế sử dụng, không cần khởi động lại server (đọc lại mỗi lần gọi).
-NEGATIVE_KEYWORDS = [
+# Danh sách từ khoá/cụm từ tiêu cực tiếng Việt lưu ở keywords.json (cùng thư
+# mục) thay vì hard-code — GUI (gui.py, cửa sổ "Quản lý từ khoá tiêu cực")
+# đọc/ghi thẳng vào file này qua get_keywords()/add_keyword()/remove_keyword()
+# bên dưới. File chưa tồn tại (lần chạy đầu) thì tự tạo với bộ từ khoá khởi
+# điểm DEFAULT_NEGATIVE_KEYWORDS. Đọc lại file mỗi lần quét (analyze_keyword)
+# nên sửa qua GUI có tác dụng ngay, không cần khởi động lại server.
+KEYWORDS_PATH = Path(__file__).parent / "keywords.json"
+
+DEFAULT_NEGATIVE_KEYWORDS = [
     "không hài lòng",
     "không hiệu quả",
     "không tin tưởng",
@@ -56,11 +63,43 @@ NEGATIVE_KEYWORDS = [
 ]
 
 
+def get_keywords() -> list[str]:
+    if not KEYWORDS_PATH.exists():
+        set_keywords(DEFAULT_NEGATIVE_KEYWORDS)
+        return list(DEFAULT_NEGATIVE_KEYWORDS)
+    try:
+        data = json.loads(KEYWORDS_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [str(kw) for kw in data]
+    except (json.JSONDecodeError, OSError):
+        pass
+    return list(DEFAULT_NEGATIVE_KEYWORDS)
+
+
+def set_keywords(keywords: list[str]) -> None:
+    KEYWORDS_PATH.write_text(json.dumps(keywords, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def add_keyword(keyword: str) -> list[str]:
+    keyword = keyword.strip().lower()
+    keywords = get_keywords()
+    if keyword and keyword not in keywords:
+        keywords.append(keyword)
+        set_keywords(keywords)
+    return keywords
+
+
+def remove_keyword(keyword: str) -> list[str]:
+    keywords = [kw for kw in get_keywords() if kw != keyword]
+    set_keywords(keywords)
+    return keywords
+
+
 def analyze_keyword(text: str) -> str:
     if not text:
         return "neutral"
     lowered = text.lower()
-    for kw in NEGATIVE_KEYWORDS:
+    for kw in get_keywords():
         if kw in lowered:
             return "negative"
     return "neutral"
