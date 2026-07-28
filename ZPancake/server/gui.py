@@ -41,7 +41,12 @@ COLOR_LOG_TEXT = "#d1d5db"
 
 
 def read_env() -> dict:
-    values = {"SENTIMENT_METHOD": "keyword", "OPENAI_API_KEY": ""}
+    values = {
+        "SENTIMENT_METHOD": "keyword",
+        "OPENAI_API_KEY": "",
+        "TELEGRAM_BOT_TOKEN": "",
+        "TELEGRAM_CHAT_ID": "",
+    }
     if ENV_PATH.exists():
         for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -65,11 +70,17 @@ def _center_window(win: tk.Misc, width: int, height: int) -> None:
 
 
 def write_env(values: dict) -> None:
+    # TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID không có ô sửa trên GUI (chỉnh tay
+    # trong .env, xem .env.example) nhưng VẪN phải ghi lại nguyên giá trị đang
+    # có ở đây — nếu không, mỗi lần bấm "Lưu cài đặt" sẽ ghi đè cả file .env
+    # chỉ với 2 dòng SENTIMENT_METHOD/OPENAI_API_KEY và xoá mất cấu hình Telegram.
     lines = [
         "# File này do gui.py tự ghi khi bấm \"Lưu cài đặt\" — có thể chỉnh tay",
-        "# nhưng lần sau lưu qua GUI sẽ ghi đè lại theo đúng 2 dòng dưới.",
+        "# nhưng lần sau lưu qua GUI sẽ ghi đè lại theo đúng các dòng dưới.",
         f"SENTIMENT_METHOD={values['SENTIMENT_METHOD']}",
         f"OPENAI_API_KEY={values['OPENAI_API_KEY']}",
+        f"TELEGRAM_BOT_TOKEN={values['TELEGRAM_BOT_TOKEN']}",
+        f"TELEGRAM_CHAT_ID={values['TELEGRAM_CHAT_ID']}",
         "",
     ]
     ENV_PATH.write_text("\n".join(lines), encoding="utf-8")
@@ -242,8 +253,22 @@ class ServerControlApp:
             command=self.open_keywords_dialog,
         ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
 
+        ttk.Button(
+            settings_pad,
+            text="🔔  Kiểm tra kết nối Telegram...",
+            command=self.test_telegram,
+        ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Label(
+            settings_pad,
+            text="TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID chỉnh trực tiếp trong .env "
+            "(xem hướng dẫn lấy 2 giá trị này trong .env.example) — không hiện ở đây vì là thông tin nhạy cảm.",
+            style="Muted.TLabel",
+            wraplength=360,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+
         ttk.Button(settings_pad, text="💾  Lưu cài đặt", style="Primary.TButton", command=self.save_settings).grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(8, 6)
+            row=5, column=0, columnspan=2, sticky="ew", pady=(10, 6)
         )
         ttk.Label(
             settings_pad,
@@ -251,7 +276,7 @@ class ServerControlApp:
             style="Muted.TLabel",
             wraplength=360,
             justify="left",
-        ).grid(row=4, column=0, columnspan=2, sticky="w")
+        ).grid(row=6, column=0, columnspan=2, sticky="w")
 
         # --------------------------------------------------------- nhật ký
         ttk.Label(body, text="Nhật ký", style="MutedMain.TLabel").pack(anchor="w", pady=(0, 4))
@@ -340,6 +365,41 @@ class ServerControlApp:
     def open_keywords_dialog(self) -> None:
         KeywordsDialog(self.root, log=self.log)
 
+    def test_telegram(self) -> None:
+        values = read_env()
+        token = values["TELEGRAM_BOT_TOKEN"].strip()
+        chat_id = values["TELEGRAM_CHAT_ID"].strip()
+        if not token or not chat_id:
+            messagebox.showwarning(
+                "Pancake Watcher",
+                "Chưa cấu hình TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID trong .env.\n\n"
+                "Xem hướng dẫn lấy 2 giá trị này trong file .env.example (cùng thư mục server/).",
+            )
+            return
+
+        import json
+        from urllib.request import Request
+
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        body = json.dumps(
+            {"chat_id": chat_id, "text": "🐼 Pancake Watcher: tin nhắn thử — kết nối Telegram thành công!"}
+        ).encode("utf-8")
+        req = Request(url, data=body, headers={"Content-Type": "application/json"})
+        try:
+            with urlopen(req, timeout=10) as resp:
+                if resp.status != 200:
+                    raise URLError(f"HTTP {resp.status}")
+        except Exception as err:  # noqa: BLE001 - báo lỗi cho người dùng thấy, không crash GUI
+            self.log(f"Gửi tin nhắn thử Telegram thất bại: {err}")
+            messagebox.showerror(
+                "Pancake Watcher",
+                f"Gửi thất bại: {err}\n\nKiểm tra lại TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID trong .env.",
+            )
+            return
+
+        self.log("Đã gửi tin nhắn thử tới Telegram thành công.")
+        messagebox.showinfo("Pancake Watcher", "Đã gửi tin nhắn thử — kiểm tra Telegram xem đã nhận được chưa.")
+
     def open_history(self) -> None:
         if not self.is_healthy():
             messagebox.showwarning("Pancake Watcher", "Bật server trước khi xem lịch sử.")
@@ -347,12 +407,15 @@ class ServerControlApp:
         webbrowser.open(HISTORY_URL)
 
     def save_settings(self) -> None:
-        # Giữ nguyên OPENAI_API_KEY đang có trong .env — GUI không có ô để sửa
-        # giá trị này (xem ghi chú ở _build_ui), chỉ đổi SENTIMENT_METHOD.
+        # Giữ nguyên OPENAI_API_KEY/TELEGRAM_* đang có trong .env — GUI không
+        # có ô để sửa các giá trị này (xem ghi chú ở _build_ui), chỉ đổi
+        # SENTIMENT_METHOD.
         current = read_env()
         values = {
             "SENTIMENT_METHOD": self.method_var.get() or "keyword",
             "OPENAI_API_KEY": current["OPENAI_API_KEY"],
+            "TELEGRAM_BOT_TOKEN": current["TELEGRAM_BOT_TOKEN"],
+            "TELEGRAM_CHAT_ID": current["TELEGRAM_CHAT_ID"],
         }
         write_env(values)
         self.log(f"Đã lưu cài đặt vào .env (SENTIMENT_METHOD={values['SENTIMENT_METHOD']}).")

@@ -26,10 +26,11 @@ chạy ở máy** (`ZPancake/server/`, xem README riêng ở đó) để lưu v�
 | `main.py` | Điểm khởi động server FastAPI (`127.0.0.1:8787`): định nghĩa endpoint `GET /health`, `POST /api/messages` (nhận sự kiện từ extension), `GET /api/sentiment` (trả kết quả quét cảm xúc cho extension poll), và chạy vòng lặp nền `sentiment_worker()` quét cảm xúc mỗi ~8 giây tách biệt khỏi luồng lưu tin. |
 | `db.py` | Lớp truy cập SQLite: tạo/migrate bảng `customers` (1 dòng/hội thoại), `save_event()` upsert nguyên tử, `get_unanalyzed()` lấy khách chưa quét cảm xúc, `update_sentiment()` ghi kết quả, `get_recent_sentiments()` cho endpoint poll. Bật `PRAGMA journal_mode=WAL` để an toàn khi nhiều request ghi đồng thời. |
 | `sentiment.py` | Logic phân loại cảm xúc tiêu cực từ snippet: `keyword` (khớp danh sách từ khoá tiếng Việt, offline) hoặc `llm` (gọi OpenAI `gpt-4o-mini`), chọn qua biến `SENTIMENT_METHOD` trong `.env`. |
-| `gui.py` | GUI desktop (tkinter) để bật/tắt server và chỉnh `SENTIMENT_METHOD`/`OPENAI_API_KEY` mà không cần sửa `.env` bằng tay; tự kiểm tra `/health` mỗi 2s để hiện trạng thái 🟢/🔴, tự khởi động lại server khi lưu cài đặt mới. |
+| `telegram.py` | Gửi thông báo Telegram (`send_negative_alert()`) khi `sentiment_worker()` chấm 1 khách hàng "negative" — cấu hình qua `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` trong `.env`, thiếu thì tự bỏ qua, không lỗi. |
+| `gui.py` | GUI desktop (tkinter) để bật/tắt server và chỉnh `SENTIMENT_METHOD`/`OPENAI_API_KEY` mà không cần sửa `.env` bằng tay; tự kiểm tra `/health` mỗi 2s để hiện trạng thái 🟢/🔴, tự khởi động lại server khi lưu cài đặt mới. Có nút gửi thử tin nhắn để kiểm tra kết nối Telegram. |
 | `start_gui.bat` | Script khởi chạy `gui.py` bằng `pythonw.exe` (không hiện cửa sổ console), dùng làm target cho shortcut "Pancake Watcher" trên Desktop. |
 | `requirements.txt` | Các thư viện Python cần cài (`fastapi`, `uvicorn`, `python-dotenv`, `httpx`). |
-| `.env.example` | Mẫu file cấu hình (`SENTIMENT_METHOD`, `OPENAI_API_KEY`), copy thành `.env` rồi chỉnh lại (`.env` đã bị `.gitignore` bỏ qua). |
+| `.env.example` | Mẫu file cấu hình (`SENTIMENT_METHOD`, `OPENAI_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — kèm hướng dẫn lấy 2 giá trị Telegram), copy thành `.env` rồi chỉnh lại (`.env` đã bị `.gitignore` bỏ qua). |
 | `data/pancake_watcher.db` | File SQLite chứa bảng `customers`, tự tạo khi chạy server lần đầu. |
 | `README.md` | Tài liệu riêng cho server: cài đặt, schema DB, API, cơ chế an toàn khi ghi đồng thời, giới hạn hiện tại. |
 
@@ -82,11 +83,18 @@ chạy ở máy** (`ZPancake/server/`, xem README riêng ở đó) để lưu v�
   `llm` (gọi OpenAI, chính xác hơn, cần `OPENAI_API_KEY` riêng + tốn phí nhỏ).
   Extension poll kết quả mỗi phút (`chrome.alarms`) — hội thoại "negative"
   hiện viền đỏ + nhãn "⚠️ Tiêu cực" ngay trên popup/panel.
+- **Thông báo Telegram khi phát hiện tiêu cực** (`server/telegram.py`) — mỗi
+  khi worker cảm xúc chấm 1 khách "negative", server tự gửi tin nhắn (tên
+  khách, nền tảng, snippet) qua Telegram Bot API. Tuỳ chọn — cấu hình
+  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` trong `server/.env` (hướng dẫn lấy 2
+  giá trị này ở `.env.example` và `server/README.md`), thiếu thì tự bỏ qua,
+  không gửi và không lỗi.
 - **GUI desktop quản lý server** (`server/gui.py`, tkinter) — bật/tắt server,
   hiện 🟢/🔴 trạng thái đang chạy hay không (tự kiểm tra `/health` mỗi 2s), và
   chỉnh cách quét cảm xúc + OpenAI API Key ngay trên giao diện (ghi vào
-  `.env`, tự khởi động lại server nếu đang chạy để áp dụng ngay). Đã tạo sẵn
-  shortcut **"Pancake Watcher"** trên Desktop để mở nhanh.
+  `.env`, tự khởi động lại server nếu đang chạy để áp dụng ngay). Có nút
+  **"🔔 Kiểm tra kết nối Telegram..."** để gửi thử 1 tin nhắn xác nhận setup.
+  Đã tạo sẵn shortcut **"Pancake Watcher"** trên Desktop để mở nhanh.
 
 **Việc tiếp theo:**
 1. Double-click shortcut "Pancake Watcher" trên Desktop (hoặc chạy

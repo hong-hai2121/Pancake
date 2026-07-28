@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 import sentiment
+import telegram
 from db import (
     delete_customer,
     get_all_customers,
@@ -86,6 +87,15 @@ async def sentiment_worker() -> None:
                     update_sentiment(
                         row["raw_id"], result, method, datetime.now(timezone.utc).isoformat()
                     )
+                    if result == "negative":
+                        # Best-effort, không chặn/làm hỏng vòng lặp nếu Telegram lỗi hoặc
+                        # chưa cấu hình (send_negative_alert tự bỏ qua khi thiếu .env).
+                        await telegram.send_negative_alert(
+                            name=row["name"],
+                            snippet=row["snippet"],
+                            platform=row["platform"],
+                            raw_id=row["raw_id"],
+                        )
                 except Exception as err:  # noqa: BLE001 - không để 1 khách lỗi chặn cả batch
                     print(f"[sentiment_worker] Lỗi quét {row['raw_id']}: {err}")
         except Exception as err:  # noqa: BLE001 - không để lỗi bất ngờ giết chết worker

@@ -94,6 +94,40 @@ Extension poll `GET /api/sentiment` mỗi phút (`chrome.alarms` trong
 `background.js`) để lấy kết quả mới, hội thoại "negative" hiện viền đỏ + nhãn
 "⚠️ Tiêu cực" trên popup/panel.
 
+## Thông báo Telegram khi phát hiện tiêu cực (`telegram.py`)
+
+Mỗi khi `sentiment_worker()` (trong `main.py`) chấm 1 khách hàng là
+"negative", nó gọi thêm `telegram.send_negative_alert()` — gửi tin nhắn qua
+Telegram Bot API (best-effort, lỗi/timeout chỉ log ra console, không làm chết
+worker). Tin nhắn gồm tên khách, nền tảng (Zalo/Facebook) và snippet.
+
+**Bật tính năng này (tuỳ chọn — thiếu cấu hình thì tự bỏ qua, không lỗi):**
+
+1. Tạo bot: mở Telegram, chat với **@BotFather** → gõ `/newbot` → đặt tên và
+   username (phải kết thúc bằng `bot`) → BotFather trả về 1 chuỗi dạng
+   `123456789:AAExxxxxxxxxxxxxxxxxxxxxxx`, đó là `TELEGRAM_BOT_TOKEN`.
+2. Lấy chat id: mở chat với bot vừa tạo, bấm **Start**, nhắn 1 tin bất kỳ
+   (vd "hi"). Sau đó mở trình duyệt vào
+   `https://api.telegram.org/bot<TOKEN>/getUpdates`, tìm số ở
+   `"chat":{"id": ...}` trong JSON trả về — đó là `TELEGRAM_CHAT_ID`. (Muốn
+   nhận vào 1 nhóm thay vì chat riêng: thêm bot vào nhóm, nhắn 1 tin trong
+   nhóm đó rồi lấy id tương tự — id nhóm là số **âm**.)
+3. Điền 2 giá trị trên vào `server/.env` (copy từ `.env.example` nếu chưa
+   có):
+   ```
+   TELEGRAM_BOT_TOKEN=123456789:AAExxxxxxxxxxxxxxxxxxxxxxx
+   TELEGRAM_CHAT_ID=987654321
+   ```
+4. Khởi động lại server (hoặc mở `gui.py` → **"🔔 Kiểm tra kết nối
+   Telegram..."** để gửi thử ngay 1 tin nhắn xác nhận, không cần chờ có
+   khách hàng tiêu cực thật).
+
+`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` không có ô sửa trên GUI chính (giống
+`OPENAI_API_KEY`, coi là thông tin nhạy cảm) — chỉnh trực tiếp trong `.env`.
+Chỉ gửi thông báo khi có **tin mới** khiến 1 khách chuyển sang "negative"
+(dựa theo cùng điều kiện `get_unanalyzed()` ở trên) — không gửi lặp lại mỗi
+8 giây cho cùng 1 khách nếu không có gì thay đổi.
+
 ## An toàn khi nhiều request tới cùng lúc
 
 Lúc bấm "Cập nhật" (sweep cuộn cả danh sách) hoặc nhiều hội thoại có tin mới

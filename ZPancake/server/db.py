@@ -186,7 +186,7 @@ def get_unanalyzed(limit: int = 10) -> list[sqlite3.Row]:
     with get_conn() as conn:
         return conn.execute(
             """
-            SELECT raw_id, snippet
+            SELECT raw_id, snippet, name, platform
             FROM customers
             WHERE snippet IS NOT NULL
               AND (sentiment_checked_at IS NULL OR sentiment_checked_at < detected_at)
