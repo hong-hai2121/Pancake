@@ -169,6 +169,8 @@
       .row1 { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; font-size: 12px; }
       .row1 .time { font-weight: 400; color: #6b7280; font-size: 10px; }
       .snippet { font-size: 11px; color: #374151; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      /* Hội thoại tiêu cực: hiện đầy đủ nội dung, không cắt "..." như dòng thường. */
+      .item.negative .snippet { white-space: normal; overflow: visible; text-overflow: unset; }
       .meta { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: 9px; color: #9ca3af; }
       .meta .badge-count { margin-left: auto; background: #e2474f; color: #fff; font-weight: 600; padding: 1px 6px; border-radius: 999px; }
       .server-status { font-size: 10px; cursor: default; }

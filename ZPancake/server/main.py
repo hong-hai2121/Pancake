@@ -116,9 +116,16 @@ def health() -> dict:
 
 @app.post("/api/messages")
 def receive_messages(payload: MessagesPayload) -> dict:
+    inserted = 0
     for ev in payload.events:
+        # Tin do PAGE tự gửi (nhãn "Botcake", xem sentiment.is_page_message)
+        # không phải tin của khách -> bỏ hẳn, không lưu DB và khỏi cần quét
+        # cảm xúc (sentiment_worker chỉ quét những gì đã lưu).
+        if sentiment.is_page_message(ev.snippet):
+            continue
         save_event(ev.model_dump())
-    return {"status": "ok", "inserted": len(payload.events)}
+        inserted += 1
+    return {"status": "ok", "inserted": inserted}
 
 
 @app.get("/api/sentiment")
@@ -185,4 +192,10 @@ def delete_customer_endpoint(raw_id: str) -> dict:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="127.0.0.1", port=8787, reload=True)
+    # reload=False: reload=True dùng multiprocessing để tự khởi động lại khi
+    # sửa code, nhưng tiến trình con đó KHÔNG bao giờ được tạo ra khi main.py
+    # bị bật bởi gui.py qua pythonw.exe (không có console) — treo vĩnh viễn
+    # ngay sau "Started reloader process", không lỗi/không log gì thêm, khiến
+    # /health không bao giờ phản hồi. Đang phát triển và muốn auto-reload thì
+    # tự thêm lại --reload khi chạy tay: `uvicorn main:app --reload --port 8787`.
+    uvicorn.run("main:app", host="127.0.0.1", port=8787)

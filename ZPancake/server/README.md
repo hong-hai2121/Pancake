@@ -10,14 +10,22 @@ access token Pancake nào cả, chỉ lưu lại đúng những gì extension g�
 
 **Cách 1 — GUI desktop (khuyên dùng hàng ngày):**
 
-Double-click shortcut **"Pancake Watcher"** trên Desktop (đã tạo sẵn), hoặc
-chạy `python gui.py` (hoặc `pythonw gui.py` để không hiện cửa sổ đen console).
-Cửa sổ hiện:
+Double-click shortcut **"Pancake Watcher"** trên Desktop (đã tạo sẵn, icon
+🥞 riêng — `icon.ico`), hoặc chạy `pythonw gui.py` (dùng `pythonw`, không
+phải `python`, để không hiện cửa sổ đen console — shortcut đã cấu hình sẵn
+đúng như vậy, không còn qua `start_gui.bat`/`cmd.exe` nên không có màn hình
+đen nào flash lên lúc mở nữa). Cửa sổ hiện:
 - 🟢/🔴 trạng thái server đang chạy hay không (tự kiểm tra mỗi 2s qua
   `/health`), nút **Bật/Tắt server**.
 - Ô chỉnh **cách quét cảm xúc** (`keyword`/`llm`) và **OpenAI API Key**, bấm
   **"Lưu cài đặt"** để ghi vào `.env` — nếu server đang chạy sẽ tự khởi động
   lại ngay để áp dụng, không cần tắt/mở tay.
+- Nút **"📄 Xem log server"** — mở `server.log` (log của `main.py`/uvicorn khi
+  bật qua GUI, ghi đè mỗi lần bấm "Bật server"). Vì GUI chạy qua `pythonw.exe`
+  (không có console) nên đây là cách DUY NHẤT xem được log của server khi bật
+  theo Cách 1 — không redirect ra file thì output của tiến trình con sẽ mất
+  hẳn (`sys.stdout`/`stderr` là `None` dưới `pythonw`, xem chú thích trong
+  `gui.py` hàm `start_server()`).
 
 Muốn tạo lại shortcut trên Desktop (nếu lỡ xoá): xem đoạn PowerShell ở cuối
 mục này.
@@ -36,11 +44,19 @@ Server chạy ở `http://127.0.0.1:8787`. Kiểm tra còn sống:
 <details>
 <summary>Tạo lại shortcut "Pancake Watcher" trên Desktop (PowerShell)</summary>
 
+Target trỏ thẳng vào `pythonw.exe` (không qua `start_gui.bat`/`cmd.exe`) —
+đây là điểm mấu chốt để không có cửa sổ đen nào flash lên lúc bấm shortcut.
+Đổi đường dẫn `pythonw.exe` bên dưới nếu Python cài ở nơi khác trên máy bạn
+(kiểm tra bằng `python -c "import sys; print(sys.executable)"` rồi đổi đuôi
+`python.exe` thành `pythonw.exe`).
+
 ```powershell
 $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\Pancake Watcher.lnk")
-$Shortcut.TargetPath = "D:\HONGHAI\Pancake\ZPancake\server\start_gui.bat"
+$Shortcut.TargetPath = "C:\Users\Admin\AppData\Local\Programs\Python\Python312\pythonw.exe"
+$Shortcut.Arguments = "gui.py"
 $Shortcut.WorkingDirectory = "D:\HONGHAI\Pancake\ZPancake\server"
+$Shortcut.IconLocation = "D:\HONGHAI\Pancake\ZPancake\server\icon.ico,0"
 $Shortcut.Save()
 ```
 
@@ -153,7 +169,12 @@ không mất/lỗi dữ liệu:
 - `POST /api/messages` — body `{"events": [...]}`, mỗi phần tử khớp shape sự
   kiện extension gửi (`rawId`, `platform`, `kind`, `pageId`, `convId`, `name`,
   `snippet`, `time`, `unreadCount`, `platformClass`, `reason`, `detectedAt`).
-  Trả về `{"status": "ok", "inserted": N}`.
+  Trả về `{"status": "ok", "inserted": N}` — `N` có thể nhỏ hơn số phần tử gửi
+  lên nếu có event bị loại vì `sentiment.is_page_message()` nhận diện là tin
+  PAGE tự động gửi (nhãn `[Botcake]`, xem mục Telegram bên dưới) — không lưu
+  DB, không tính vào `inserted`. Extension (`background.js`) đã tự lọc trước
+  khi gửi rồi nên trường hợp này hiếm khi xảy ra ở endpoint, chỉ là lớp chặn
+  dự phòng thứ 2.
 - `GET /api/sentiment` → `{"items": [{"rawId", "sentiment", "sentimentMethod",
   "sentimentCheckedAt"}, ...]}` — tối đa 200 kết quả gần nhất, cho extension
   poll định kỳ.

@@ -21,6 +21,8 @@ import sentiment
 SERVER_DIR = Path(__file__).parent
 ENV_PATH = SERVER_DIR / ".env"
 PID_PATH = SERVER_DIR / "server.pid"  # để tắt được server kể cả khi đóng rồi mở lại GUI
+ICON_PATH = SERVER_DIR / "icon.ico"  # icon cửa sổ + taskbar, cũng dùng cho shortcut Desktop
+LOG_PATH = SERVER_DIR / "server.log"  # log của main.py (uvicorn) khi bật qua GUI, xem mục start_server()
 HEALTH_URL = "http://127.0.0.1:8787/health"
 HISTORY_URL = "http://127.0.0.1:8787/history"
 
@@ -90,14 +92,27 @@ class ServerControlApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("🐼 Pancake Watcher — Server Control")
-        _center_window(self.root, 460, 500)
-        self.root.minsize(420, 460)
         self.root.configure(bg=COLOR_BG)
+        if ICON_PATH.exists():
+            try:
+                self.root.iconbitmap(default=str(ICON_PATH))
+            except tk.TclError:
+                pass  # icon lỗi định dạng hoặc hệ điều hành không hỗ trợ .ico -> bỏ qua, không crash GUI
 
         self.process: subprocess.Popen | None = None  # tiến trình do CHÍNH gui này bật
 
         self._build_style()
         self._build_ui()
+
+        # Đặt kích thước cửa sổ theo đúng kích thước nội dung thực tế (nút,
+        # nhãn...) sau khi dựng UI — thay vì số cố định — để không bị cắt chữ
+        # khi nội dung thay đổi (vd. 2 nút chung 1 hàng cần rộng hơn trước).
+        self.root.update_idletasks()
+        width = max(self.root.winfo_reqwidth(), 820)
+        height = max(self.root.winfo_reqheight(), 520)
+        _center_window(self.root, width, height)
+        self.root.minsize(width, height)
+
         self._poll_status()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -191,9 +206,18 @@ class ServerControlApp:
 
         body = ttk.Frame(self.root, padding=(20, 0, 20, 18))
         body.pack(fill="both", expand=True)
+        body.columnconfigure(0, weight=1)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        left_col = ttk.Frame(body, style="TFrame")
+        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+
+        right_col = ttk.Frame(body, style="TFrame")
+        right_col.grid(row=0, column=1, sticky="nsew")
 
         # ---------------------------------------------------- card trạng thái
-        status_outer, status_card = self._card(body)
+        status_outer, status_card = self._card(left_col)
         status_outer.pack(fill="x", pady=(0, 12))
 
         status_row = ttk.Frame(status_card, style="Card.TFrame", padding=(14, 14, 14, 10))
@@ -215,14 +239,20 @@ class ServerControlApp:
         self.stop_btn = ttk.Button(btn_row, text="■  Tắt server", style="Danger.TButton", command=self.stop_server)
         self.stop_btn.pack(side="left", expand=True, fill="x", padx=(6, 0))
 
-        history_row = ttk.Frame(status_card, style="Card.TFrame", padding=(14, 0, 14, 14))
+        history_row = ttk.Frame(status_card, style="Card.TFrame", padding=(14, 0, 14, 6))
         history_row.pack(fill="x")
         ttk.Button(
             history_row, text="📜  Xem lịch sử hội thoại", command=self.open_history
         ).pack(fill="x")
 
+        log_row = ttk.Frame(status_card, style="Card.TFrame", padding=(14, 0, 14, 14))
+        log_row.pack(fill="x")
+        ttk.Button(
+            log_row, text="📄  Xem log server (server.log)", command=self.open_server_log
+        ).pack(fill="x")
+
         # ----------------------------------------------------- card cài đặt
-        settings_outer, settings_card = self._card(body)
+        settings_outer, settings_card = self._card(left_col)
         settings_outer.pack(fill="x", pady=(0, 12))
 
         settings_pad = ttk.Frame(settings_card, style="Card.TFrame", padding=14)
@@ -247,40 +277,37 @@ class ServerControlApp:
         # OpenAI API Key KHÔNG hiện/sửa trên GUI (đọc thẳng từ .env lúc chạy) —
         # tránh lộ key lên màn hình; muốn đổi thì sửa trực tiếp file .env.
 
+        actions_row = ttk.Frame(settings_pad, style="Card.TFrame")
+        actions_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        actions_row.columnconfigure(0, weight=1)
+        actions_row.columnconfigure(1, weight=1)
+
         ttk.Button(
-            settings_pad,
+            actions_row,
             text="🏷️  Quản lý từ khoá tiêu cực...",
             command=self.open_keywords_dialog,
-        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
 
         ttk.Button(
-            settings_pad,
+            actions_row,
             text="🔔  Kiểm tra kết nối Telegram...",
             command=self.test_telegram,
-        ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        ttk.Label(
-            settings_pad,
-            text="TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID chỉnh trực tiếp trong .env "
-            "(xem hướng dẫn lấy 2 giá trị này trong .env.example) — không hiện ở đây vì là thông tin nhạy cảm.",
-            style="Muted.TLabel",
-            wraplength=360,
-            justify="left",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         ttk.Button(settings_pad, text="💾  Lưu cài đặt", style="Primary.TButton", command=self.save_settings).grid(
-            row=5, column=0, columnspan=2, sticky="ew", pady=(10, 6)
+            row=3, column=0, columnspan=2, sticky="ew", pady=(10, 6)
         )
         ttk.Label(
             settings_pad,
             text="Lưu khi server đang chạy sẽ tự khởi động lại để áp dụng cài đặt mới.",
             style="Muted.TLabel",
-            wraplength=360,
+            wraplength=320,
             justify="left",
-        ).grid(row=6, column=0, columnspan=2, sticky="w")
+        ).grid(row=4, column=0, columnspan=2, sticky="w")
 
         # --------------------------------------------------------- nhật ký
-        ttk.Label(body, text="Nhật ký", style="MutedMain.TLabel").pack(anchor="w", pady=(0, 4))
-        log_outer, log_card = self._card(body)
+        ttk.Label(right_col, text="Nhật ký", style="MutedMain.TLabel").pack(anchor="w", pady=(0, 4))
+        log_outer, log_card = self._card(right_col)
         log_outer.pack(fill="both", expand=True)
         self.log_text = tk.Text(
             log_card,
@@ -317,11 +344,24 @@ class ServerControlApp:
             messagebox.showinfo("Pancake Watcher", "Server đã đang chạy rồi.")
             return
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        # QUAN TRỌNG: GUI chạy qua pythonw.exe (không có console) -> nếu không
+        # redirect, sys.stdout/sys.stderr của tiến trình con (main.py) là None,
+        # và dòng print()/log đầu tiên của uvicorn sẽ ném AttributeError rồi
+        # chết ngay lập tức — không có console nào để hiện lỗi đó, nên GUI chỉ
+        # thấy PID xuất hiện rồi biến mất, đèn trạng thái không bao giờ chuyển
+        # xanh, mà không rõ vì sao. Ghi thẳng ra server.log để: (1) tránh crash,
+        # (2) có chỗ xem lại khi cần debug.
+        log_file = open(LOG_PATH, "w", encoding="utf-8")
         self.process = subprocess.Popen(
-            [sys.executable, "main.py"], cwd=str(SERVER_DIR), creationflags=creationflags
+            [sys.executable, "main.py"],
+            cwd=str(SERVER_DIR),
+            creationflags=creationflags,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
         )
+        log_file.close()  # tiến trình con đã nhận bản sao handle riêng, đóng ở đây an toàn
         PID_PATH.write_text(str(self.process.pid), encoding="utf-8")
-        self.log(f"Đã bật server (PID {self.process.pid}).")
+        self.log(f"Đã bật server (PID {self.process.pid}). Log: {LOG_PATH.name}")
 
     def stop_server(self) -> None:
         pid = None
@@ -405,6 +445,14 @@ class ServerControlApp:
             messagebox.showwarning("Pancake Watcher", "Bật server trước khi xem lịch sử.")
             return
         webbrowser.open(HISTORY_URL)
+
+    def open_server_log(self) -> None:
+        if not LOG_PATH.exists():
+            messagebox.showinfo(
+                "Pancake Watcher", "Chưa có server.log — bấm \"Bật server\" ít nhất 1 lần trước."
+            )
+            return
+        os.startfile(str(LOG_PATH))  # mở bằng app mặc định của Windows cho .log (thường là Notepad)
 
     def save_settings(self) -> None:
         # Giữ nguyên OPENAI_API_KEY/TELEGRAM_* đang có trong .env — GUI không

@@ -17,6 +17,7 @@ thể thiếu ngữ cảnh.
 
 import json
 import os
+import re
 from pathlib import Path
 
 SENTIMENT_METHOD = os.getenv("SENTIMENT_METHOD", "keyword").strip().lower()
@@ -60,6 +61,38 @@ DEFAULT_NEGATIVE_KEYWORDS = [
     "mất thời gian",
     "không phản hồi",
     "bỏ rơi",
+    "đm",
+    "đmm",
+    "đcm",
+    "vãi lồn",
+    "vl",
+    "vcl",
+    "vkl",
+    "địt",
+    "đéo",
+    "đếch",
+    "ngu",
+    "óc chó",
+    "đồ ngu",
+    "đồ chó",
+    "chó chết",
+    "khốn nạn",
+    "đồ khốn",
+    "súc vật",
+    "mất dạy",
+    "vô học",
+    "vô liêm sỉ",
+    "rác rưởi",
+    "thằng ngu",
+    "con ngu",
+    "đồ điên",
+    "bố láo",
+    "láo toét",
+    "ăn cắp",
+    "ăn chặn",
+    "chết tiệt",
+    "đồ lừa đảo",
+    "thằng lừa đảo",
 ]
 
 
@@ -100,7 +133,15 @@ def analyze_keyword(text: str) -> str:
         return "neutral"
     lowered = text.lower()
     for kw in get_keywords():
-        if kw in lowered:
+        if not kw:
+            continue
+        # \b theo ranh giới TỪ, không phải khớp substring thô — nếu không, từ
+        # khoá ngắn như "ngu" sẽ khớp nhầm vào giữa "Nguyễn" (họ phổ biến nhất
+        # VN, gần như luôn xuất hiện ở phần [Tên người gửi] đầu mỗi snippet),
+        # khiến gần như MỌI tin nhắn đều bị báo tiêu cực oan. \w trong Python
+        # regex (chế độ Unicode mặc định với chuỗi str) đã tính cả chữ có dấu
+        # tiếng Việt là ký tự "từ" nên hoạt động đúng cho cả từ khoá có dấu.
+        if re.search(r"(?<!\w)" + re.escape(kw) + r"(?!\w)", lowered):
             return "negative"
     return "neutral"
 
@@ -143,8 +184,25 @@ async def analyze_llm(text: str) -> str:
     return "neutral"
 
 
+# Snippet có dạng "[Tên/nhãn người gửi] nội dung" — khi PAGE tự động gửi tin
+# (kịch bản chatbot, không phải tin của khách), Pancake hiện nhãn "Botcake"
+# thay vì tên khách. Loại thẳng những tin này khỏi việc quét cảm xúc: đây là
+# lời page tự nói (thường hỏi lại khách "đang gặp vấn đề gì"...), không phải
+# cảm xúc của khách hàng, quét vào sẽ báo tiêu cực oan + tốn phí LLM vô ích.
+PAGE_MESSAGE_MARKERS = ["[botcake]"]
+
+
+def is_page_message(text: str) -> bool:
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(marker in lowered for marker in PAGE_MESSAGE_MARKERS)
+
+
 async def analyze(text: str) -> tuple[str, str]:
     """Trả về (sentiment, method_đã_dùng)."""
+    if is_page_message(text):
+        return "neutral", "skipped_page_message"
     if SENTIMENT_METHOD == "llm":
         return await analyze_llm(text), "llm"
     return analyze_keyword(text), "keyword"

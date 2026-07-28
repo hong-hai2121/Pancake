@@ -169,6 +169,14 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+/* Hội thoại tiêu cực: hiện đầy đủ nội dung, không cắt ngắn bằng "..." như
+   dòng bình thường — cần đọc rõ khách đang phàn nàn gì ngay trên danh sách. */
+.item.negative .snippet {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+}
+
 .meta {
   display: flex;
   align-items: center;

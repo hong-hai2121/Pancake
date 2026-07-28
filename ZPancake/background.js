@@ -23,6 +23,14 @@ const pendingEvents = new Map(); // rawId -> event mới nhất chưa gửi
 let sendingInProgress = false;
 const MAX_SEND_ATTEMPTS = 3;
 
+// Trần số event rút ra khỏi hàng đợi cho MỖI request — phòng trường hợp dội
+// tin quá nhiều cùng lúc (vd lần đầu cài, hoặc cuộn nhanh qua hàng trăm hội
+// thoại) khiến 1 request duy nhất phải cõng hết cả pendingEvents. Phần vượt
+// trần vẫn nằm nguyên trong hàng đợi, được gửi tiếp ở (các) đợt kế — không
+// gửi lại thứ vừa gửi, không mất tin, chỉ rải nhỏ ra thành nhiều request hơn.
+const MAX_EVENTS_PER_REQUEST = 50;
+const CHUNK_GAP_MS = 250; // nghỉ giữa 2 request liên tiếp khi hàng đợi còn dư, tránh dồn dập server local
+
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -79,15 +87,27 @@ async function processSendQueue() {
   if (pendingEvents.size === 0) return;
   sendingInProgress = true;
 
-  // Lấy toàn bộ những gì đang chờ rồi xoá khỏi hàng đợi NGAY — để bất kỳ tin
-  // nào đến trong lúc fetch() này đang chạy sẽ gộp vào đợt KẾ TIẾP, không lẫn
-  // vào đợt đang gửi dở.
-  const batch = Array.from(pendingEvents.values());
-  pendingEvents.clear();
+  // Chỉ rút tối đa MAX_EVENTS_PER_REQUEST mục rồi xoá đúng những mục đó khỏi
+  // hàng đợi NGAY — để bất kỳ tin nào đến trong lúc fetch() này đang chạy sẽ
+  // gộp vào đợt KẾ TIẾP, không lẫn vào đợt đang gửi dở. Phần còn dư (nếu hàng
+  // đợi lớn hơn trần) vẫn nằm trong pendingEvents, gửi tiếp ở đợt sau.
+  const keys = Array.from(pendingEvents.keys()).slice(0, MAX_EVENTS_PER_REQUEST);
+  const batch = keys.map((k) => pendingEvents.get(k));
+  keys.forEach((k) => pendingEvents.delete(k));
 
   await sendWithRetry(batch);
 
+  const hasMore = pendingEvents.size > 0;
   sendingInProgress = false;
+  if (!hasMore) return;
+
+  if (batch.length >= MAX_EVENTS_PER_REQUEST) {
+    console.log(
+      `[Pancake Watcher][background] Hàng đợi còn ${pendingEvents.size} sự kiện sau khi gửi ` +
+        `${batch.length} — nghỉ ${CHUNK_GAP_MS}ms rồi gửi tiếp đợt kế.`
+    );
+    await wait(CHUNK_GAP_MS);
+  }
   // Trong lúc gửi đợt vừa rồi, nếu có tin mới tích luỹ thêm thì gửi tiếp luôn.
   processSendQueue();
 }
@@ -98,6 +118,18 @@ async function processSendQueue() {
 function forwardToLocalServer(events) {
   events.forEach((ev) => pendingEvents.set(ev.rawId, ev));
   processSendQueue();
+}
+
+// Snippet "[Botcake] ..." là tin PAGE tự động gửi ra (kịch bản chatbot), không
+// phải tin của khách — không gửi lên server (server chỉ cần lưu tin khách gửi
+// tới; snippet dạng này lỡ ghi đè vào bản ghi khách sẽ làm sai "tin cuối cùng"
+// hiển thị ở /history + quét cảm xúc nhầm nội dung page tự nói). Vẫn giữ
+// nguyên hiển thị ở popup/panel — chỉ chặn đúng phần gửi server.
+const PAGE_MESSAGE_MARKERS = ["[botcake]"];
+
+function isPageMessage(ev) {
+  const text = (ev.snippet || "").toLowerCase();
+  return PAGE_MESSAGE_MARKERS.some((marker) => text.includes(marker));
 }
 
 function updateBadge(store) {
@@ -124,7 +156,8 @@ chrome.runtime.onMessage.addListener((message) => {
 
   console.log("[Pancake Watcher][background] Nhận", events.length, "sự kiện tin nhắn mới:", events);
 
-  forwardToLocalServer(events);
+  const serverEvents = events.filter((ev) => !isPageMessage(ev));
+  if (serverEvents.length) forwardToLocalServer(serverEvents);
 
   chrome.storage.local.get(EVENTS_KEY, (res) => {
     const store = res[EVENTS_KEY] || {};
