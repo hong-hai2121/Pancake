@@ -22,6 +22,7 @@ from pydantic import BaseModel
 import sentiment
 import telegram
 from db import (
+    cleanup_scanned,
     delete_customer,
     get_all_customers,
     get_recent_sentiments,
@@ -72,6 +73,10 @@ class MessagesPayload(BaseModel):
 SENTIMENT_WORKER_INTERVAL_S = 8  # quét lại mỗi 8s, đủ nhanh mà không tốn CPU vô ích
 SENTIMENT_BATCH_SIZE = 10  # mỗi lượt quét tối đa N khách, tránh 1 lượt chạy quá lâu
 
+CLEANUP_WORKER_INTERVAL_S = 1800  # 30 phút/lần — đủ thưa so với ngưỡng 1h bên dưới
+CLEANUP_OLDER_THAN_HOURS = 1
+CLEANUP_KEEP_RECENT = 20  # sàn tối thiểu hội thoại đã quét luôn được giữ lại, xem db.cleanup_scanned
+
 
 async def sentiment_worker() -> None:
     """Chạy NỀN, tách hẳn khỏi request POST /api/messages — quét cảm xúc không
@@ -103,10 +108,31 @@ async def sentiment_worker() -> None:
         await asyncio.sleep(SENTIMENT_WORKER_INTERVAL_S)
 
 
+# ------------------------------------------------------ worker nền: dọn dẹp
+
+
+async def cleanup_worker() -> None:
+    """Chạy NỀN định kỳ, xoá bớt hội thoại đã quét cảm xúc + không tiêu cực +
+    cũ hơn CLEANUP_OLDER_THAN_HOURS — luôn giữ lại CLEANUP_KEEP_RECENT hội
+    thoại đã quét gần nhất và mọi hội thoại tiêu cực (xem db.cleanup_scanned).
+    """
+    while True:
+        try:
+            deleted = cleanup_scanned(
+                older_than_hours=CLEANUP_OLDER_THAN_HOURS, keep_recent=CLEANUP_KEEP_RECENT
+            )
+            if deleted:
+                print(f"[cleanup_worker] Đã xoá {deleted} hội thoại cũ.")
+        except Exception as err:  # noqa: BLE001 - không để lỗi bất ngờ giết chết worker
+            print(f"[cleanup_worker] Lỗi: {err}")
+        await asyncio.sleep(CLEANUP_WORKER_INTERVAL_S)
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
     asyncio.create_task(sentiment_worker())
+    asyncio.create_task(cleanup_worker())
 
 
 @app.get("/health")

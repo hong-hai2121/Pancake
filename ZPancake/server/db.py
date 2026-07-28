@@ -14,6 +14,7 @@ hoàn toàn không đụng tới dự án app/ ở thư mục gốc repo.
 
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "data" / "pancake_watcher.db"
@@ -207,6 +208,34 @@ def update_sentiment(raw_id: str, sentiment: str, method: str, checked_at: str) 
             """,
             (sentiment, method, checked_at, raw_id),
         )
+
+
+def cleanup_scanned(older_than_hours: int = 1, keep_recent: int = 20) -> int:
+    """Xoá hội thoại đã quét cảm xúc xong, KHÔNG tiêu cực, và cũ hơn
+    `older_than_hours` (theo detected_at) — TRỪ `keep_recent` hội thoại đã
+    quét gần nhất, luôn được giữ lại làm "sàn tối thiểu" lịch sử bất kể tuổi
+    (kể cả khi 1 trong số đó đã quá 24h vì không có gì mới hơn đẩy nó ra khỏi
+    top-`keep_recent`). Hội thoại sentiment='negative' không bao giờ bị hàm
+    này xoá — dùng cho worker dọn dẹp định kỳ trong main.py."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=older_than_hours)).isoformat()
+    with get_conn() as conn:
+        cur = conn.execute(
+            """
+            DELETE FROM customers
+            WHERE raw_id IN (
+                SELECT raw_id FROM (
+                    SELECT raw_id, detected_at,
+                           ROW_NUMBER() OVER (ORDER BY detected_at DESC) AS rn
+                    FROM customers
+                    WHERE sentiment_checked_at IS NOT NULL
+                      AND (sentiment IS NULL OR sentiment != 'negative')
+                ) ranked
+                WHERE rn > ? AND detected_at < ?
+            )
+            """,
+            (keep_recent, cutoff),
+        )
+        return cur.rowcount
 
 
 SORTABLE_COLUMNS = {

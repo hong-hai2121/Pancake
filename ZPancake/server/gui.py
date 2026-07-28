@@ -362,6 +362,35 @@ class ServerControlApp:
         log_file.close()  # tiến trình con đã nhận bản sao handle riêng, đóng ở đây an toàn
         PID_PATH.write_text(str(self.process.pid), encoding="utf-8")
         self.log(f"Đã bật server (PID {self.process.pid}). Log: {LOG_PATH.name}")
+        # Kiểm tra lại sau 1.5s: is_healthy() lúc đầu có thể báo "chưa chạy" nhầm
+        # (vd máy đang lag, hoặc tiến trình cũ chưa kịp nhả cổng) khiến ta bật
+        # thêm 1 tiến trình mới ngay khi cổng 8787 vẫn còn bị chiếm — tiến trình
+        # mới đó sẽ tự thoát gần như ngay lập tức. Không kiểm tra thì PID_PATH cứ
+        # trỏ vào 1 PID đã chết, và người dùng tưởng server đang chạy trong khi
+        # thực ra không có gì lắng nghe cổng 8787 (hoặc tệ hơn, tiến trình CŨ vẫn
+        # sống nhưng ta đã mất dấu PID của nó).
+        self.root.after(1500, self._verify_started, self.process)
+
+    def _verify_started(self, process: subprocess.Popen) -> None:
+        if process is not self.process:
+            return  # đã bấm Tắt/Bật lại trong lúc chờ -> bỏ qua lần kiểm tra cũ này
+        if process.poll() is None:
+            return  # vẫn đang chạy bình thường
+        tail = ""
+        try:
+            tail = LOG_PATH.read_text(encoding="utf-8", errors="ignore")[-800:]
+        except OSError:
+            pass
+        self.log(f"Server thoát ngay sau khi bật (exit code {process.returncode}) — xem server.log.")
+        self.process = None
+        if PID_PATH.exists():
+            PID_PATH.unlink()
+        messagebox.showerror(
+            "Pancake Watcher",
+            "Server vừa bật đã tự thoát ngay — thường do cổng 8787 vẫn đang bị 1 "
+            "tiến trình khác chiếm (chưa tắt hẳn) hoặc lỗi khi khởi động.\n\n"
+            + (f"Log gần nhất:\n{tail}" if tail else "Xem server.log để biết chi tiết."),
+        )
 
     def stop_server(self) -> None:
         pid = None
@@ -386,21 +415,38 @@ class ServerControlApp:
                 messagebox.showinfo("Pancake Watcher", "Server hiện không chạy.")
             return
 
+        killed = False
         try:
             # /T = tắt cả cây tiến trình con — uvicorn chạy reload=True sẽ đẻ ra 1
             # tiến trình worker con, chỉ tắt tiến trình cha sẽ để sót con chạy mồ côi.
-            subprocess.run(
+            result = subprocess.run(
                 ["taskkill", "/T", "/F", "/PID", str(pid)],
                 capture_output=True,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            self.log(f"Đã tắt server (PID {pid}).")
+            if result.returncode == 0:
+                killed = True
+                self.log(f"Đã tắt server (PID {pid}).")
+            else:
+                # Không throw exception khi PID không tồn tại/không đủ quyền — chỉ
+                # trả returncode khác 0 — nên PHẢI tự kiểm tra, nếu không sẽ báo
+                # "Đã tắt" trong khi tiến trình (và cổng 8787) vẫn còn sống.
+                stderr = (result.stderr or b"").decode(errors="ignore").strip()
+                self.log(f"taskkill PID {pid} thất bại (mã {result.returncode}): {stderr or 'không rõ lỗi'}")
         except Exception as err:  # noqa: BLE001 - báo lỗi cho người dùng thấy, không crash GUI
             self.log(f"Không tắt được server (PID {pid}): {err}")
 
         self.process = None
         if PID_PATH.exists():
             PID_PATH.unlink()
+
+        if not killed and self.is_healthy():
+            messagebox.showwarning(
+                "Pancake Watcher",
+                f"Không tắt được server (PID {pid}) — tiến trình có thể vẫn đang chạy và "
+                "giữ cổng 8787. Kiểm tra Task Manager và tắt tay tiến trình python.exe "
+                "tương ứng nếu cần.",
+            )
 
     def open_keywords_dialog(self) -> None:
         KeywordsDialog(self.root, log=self.log)

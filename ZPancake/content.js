@@ -12,11 +12,17 @@
   const FALLBACK_SELECTOR = ".rc-virtual-list-holder-inner";
   const SCAN_DEBOUNCE_MS = 400;
   const POLL_FALLBACK_MS = 3000;
-  const STATE_KEY = "pancake_seen_state"; // { [convRawId]: { unreadCount, snippet, time } }
+  const STATE_KEY = "pancake_seen_state"; // { [convRawId]: { unreadCount, snippet, time, lastSeenAt } }
   const SETTINGS_KEY = "pancake_settings"; // { enabled: boolean }
   const SWEEP_STATUS_KEY = "pancake_sweep_status";
   const SWEEP_STEP_WAIT_MS = 220; // chờ React render xong sau mỗi bước cuộn trước khi quét
   const SWEEP_MAX_STEPS = 400; // chặn an toàn, phòng danh sách vô hạn/lỗi tính scrollHeight
+  // seenState không tự rụng bớt theo thời gian (khác pancake_events đã có cap ở
+  // background.js) — mỗi rawId từng lướt qua (kể cả lúc sweepFullList cuộn hết
+  // danh sách) đều bị giữ mãi, phình dần chrome.storage.local (quota mặc định
+  // 5MB, extension chưa xin unlimitedStorage). Cap theo lastSeenAt gần nhất,
+  // giống capByRecency() bên background.js, để tránh phình vô hạn.
+  const MAX_SEEN_STATE = 500;
   // Virtual list TÁI DÙNG node khi có hội thoại mới (kể cả không cuộn): hội thoại
   // mới chèn lên đầu, node đang render bị đổi id+nội dung để đại diện cho nó, hội
   // thoại rơi khỏi cuối khung nhìn không còn được render nữa. Vì vậy ngoài so
@@ -167,6 +173,20 @@
     };
   }
 
+  // Giữ lại tối đa MAX_SEEN_STATE bản ghi gần được thấy nhất, loại bớt phần cũ
+  // nhất. Entry chưa có lastSeenAt (lưu từ trước khi có field này) coi như cũ
+  // nhất, bị loại trước tiên.
+  function capSeenState(state, max) {
+    const keys = Object.keys(state);
+    if (keys.length <= max) return state;
+    const kept = keys
+      .sort((a, b) => (state[b].lastSeenAt || 0) - (state[a].lastSeenAt || 0))
+      .slice(0, max);
+    const result = {};
+    kept.forEach((k) => (result[k] = state[k]));
+    return result;
+  }
+
   function scanAndDiff() {
     if (contextInvalidated || !watcherEnabled) return;
     if (!isExtensionContextValid()) {
@@ -216,6 +236,7 @@
         unreadCount: item.unreadCount,
         snippet: item.snippet,
         time: item.time,
+        lastSeenAt: Date.now(),
       };
     });
 
@@ -245,7 +266,7 @@
       }));
     }
 
-    seenState = nextState;
+    seenState = capSeenState(nextState, MAX_SEEN_STATE);
     try {
       chrome.storage.local.set({ [STATE_KEY]: seenState });
     } catch (err) {
