@@ -6,6 +6,7 @@ Chạy: python gui.py (hoặc double-click "Pancake Watcher.lnk" trên Desktop n
 cần cài thêm gì).
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from tkinter import messagebox, ttk
 from urllib.error import URLError
 from urllib.request import urlopen
 
+import db
 import sentiment
 
 SERVER_DIR = Path(__file__).parent
@@ -25,6 +27,8 @@ ICON_PATH = SERVER_DIR / "icon.ico"  # icon cửa sổ + taskbar, cũng dùng ch
 LOG_PATH = SERVER_DIR / "server.log"  # log của main.py (uvicorn) khi bật qua GUI, xem mục start_server()
 HEALTH_URL = "http://127.0.0.1:8787/health"
 HISTORY_URL = "http://127.0.0.1:8787/history"
+SCAN_EVENTS_CURSOR_URL = "http://127.0.0.1:8787/api/scan-events/cursor"
+SCAN_EVENTS_URL = "http://127.0.0.1:8787/api/scan-events"
 
 # Bảng màu đồng bộ với popup/panel của extension (cùng tông indigo #4338ca).
 COLOR_BG = "#f3f4f6"
@@ -48,6 +52,7 @@ def read_env() -> dict:
         "OPENAI_API_KEY": "",
         "TELEGRAM_BOT_TOKEN": "",
         "TELEGRAM_CHAT_ID": "",
+        "SHOW_SCAN_LOG": "1",  # bật/tắt hiện log quét tin nhắn trong khung Nhật ký (xem _poll_scan_events)
     }
     if ENV_PATH.exists():
         for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
@@ -83,6 +88,7 @@ def write_env(values: dict) -> None:
         f"OPENAI_API_KEY={values['OPENAI_API_KEY']}",
         f"TELEGRAM_BOT_TOKEN={values['TELEGRAM_BOT_TOKEN']}",
         f"TELEGRAM_CHAT_ID={values['TELEGRAM_CHAT_ID']}",
+        f"SHOW_SCAN_LOG={values['SHOW_SCAN_LOG']}",
         "",
     ]
     ENV_PATH.write_text("\n".join(lines), encoding="utf-8")
@@ -100,6 +106,12 @@ class ServerControlApp:
                 pass  # icon lỗi định dạng hoặc hệ điều hành không hỗ trợ .ico -> bỏ qua, không crash GUI
 
         self.process: subprocess.Popen | None = None  # tiến trình do CHÍNH gui này bật
+        # Con trỏ (seq) đã hiện tới trong /api/scan-events — dùng để chỉ lấy sự
+        # kiện MỚI mỗi lần poll (xem _poll_scan_events). Lấy seq hiện tại của
+        # server ngay khi mở GUI (nếu server đang chạy) để không dội nguyên
+        # buffer cũ vào khung Nhật ký; nếu server chưa chạy thì cứ để 0, sẽ tự
+        # đồng bộ lại ở lần poll đầu tiên sau khi server bật (xem _poll_scan_events).
+        self._scan_event_cursor = self._fetch_scan_event_cursor()
 
         self._build_style()
         self._build_ui()
@@ -114,6 +126,7 @@ class ServerControlApp:
         self.root.minsize(width, height)
 
         self._poll_status()
+        self._poll_scan_events()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------------------- style
@@ -133,6 +146,10 @@ class ServerControlApp:
             "CardTitle.TLabel", background=COLOR_CARD, foreground=COLOR_TEXT, font=("Segoe UI", 10, "bold")
         )
         style.configure("Muted.TLabel", background=COLOR_CARD, foreground=COLOR_MUTED, font=("Segoe UI", 9))
+        style.configure(
+            "Card.TCheckbutton", background=COLOR_CARD, foreground=COLOR_TEXT, font=("Segoe UI", 9)
+        )
+        style.map("Card.TCheckbutton", background=[("active", COLOR_CARD)])
         style.configure("MutedMain.TLabel", background=COLOR_BG, foreground=COLOR_MUTED, font=("Segoe UI", 9))
         style.configure("Header.TLabel", background=COLOR_BG, foreground=COLOR_TEXT, font=("Segoe UI", 16, "bold"))
         style.configure("Status.TLabel", background=COLOR_CARD, font=("Segoe UI", 11, "bold"))
@@ -277,8 +294,20 @@ class ServerControlApp:
         # OpenAI API Key KHÔNG hiện/sửa trên GUI (đọc thẳng từ .env lúc chạy) —
         # tránh lộ key lên màn hình; muốn đổi thì sửa trực tiếp file .env.
 
+        # Bật/tắt hiện log quét tin nhắn ở khung Nhật ký (xem _poll_scan_events)
+        # — có hiệu lực NGAY khi tick/bỏ tick (vòng poll tự đọc biến này mỗi
+        # lượt), không cần bấm "Lưu cài đặt"; bấm Lưu chỉ để nhớ lựa chọn cho
+        # lần mở GUI sau.
+        self.show_scan_log_var = tk.BooleanVar(value=values["SHOW_SCAN_LOG"] != "0")
+        ttk.Checkbutton(
+            settings_pad,
+            text="Hiện log quét tin nhắn trong Nhật ký",
+            variable=self.show_scan_log_var,
+            style="Card.TCheckbutton",
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 6))
+
         actions_row = ttk.Frame(settings_pad, style="Card.TFrame")
-        actions_row.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        actions_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         actions_row.columnconfigure(0, weight=1)
         actions_row.columnconfigure(1, weight=1)
 
@@ -295,7 +324,7 @@ class ServerControlApp:
         ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         ttk.Button(settings_pad, text="💾  Lưu cài đặt", style="Primary.TButton", command=self.save_settings).grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(10, 6)
+            row=4, column=0, columnspan=2, sticky="ew", pady=(10, 6)
         )
         ttk.Label(
             settings_pad,
@@ -303,7 +332,7 @@ class ServerControlApp:
             style="Muted.TLabel",
             wraplength=320,
             justify="left",
-        ).grid(row=4, column=0, columnspan=2, sticky="w")
+        ).grid(row=5, column=0, columnspan=2, sticky="w")
 
         # --------------------------------------------------------- nhật ký
         ttk.Label(right_col, text="Nhật ký", style="MutedMain.TLabel").pack(anchor="w", pady=(0, 4))
@@ -361,6 +390,10 @@ class ServerControlApp:
         )
         log_file.close()  # tiến trình con đã nhận bản sao handle riêng, đóng ở đây an toàn
         PID_PATH.write_text(str(self.process.pid), encoding="utf-8")
+        # Server mới -> bộ đếm seq của /api/scan-events bắt đầu lại từ 1, nên
+        # con trỏ cũ (có thể lớn hơn nhiều) phải reset về 0, nếu không sự kiện
+        # mới sẽ bị coi là "cũ hơn con trỏ" và không hiện lên khung Nhật ký.
+        self._scan_event_cursor = 0
         self.log(f"Đã bật server (PID {self.process.pid}). Log: {LOG_PATH.name}")
         # Kiểm tra lại sau 1.5s: is_healthy() lúc đầu có thể báo "chưa chạy" nhầm
         # (vd máy đang lag, hoặc tiến trình cũ chưa kịp nhả cổng) khiến ta bật
@@ -510,6 +543,7 @@ class ServerControlApp:
             "OPENAI_API_KEY": current["OPENAI_API_KEY"],
             "TELEGRAM_BOT_TOKEN": current["TELEGRAM_BOT_TOKEN"],
             "TELEGRAM_CHAT_ID": current["TELEGRAM_CHAT_ID"],
+            "SHOW_SCAN_LOG": "1" if self.show_scan_log_var.get() else "0",
         }
         write_env(values)
         self.log(f"Đã lưu cài đặt vào .env (SENTIMENT_METHOD={values['SENTIMENT_METHOD']}).")
@@ -526,6 +560,38 @@ class ServerControlApp:
             self.status_dot.itemconfig(self.status_circle, fill=COLOR_DANGER)
             self.status_label.configure(text="🔴 Đã dừng", foreground=COLOR_DANGER)
         self.root.after(2000, self._poll_status)
+
+    def _fetch_scan_event_cursor(self) -> int:
+        """Lấy seq mới nhất hiện có ở server (nếu server đang chạy) để dùng làm
+        điểm bắt đầu poll — tránh dội nguyên buffer SCAN_EVENTS cũ (tối đa 200
+        sự kiện tích luỹ từ lúc server bật) vào khung Nhật ký ngay khi vừa mở
+        GUI/bật tính năng. Server chưa chạy hoặc lỗi mạng -> cứ trả 0, lần poll
+        đầu tiên sau khi server sẵn sàng sẽ tự đồng bộ lại từ đó."""
+        try:
+            with urlopen(SCAN_EVENTS_CURSOR_URL, timeout=0.6) as resp:
+                return json.loads(resp.read())["latestSeq"]
+        except (URLError, OSError, TimeoutError, ValueError, KeyError):
+            return 0
+
+    def _poll_scan_events(self) -> None:
+        # Tắt qua checkbox "Hiện log quét tin nhắn" -> khỏi gọi mạng luôn, đỡ
+        # tốn round-trip vô ích khi người dùng không muốn xem mục này.
+        if self.show_scan_log_var.get():
+            try:
+                url = f"{SCAN_EVENTS_URL}?after={self._scan_event_cursor}"
+                with urlopen(url, timeout=0.6) as resp:
+                    data = json.loads(resp.read())
+                for ev in data.get("items", []):
+                    who = ev.get("name") or ev.get("rawId") or "?"
+                    snippet = ev.get("snippet") or ""
+                    if ev.get("sentiment") == "negative":
+                        self.log(f'⚠️ [{who}] TIÊU CỰC: "{snippet}"')
+                    else:
+                        self.log(f'📩 [{who}] Đã nhận & quét ({ev.get("sentiment")}): "{snippet}"')
+                self._scan_event_cursor = data.get("latestSeq", self._scan_event_cursor)
+            except (URLError, OSError, TimeoutError, ValueError, KeyError):
+                pass  # server chưa chạy/chưa sẵn sàng -> im lặng bỏ qua, thử lại ở lượt poll sau
+        self.root.after(2000, self._poll_scan_events)
 
     def _on_close(self) -> None:
         # Đóng cửa sổ KHÔNG tự tắt server — để server tiếp tục chạy nền bình
@@ -718,7 +784,11 @@ class KeywordsDialog(tk.Toplevel):
     def _save(self) -> None:
         keywords = self._parse()
         sentiment.set_keywords(keywords)
+        db.init_db()  # đảm bảo bảng customers đã tồn tại kể cả khi chưa từng bật server
+        requeued = db.reset_non_negative_sentiment()
         self._log(f"Đã lưu danh sách từ khoá tiêu cực ({len(keywords)} từ).")
+        if requeued:
+            self._log(f"Đã đặt lại {requeued} hội thoại (chưa từng tiêu cực) để quét lại theo từ khoá mới.")
         self.destroy()
 
 

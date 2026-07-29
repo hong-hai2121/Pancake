@@ -24,7 +24,13 @@ def _escape_markdown(text: str) -> str:
 
 
 async def send_negative_alert(
-    *, name: str | None, snippet: str | None, platform: str | None, raw_id: str
+    *,
+    name: str | None,
+    snippet: str | None,
+    platform: str | None,
+    raw_id: str,
+    page_id: str | None = None,
+    conv_id: str | None = None,
 ) -> None:
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
@@ -33,12 +39,19 @@ async def send_negative_alert(
 
     lines = [
         "⚠️ *Phát hiện khách hàng có cảm xúc tiêu cực*",
-        f"*Khách:* {_escape_markdown(name or raw_id)}",
+        f"*Khách:* {_escape_markdown(name or 'Không rõ tên')}",
     ]
     if platform:
         lines.append(f"*Nền tảng:* {_escape_markdown(platform)}")
     if snippet:
         lines.append(f"*Nội dung:* {_escape_markdown(snippet)}")
+    # Luôn kèm 3 mã định danh để tra cứu/đối chiếu với /history hoặc DOM Pancake
+    # (raw_id = page_id + "_" + conv_id, nhưng vẫn để riêng cho dễ copy từng mã).
+    lines.append(f"*Raw ID:* {_escape_markdown(raw_id)}")
+    if page_id:
+        lines.append(f"*Page ID:* {_escape_markdown(page_id)}")
+    if conv_id:
+        lines.append(f"*Conv ID:* {_escape_markdown(conv_id)}")
     text = "\n".join(lines)
 
     try:

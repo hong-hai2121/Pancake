@@ -187,7 +187,7 @@ def get_unanalyzed(limit: int = 10) -> list[sqlite3.Row]:
     with get_conn() as conn:
         return conn.execute(
             """
-            SELECT raw_id, snippet, name, platform
+            SELECT raw_id, snippet, name, platform, page_id, conv_id
             FROM customers
             WHERE snippet IS NOT NULL
               AND (sentiment_checked_at IS NULL OR sentiment_checked_at < detected_at)
@@ -208,6 +208,29 @@ def update_sentiment(raw_id: str, sentiment: str, method: str, checked_at: str) 
             """,
             (sentiment, method, checked_at, raw_id),
         )
+
+
+def reset_non_negative_sentiment() -> int:
+    """Đặt lại sentiment/sentiment_method/sentiment_checked_at về NULL cho mọi
+    hội thoại CHƯA từng bị đánh dấu 'negative' — gọi khi danh sách từ khoá
+    tiêu cực vừa được sửa (gui.py, KeywordsDialog._save), vì get_unanalyzed()
+    chỉ quét lại tin có sentiment_checked_at NULL hoặc cũ hơn detected_at: nếu
+    không reset, 1 tin đã quét "neutral" TRƯỚC khi từ khoá mới được thêm sẽ
+    không bao giờ được quét lại dù giờ đã khớp từ khoá, nên không bao giờ được
+    báo tiêu cực + báo Telegram dù thực sự trùng từ khoá.
+
+    Hội thoại đã 'negative' giữ nguyên, không reset — đã báo Telegram rồi, quét
+    lại chỉ tổ tốn công (và với method="llm" còn tốn phí gọi lại vô ích)."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            """
+            UPDATE customers
+            SET sentiment = NULL, sentiment_method = NULL, sentiment_checked_at = NULL
+            WHERE sentiment_checked_at IS NOT NULL
+              AND (sentiment IS NULL OR sentiment != 'negative')
+            """
+        )
+        return cur.rowcount
 
 
 def cleanup_scanned(older_than_hours: int = 1, keep_recent: int = 20) -> int:

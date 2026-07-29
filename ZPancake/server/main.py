@@ -9,7 +9,9 @@ extension quét được (snippet rút gọn + metadata hội thoại).
 """
 
 import asyncio
+from collections import deque
 from datetime import datetime, timezone
+from itertools import count
 from pathlib import Path
 from typing import Optional
 
@@ -68,6 +70,29 @@ class MessagesPayload(BaseModel):
     events: list[MessageEvent]
 
 
+# ------------------------------------------------------ nhật ký quét (bộ nhớ)
+
+# Chỉ giữ trong RAM, KHÔNG ghi ra server.log/file nào — gui.py poll qua HTTP
+# (/api/scan-events) để đổ vào khung "Nhật ký" theo thời gian thực mà không
+# làm rác server.log (trước đó in bằng print() ra đúng file log của uvicorn).
+# maxlen=200: đủ cho vài phút hoạt động gần nhất, tự động rớt sự kiện cũ,
+# không bao giờ phình bộ nhớ dù server chạy nhiều ngày.
+SCAN_EVENTS: deque = deque(maxlen=200)
+_scan_event_seq = count(1)
+
+
+def _record_scan_event(*, name: Optional[str], raw_id: str, snippet: Optional[str], sentiment_result: str) -> None:
+    SCAN_EVENTS.append(
+        {
+            "seq": next(_scan_event_seq),
+            "name": name,
+            "rawId": raw_id,
+            "snippet": snippet,
+            "sentiment": sentiment_result,
+        }
+    )
+
+
 # ------------------------------------------------------ worker nền: sentiment
 
 SENTIMENT_WORKER_INTERVAL_S = 8  # quét lại mỗi 8s, đủ nhanh mà không tốn CPU vô ích
@@ -92,6 +117,12 @@ async def sentiment_worker() -> None:
                     update_sentiment(
                         row["raw_id"], result, method, datetime.now(timezone.utc).isoformat()
                     )
+                    # Ghi vào bộ nhớ (không phải server.log) cho mọi lượt quét, kể cả
+                    # neutral — gui.py poll /api/scan-events để hiện lên khung "Nhật ký",
+                    # cho thấy worker đang hoạt động bình thường mà không cần mở server.log.
+                    _record_scan_event(
+                        name=row["name"], raw_id=row["raw_id"], snippet=row["snippet"], sentiment_result=result
+                    )
                     if result == "negative":
                         # Best-effort, không chặn/làm hỏng vòng lặp nếu Telegram lỗi hoặc
                         # chưa cấu hình (send_negative_alert tự bỏ qua khi thiếu .env).
@@ -100,6 +131,8 @@ async def sentiment_worker() -> None:
                             snippet=row["snippet"],
                             platform=row["platform"],
                             raw_id=row["raw_id"],
+                            page_id=row["page_id"],
+                            conv_id=row["conv_id"],
                         )
                 except Exception as err:  # noqa: BLE001 - không để 1 khách lỗi chặn cả batch
                     print(f"[sentiment_worker] Lỗi quét {row['raw_id']}: {err}")
@@ -138,6 +171,22 @@ def on_startup() -> None:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.get("/api/scan-events/cursor")
+def scan_events_cursor() -> dict:
+    """GUI gọi 1 lần lúc mở/khi bật hiển thị nhật ký để lấy seq mới nhất hiện
+    có, dùng làm điểm bắt đầu poll — tránh dội nguyên buffer cũ (tối đa 200
+    sự kiện tích luỹ từ lúc server bật) vào khung Nhật ký ngay khi vừa bật."""
+    return {"latestSeq": SCAN_EVENTS[-1]["seq"] if SCAN_EVENTS else 0}
+
+
+@app.get("/api/scan-events")
+def scan_events(after: int = 0, limit: int = 50) -> dict:
+    """GUI poll định kỳ để lấy các lượt quét MỚI (seq > after) đổ vào khung
+    "Nhật ký" — chỉ đọc từ SCAN_EVENTS trong bộ nhớ, không đụng file nào."""
+    items = [e for e in SCAN_EVENTS if e["seq"] > after][-limit:]
+    return {"items": items, "latestSeq": SCAN_EVENTS[-1]["seq"] if SCAN_EVENTS else after}
 
 
 @app.post("/api/messages")
