@@ -6,6 +6,7 @@ Supabase; xong thì redirect 303 về lại trang kèm thông báo ok/error.
 
 from urllib.parse import parse_qs, urlencode
 
+import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -24,7 +25,9 @@ from app.bot.brain import choose_reply
 from app.bot.prompt import build_prompt
 from app.rag.embedding import embed
 from app.rag.llm import complete
+from app.pancake.client import PancakeError, list_pages, raw_call
 from app.data.webview import (
+    render_api_test,
     render_error,
     render_qa,
     render_scripts,
@@ -235,3 +238,57 @@ async def simulate_page(
             suggest=suggest, suggest_error=suggest_error,
         )
     )
+
+
+# ----------------------------------------------------------------- thử API
+@router.get("/thu-api", response_class=HTMLResponse)
+async def api_test_page(request: Request) -> HTMLResponse:
+    """Gọi thẳng 1 endpoint Pancake rồi hiện request đã gửi + JSON gốc trả về.
+
+    Thay cho Postman. Đọc tham số dạng cặp `pk`/`pv` lặp lại (bảng key/value ở
+    giao diện) nên phải lấy trực tiếp từ `request.query_params`, không dùng
+    tham số hàm được. Chỉ chạm Pancake — không đụng Supabase/OpenAI.
+    """
+    qp = request.query_params
+    # Ô chọn tên là `http_method` chứ KHÔNG phải `method`: <select name="method">
+    # sẽ che property `form.method` của DOM và làm gãy _NAV_JS (xem shell.py).
+    method = (qp.get("http_method") or "GET").upper()
+    if method not in ("GET", "POST"):
+        method = "GET"
+    path = (qp.get("path") or "").strip()
+    public = qp.get("public") == "1"
+    # Trang TEST -> mặc định HIỆN token; tick "Che bớt" mới giấu đi.
+    show_token = qp.get("che_token") != "1"
+
+    # Bảng tra cứu page ID. Lỗi Pancake chỉ làm hỏng đúng bảng này, tab vẫn dùng được.
+    pages: list[dict] = []
+    pages_error = ""
+    try:
+        pages = await list_pages()
+    except (PancakeError, httpx.HTTPError) as exc:
+        pages_error = str(exc)[:200]
+
+    # Ghép 2 danh sách song song thành cặp; bỏ dòng chưa đặt tên tham số.
+    keys, values = qp.getlist("pk"), qp.getlist("pv")
+    pairs = [
+        (k.strip(), (values[i] if i < len(values) else "").strip())
+        for i, k in enumerate(keys)
+        if k.strip()
+    ]
+
+    common = {
+        "method": method, "path": path, "pairs": pairs or None,
+        "public": public, "show_token": show_token,
+        "pages": pages, "pages_error": pages_error,
+    }
+    if not path:
+        # Chưa gõ gì -> chỉ hiện form (giữ lại lựa chọn đang có trên URL).
+        return HTMLResponse(render_api_test(**common))
+
+    try:
+        result = await raw_call(method, path, dict(pairs), public=public)
+    except (PancakeError, httpx.HTTPError) as exc:
+        return HTMLResponse(
+            render_api_test(**common, error=str(exc)[:300]), status_code=502
+        )
+    return HTMLResponse(render_api_test(**common, result=result))

@@ -347,6 +347,18 @@ a.stat.link:hover::after{color:var(--accent)}
 .ds-page{display:none;margin-top:12px}
 .ds-page:target{display:block}
 .ds-page-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+/* Dòng page trong danh sách: nhìn phát biết page nào đang chạy.
+   BẬT = vạch xanh bên trái, chữ rõ. TẮT = xám mờ, avatar mất màu. */
+.pgrow{border-left:3px solid transparent;transition:opacity .15s linear}
+.pgrow.on{border-left-color:var(--ok)}
+.pgrow.off{background:var(--bg);border-left-color:var(--border)}
+.pgrow.off .avatar{filter:grayscale(1);opacity:.5}
+.pgrow.off .name{color:var(--sub);font-weight:500}
+.pgrow.off .rmeta{opacity:.7}
+.pgrow.off .btn{opacity:.6}
+.pgstate{font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.02em}
+.pgrow.on .pgstate{color:var(--ok)}
+.pgrow.off .pgstate{color:var(--sub)}
 /* Công tắc BẬT/TẮT page: BẬT = xanh đặc, TẮT = xám nhạt */
 .pgsw{border:1px solid var(--border);background:var(--card);color:var(--sub);
   border-radius:20px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;
@@ -372,6 +384,9 @@ a.name:hover{color:var(--accent)}
   font-weight:700;padding:2px 8px;min-width:20px;text-align:center}
 .snippet{color:var(--sub);font-size:13px;margin-top:2px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
+/* Tên page trên thẻ hội thoại — CHỈ hiện ở hộp thư gộp (page_id=ALL) */
+.cpage{color:var(--accent);font-size:11px;font-weight:600;margin-top:1px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.9}
 .time{color:var(--sub);font-size:12px;margin-left:auto;flex:0 0 auto;white-space:nowrap}
 .card.link,.card.link-wrap{display:flex;gap:12px;align-items:center;
   transition:border-color .15s}
@@ -461,6 +476,10 @@ a.name:hover{color:var(--accent)}
 .shint{color:var(--sub);font-size:12.5px;min-width:0;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 .shint.warn{color:var(--warn)}
+/* Bảng "Trích tri thức": thanh đầu có nút ✕ đóng (panel chen giữa khung chat và
+   ô soạn tin nên phải luôn đóng được, dù đã lưu hay chưa) */
+.ext-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.ext-head .ext-close{margin-left:auto;flex:0 0 auto;padding:4px 10px;font-size:12px}
 .composer{border-top:1px solid var(--border);background:var(--card);padding:12px 16px;
   display:flex;gap:10px;align-items:flex-end}
 .composer textarea{flex:1;resize:none;border:1px solid var(--border);border-radius:20px;
@@ -489,6 +508,67 @@ a.name:hover{color:var(--accent)}
     border-bottom:1px solid var(--border)}
 }
 
+/* ---------- tab "Thử API" (bố cục kiểu Postman) ---------- */
+.pm{gap:12px}
+.pm-bar{display:flex;gap:0;align-items:stretch;flex-wrap:wrap}
+.pm-method{flex:0 0 auto;width:96px;font-weight:700;border-radius:10px 0 0 10px;
+  border-right:none}
+.pm-base{display:flex;align-items:center;padding:0 10px;font-size:12.5px;
+  font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--sub);
+  background:var(--bg);border:1px solid var(--border);border-left:none;
+  border-right:none;white-space:nowrap}
+.pm-path{flex:1 1 260px;min-width:0;border-radius:0;
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+.pm-send{flex:0 0 auto;border-radius:0 10px 10px 0;padding:0 22px}
+.pm-opts{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.pm-inline{display:flex;align-items:center;gap:6px;font-size:13px;margin:0}
+.pm-inline .inp{width:auto;min-width:130px}
+.pm-kv-head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.pm-kv-head .btn{margin-left:auto;padding:3px 10px;font-size:12px}
+.pm-row{display:flex;gap:6px;margin-bottom:6px}
+.pm-row .inp{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+.pm-row .inp:first-child{flex:0 0 34%}
+.pm-row .inp:nth-child(2){flex:1;min-width:0}
+.pm-del{flex:0 0 auto;width:34px;border:1px solid var(--border);background:transparent;
+  color:var(--err);border-radius:8px;cursor:pointer;font-size:13px;line-height:1}
+.pm-del:hover{background:var(--bg)}
+.pm-status{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.pm-url{font-size:12.5px;overflow-wrap:anywhere;margin-bottom:10px}
+.pm-url code{font-size:12.5px}
+.pm-params{display:flex;flex-direction:column;gap:4px}
+.pm-prow{display:flex;gap:10px;align-items:baseline;font-size:12.5px;
+  padding:4px 0;border-bottom:1px dashed var(--border)}
+.pm-prow:last-child{border-bottom:none}
+.pm-prow code{flex:0 0 34%;color:var(--accent)}
+.pm-prow span{flex:1;min-width:0;overflow-wrap:anywhere;
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+.pm-prow code.pm-secret{color:var(--warn)}
+/* Bảng tra cứu của trang test: token đầy đủ + page ID bấm được */
+.pm-ref>summary{cursor:pointer;font-weight:600;font-size:14px;list-style:none;
+  display:flex;align-items:center;gap:8px}
+.pm-ref>summary::-webkit-details-marker{display:none}
+.pm-ref>summary::before{content:"▸";color:var(--sub);font-size:12px}
+.pm-ref[open]>summary::before{content:"▾"}
+.pm-ref .lbl{margin-top:0}
+.pm-ref .tblwrap{max-height:280px;overflow:auto}
+.pm-copy{display:flex;gap:8px;align-items:flex-start}
+.pm-copy code{flex:1;min-width:0;overflow-wrap:anywhere;font-size:12px;
+  background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 10px}
+.pm-copy .btn{flex:0 0 auto;padding:4px 12px;font-size:12px}
+code.pm-pid{cursor:pointer;color:var(--accent);border-bottom:1px dashed var(--accent)}
+code.pm-pid:hover{background:var(--soft)}
+.pm-json{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:14px 16px;margin:0;max-height:60vh;overflow:auto;font-size:12.5px;
+  line-height:1.55;font-family:ui-monospace,Menlo,Consolas,monospace;
+  white-space:pre;tab-size:2}
+@media (max-width:700px){
+  .pm-base{display:none}
+  .pm-method,.pm-path,.pm-send{border-radius:10px}
+  .pm-method{border-right:1px solid var(--border);width:100%}
+  .pm-path{border:1px solid var(--border);margin:6px 0}
+  .pm-send{width:100%}
+}
+
 /* ---------- điều hướng kiểu AJAX (_NAV_JS) ---------- */
 html.pjax-loading{cursor:progress}
 html.pjax-loading .main{opacity:.55;transition:opacity .15s linear}
@@ -510,6 +590,10 @@ html.pjax-loading .main{opacity:.55;transition:opacity .15s linear}
 # rò rỉ khi người dùng ra vào lại cùng 1 trang nhiều lần.
 _NAV_JS = """
 (function(){
+  // Đường dẫn hiện tại KHÔNG tính #fragment — dùng để phân biệt "đổi trang
+  // thật" với "chỉ nhảy tới neo trong trang" ở handler popstate bên dưới.
+  var here = location.pathname + location.search;
+
   function sameOrigin(url){
     try { return new URL(url, location.href).origin === location.origin; }
     catch (e) { return false; }
@@ -562,6 +646,7 @@ _NAV_JS = """
         var doc = new DOMParser().parseFromString(res.html, 'text/html');
         swap(doc, res.url);
         if (push) history.pushState({pjax: true}, '', res.url);
+        here = location.pathname + location.search;
       })
       .catch(function(){ location.href = url; })
       .then(function(){ document.documentElement.classList.remove('pjax-loading'); });
@@ -588,16 +673,23 @@ _NAV_JS = """
   document.addEventListener('submit', function(e){
     if (e.defaultPrevented) return;
     var f = e.target;
-    if (f.target || !sameOrigin(f.action)) return;
+    // ĐỌC QUA getAttribute, KHÔNG dùng f.method / f.action trực tiếp: form có
+    // [LegacyOverrideBuiltIns] nên một ô <input name="method"> (hay "action",
+    // "target"...) sẽ CHE property gốc — f.method trả về thẻ <select> chứ không
+    // phải chuỗi, gọi .toLowerCase() là ném lỗi ngay sau preventDefault() và
+    // form không bao giờ được gửi đi.
+    var action = f.getAttribute('action') || location.pathname;
+    var verb = (f.getAttribute('method') || 'get').toLowerCase();
+    if (f.getAttribute('target') || !sameOrigin(action)) return;
     e.preventDefault();
     var qs = new URLSearchParams(new FormData(f)).toString();
-    if ((f.method || 'get').toLowerCase() === 'post') {
-      go(f.action, {
+    if (verb === 'post') {
+      go(action, {
         method: 'POST', body: qs,
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
       }, true);
     } else {
-      var base = f.action.split('?')[0];
+      var base = action.split('?')[0];
       go(base + (qs ? '?' + qs : ''), {cache: 'no-store'}, true);
     }
   });
@@ -612,7 +704,17 @@ _NAV_JS = """
 
   // Back/Forward: trang đã đổi qua AJAX nên không có bfcache riêng -> tải lại
   // nội dung cho khớp URL, vẫn không đụng sidebar/topbar (không push state mới).
+  //
+  // ⚠ Bấm link neo trong trang (href="#...") CŨNG phát 'popstate' trên
+  // Chrome/Safari (fragment navigation là một mục lịch sử mới của cùng tài
+  // liệu). Nếu không lọc, mỗi lần bấm neo là tải lại + gán innerHTML cho .main
+  // -> phần tử đích bị dựng mới nên `:target` hết khớp: panel "Danh sách page"
+  // ở Bảng điều khiển vừa hiện ra đã tự đóng lại ngay.
+  // => Chỉ đổi mỗi #fragment thì để trình duyệt tự xử lý, không tải lại gì cả.
   window.addEventListener('popstate', function(){
+    var now = location.pathname + location.search;
+    if (now === here) return;
+    here = now;
     go(location.href, {cache: 'no-store'}, false);
   });
 })();

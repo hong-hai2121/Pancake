@@ -8,11 +8,14 @@ Hai tab đầu đều có: form thêm mới (tự tạo embedding khi lưu) + da
 Phần khung (menu trái, topbar, CSS) lấy từ `app.ui.shell`.
 """
 
+import json
 from datetime import datetime, timezone
 from html import escape
 
 from app.bot.prompt import NO_MATCH_SENTINEL
 from app.config import settings
+from app.pancake.client import mask_token
+from app.pancake.switches import is_page_enabled
 from app.ui.shell import flash as flash_bar
 from app.ui.shell import render_shell, tabs_bar
 
@@ -30,11 +33,12 @@ def _fmt_dt(iso: str) -> str:
     return dt.strftime("%H:%M %d/%m/%Y")
 
 
-# 3 tab của mục "Dữ liệu bot": (đường dẫn, nhãn, khoá active)
+# 4 tab của mục "Dữ liệu bot": (đường dẫn, nhãn, khoá active)
 _TABS = [
     ("/data/kich-ban", "Kịch bản", "kich-ban"),
     ("/data/hoi-thoai", "Hội thoại mẫu", "hoi-thoai"),
     ("/data/thu-tin-nhan", "Thử tin nhắn", "thu"),
+    ("/data/thu-api", "Thử API", "api"),
 ]
 
 
@@ -46,6 +50,7 @@ def _page(
     form: str,
     listing: str,
     flash_html: str = "",
+    script: str = "",
 ) -> str:
     """Bọc nội dung 1 tab vào khung chung (menu trái + topbar + dải tab)."""
     intro_html = f'<p class="intro">{intro}</p>' if intro else ""
@@ -56,6 +61,7 @@ def _page(
         sub=sub,
         tabs=tabs_bar(_TABS, active),
         body=flash_html + intro_html + form + listing,
+        script=script,
     )
 
 
@@ -406,6 +412,367 @@ _SIM_INTRO = (
     "database. Mặc định <b>không gọi LLM</b> và <b>không sửa dữ liệu</b>; tick "
     "ô bên dưới nếu muốn xem luôn câu trả lời bot sẽ đưa ra."
 )
+
+
+# --------------------------------------------------------------- thử API
+# Mẫu sẵn: (nhãn, method, path, "k=v" mỗi tham số, dùng public API?)
+# Lấy đúng các endpoint mà app đang gọi thật (xem app/pancake/client.py).
+_API_PRESETS = [
+    ("Danh sách page", "GET", "pages", [], False),
+    ("Hội thoại của 1 page", "GET", "pages/{page_id}/conversations",
+     [("type", "INBOX"), ("limit", "5")], False),
+    ("Tin nhắn của 1 hội thoại", "GET",
+     "pages/{page_id}/conversations/{conv_id}/messages",
+     [("customer_id", "")], False),
+    ("Thẻ của 1 page (public API)", "GET", "pages/{page_id}/tags",
+     [("page_access_token", "")], True),
+]
+
+
+def _kv_row(key: str = "", value: str = "") -> str:
+    """1 dòng key/value trong bảng tham số (kiểu Postman)."""
+    return (
+        '<div class="pm-row">'
+        f'<input class="inp" name="pk" placeholder="tên tham số" value="{escape(key)}">'
+        f'<input class="inp" name="pv" placeholder="giá trị" value="{escape(value)}">'
+        '<button type="button" class="pm-del" title="Xoá dòng">✕</button>'
+        "</div>"
+    )
+
+
+def _json_block(data, limit: int = 200_000) -> tuple[str, str]:
+    """Đổi body -> (text đã format, ghi chú nếu bị cắt bớt)."""
+    if isinstance(data, (dict, list)):
+        text = json.dumps(data, ensure_ascii=False, indent=2)
+    else:
+        text = str(data)
+    if len(text) > limit:
+        return text[:limit], (
+            f" · ⚠️ quá dài, chỉ hiện {limit:,} / {len(text):,} ký tự đầu"
+        )
+    return text, ""
+
+
+def _api_reference(
+    pages: list[dict], pages_error: str = "", collapsed: bool = False
+) -> str:
+    """Bảng tra cứu nhanh cho tab test: access_token đầy đủ + mọi page ID.
+
+    ⚠️ CỐ Ý phơi bí mật ra màn hình — chỉ chấp nhận được vì đây là trang TEST
+    chạy ở localhost. Xoá cả tab này trước khi mở app ra ngoài Internet
+    (xem ghi chú "XOÁ KHI XONG DỰ ÁN" ở đầu mục thử API).
+    """
+    token = settings.pancake_access_token
+    token_html = (
+        f'<div class="pm-copy"><code id="pm-tok">{escape(token)}</code>'
+        '<button type="button" class="btn pm-cp" data-cp="pm-tok">Copy</button></div>'
+        if token else
+        '<p class="note">Chưa có <code>PANCAKE_ACCESS_TOKEN</code> trong '
+        "<code>.env</code>.</p>"
+    )
+
+    if pages_error:
+        pages_html = f'<div class="flash err">✕ {escape(pages_error)}</div>'
+    elif not pages:
+        pages_html = '<p class="note">Chưa lấy được page nào.</p>'
+    else:
+        rows = ""
+        for p in pages:
+            pid = escape(str(p.get("id", "")))
+            on = is_page_enabled(p.get("id", ""))
+            rows += (
+                '<tr>'
+                f'<td>{escape(p.get("name") or "(không tên)")}</td>'
+                f'<td><code class="pm-pid" role="button" tabindex="0" '
+                f'title="Bấm để chèn vào ô đường dẫn">{pid}</code></td>'
+                f'<td>{escape(p.get("platform") or "")}</td>'
+                f'<td>{"● BẬT" if on else "○ TẮT"}</td>'
+                "</tr>"
+            )
+        pages_html = (
+            '<div class="tblwrap"><table class="tbl"><thead><tr>'
+            "<th>Tên page</th><th>page_id</th><th>Nền tảng</th><th>Công tắc</th>"
+            f"</tr></thead><tbody>{rows}</tbody></table></div>"
+            '<p class="note">Bấm vào một <code>page_id</code> để chèn thẳng vào ô '
+            "đường dẫn (thay chỗ <code>{page_id}</code>).</p>"
+        )
+
+    # Gập lại khi ĐÃ có kết quả: bảng 22 page + token dài đẩy khối Response
+    # xuống tận đáy trang, gọi xong tưởng như không có gì hiện ra.
+    open_attr = "" if collapsed else " open"
+    return f"""
+      <details class="card pm-ref"{open_attr}>
+        <summary>🔑 access_token + {len(pages)} page ID
+          <span class="note">(trang test — bấm để mở/đóng)</span></summary>
+        <div class="flash err" style="margin:12px 0">
+          ⚠️ <b>Trang TEST</b> — cố ý hiện access_token và mọi page ID ra màn hình
+          cho tiện thử. App chưa có lớp bảo mật nào, <b>đừng mở ra Internet</b> khi
+          tab này còn tồn tại. Xoá tab trước khi dự án chạy thật.
+        </div>
+        <div class="lbl">PANCAKE_ACCESS_TOKEN (từ <code>.env</code>)</div>
+        {token_html}
+        <div class="lbl" style="margin-top:14px">Page ID ({len(pages)} page)</div>
+        {pages_html}
+      </details>"""
+
+
+def render_api_test(
+    method: str = "GET",
+    path: str = "",
+    pairs: list[tuple[str, str]] | None = None,
+    public: bool = False,
+    show_token: bool = True,
+    result: dict | None = None,
+    error: str = "",
+    pages: list[dict] | None = None,
+    pages_error: str = "",
+) -> str:
+    """Tab "Thử API": gọi thẳng endpoint Pancake và xem JSON gốc trả về.
+
+    Bố cục kiểu Postman: thanh [method][URL][Gửi] + bảng tham số key/value,
+    bên dưới là khối Response (mã trạng thái, thời gian, dung lượng, body).
+
+    ⚠️ XOÁ KHI XONG DỰ ÁN — tab này phơi access_token + page ID ra màn hình,
+    chỉ dùng để thử ở localhost. Muốn bỏ: xoá route `/data/thu-api`
+    (app/data/routes.py), 3 hàm `render_api_test`/`_api_reference`/
+    `_render_api_result` + `_API_JS`/`_API_PRESETS` ở file này, dòng tab trong
+    `_TABS`, hàm `raw_call`/`mask_token` (app/pancake/client.py) và khối CSS
+    "tab Thử API" trong app/ui/shell.py.
+    """
+    rows = "".join(_kv_row(k, v) for k, v in (pairs or [])) or _kv_row()
+    base = (
+        settings.pancake_public_base_url if public else settings.pancake_base_url
+    ).rstrip("/") + "/"
+
+    def sel(value: str, current: str) -> str:
+        return " selected" if value == current else ""
+
+    preset_opts = "".join(
+        f'<option value="{i}">{escape(p[0])}</option>'
+        for i, p in enumerate(_API_PRESETS)
+    )
+    presets_json = json.dumps(
+        [{"method": m, "path": p, "params": prm, "public": pub}
+         for _lbl, m, p, prm, pub in _API_PRESETS],
+        ensure_ascii=False,
+    )
+
+    form = f"""
+      <form class="card pm" method="get" action="/data/thu-api">
+        <div class="pm-bar">
+          <select class="inp pm-method" name="http_method">
+            <option value="GET"{sel("GET", method)}>GET</option>
+            <option value="POST"{sel("POST", method)}>POST</option>
+          </select>
+          <span class="pm-base" title="Đổi bằng ô 'API' bên dưới">{escape(base)}</span>
+          <input class="inp pm-path" name="path" value="{escape(path)}"
+                 placeholder="pages/{{page_id}}/conversations" autocomplete="off">
+          <button type="submit" class="btn primary pm-send">Gửi</button>
+        </div>
+
+        <div class="pm-opts">
+          <label class="pm-inline">API
+            <select class="inp" name="public">
+              <option value="0"{sel("0", "1" if public else "0")}>Nội bộ (v1)</option>
+              <option value="1"{sel("1", "1" if public else "0")}>Public API</option>
+            </select>
+          </label>
+          <label class="pm-inline">Mẫu sẵn
+            <select class="inp" id="pm-preset">
+              <option value="">— chọn để điền nhanh —</option>{preset_opts}
+            </select>
+          </label>
+          <label class="check pm-inline">
+            <input type="checkbox" name="che_token" value="1"
+                   {"" if show_token else "checked"}>
+            Che bớt access_token
+          </label>
+        </div>
+
+        <div class="pm-kv">
+          <div class="pm-kv-head"><b>Tham số truy vấn</b>
+            <button type="button" class="btn pm-add">+ Thêm dòng</button></div>
+          <div id="pm-rows">{rows}</div>
+        </div>
+        <p class="note">API nội bộ tự đính kèm <code>access_token</code> từ
+        <code>.env</code> — không cần tự gõ. Dòng để trống được bỏ qua.
+        <b>POST có thể gửi tin thật tới khách</b> nên phải xác nhận trước khi gửi.</p>
+      </form>"""
+
+    if error:
+        listing = ""
+    elif result is None:
+        listing = (
+            '<p class="empty">Chọn một <b>mẫu sẵn</b> hoặc gõ đường dẫn rồi bấm '
+            "<b>Gửi</b> để xem JSON gốc Pancake trả về.</p>"
+        )
+    else:
+        listing = _render_api_result(result, show_token)
+
+    return _page(
+        title="Thử API", active="api",
+        sub="Gọi thẳng Pancake API và xem JSON gốc (không qua lớp xử lý của app)",
+        intro="Thay cho Postman: xem <b>đúng những gì đã gửi đi</b> (URL đầy đủ + "
+              "từng tham số) và <b>đúng những gì máy chủ trả về</b> (mã trạng thái, "
+              "thời gian, body chưa qua chuẩn hoá). Chỉ gọi API, "
+              "<b>không đụng Supabase, không tốn lượt OpenAI</b>.",
+        form=_api_reference(
+            pages or [], pages_error, collapsed=result is not None
+        ) + form,
+        listing=listing,
+        flash_html=flash_bar(error=error),
+        script=_API_JS.replace("__PRESETS__", presets_json),
+    )
+
+
+def _render_api_result(r: dict, show_token: bool) -> str:
+    """Khối Response kiểu Postman: trạng thái + request đã gửi + body."""
+    status = int(r.get("status") or 0)
+    tone = "ok" if 200 <= status < 300 else "err"
+    ctype = (r.get("resp_headers") or {}).get("content-type", "").split(";")[0]
+    size_kb = f"{(r.get('size') or 0) / 1024:,.1f} KB"
+
+    # Tham số: che access_token trừ khi người dùng tự tick hiện.
+    param_rows = ""
+    for key, value in (r.get("params") or {}).items():
+        secret = key in ("access_token", "page_access_token")
+        shown = str(value) if (show_token or not secret) else mask_token(value)
+        cls = ' class="pm-secret"' if secret else ""
+        param_rows += (
+            f'<div class="pm-prow"><code{cls}>{escape(str(key))}</code>'
+            f"<span>{escape(shown)}</span></div>"
+        )
+    if not param_rows:
+        param_rows = '<div class="pm-prow"><span class="note">(không có)</span></div>'
+
+    # URL đầy đủ — cũng phải che token, vì đây là thứ hay bị chụp màn hình nhất.
+    query = "&".join(
+        f"{key}="
+        + (str(val) if (show_token or key not in ("access_token", "page_access_token"))
+           else mask_token(val))
+        for key, val in (r.get("params") or {}).items()
+    )
+    full_url = r["url"] + (f"?{query}" if query else "")
+
+    body_text, trimmed = _json_block(r.get("body"))
+    kind = "JSON" if r.get("is_json") else "văn bản thô (không phải JSON)"
+
+    return f"""
+      <h3 class="grp">Response</h3>
+      <div class="card">
+        <div class="pm-status">
+          <span class="pill {tone}">{status} {escape(str(r.get("reason") or ""))}</span>
+          <span class="note">{r.get("elapsed_ms")} ms · {size_kb} ·
+            {escape(ctype or "?")}</span>
+        </div>
+      </div>
+
+      <h3 class="grp">Request đã gửi đi</h3>
+      <div class="card">
+        <div class="pm-url"><b>{escape(r.get("method") or "")}</b>
+          <code>{escape(full_url)}</code></div>
+        <div class="lbl">Tham số truyền vào ({len(r.get("params") or {})})</div>
+        <div class="pm-params">{param_rows}</div>
+      </div>
+
+      <h3 class="grp">Body — {kind}{trimmed}</h3>
+      <pre class="pm-json">{escape(body_text)}</pre>"""
+
+
+# JS nhỏ cho tab Thử API: thêm/xoá dòng tham số + điền nhanh từ mẫu sẵn.
+_API_JS = """
+(function(){
+  var rowsBox = document.getElementById('pm-rows');
+  if (!rowsBox) return;
+  var form = rowsBox.closest('form');
+
+  function newRow(k, v){
+    var d = document.createElement('div');
+    d.className = 'pm-row';
+    d.innerHTML =
+      '<input class="inp" name="pk" placeholder="tên tham số">' +
+      '<input class="inp" name="pv" placeholder="giá trị">' +
+      '<button type="button" class="pm-del" title="Xoá dòng">✕</button>';
+    d.children[0].value = k || '';
+    d.children[1].value = v || '';
+    return d;
+  }
+
+  var add = form.querySelector('.pm-add');
+  if (add) add.addEventListener('click', function(){ rowsBox.appendChild(newRow()); });
+
+  // Uỷ quyền sự kiện: nút ✕ của dòng thêm sau vẫn xoá được. Luôn chừa 1 dòng
+  // trống để không rơi vào trạng thái không còn ô nào mà nhập.
+  rowsBox.addEventListener('click', function(e){
+    var btn = e.target.closest && e.target.closest('.pm-del');
+    if (!btn) return;
+    var row = btn.closest('.pm-row');
+    if (row) row.remove();
+    if (!rowsBox.querySelector('.pm-row')) rowsBox.appendChild(newRow());
+  });
+
+  // Luôn lấy ô qua form.elements[...]: an toàn kể cả khi tên ô trùng property
+  // sẵn có của <form> (method/action/target...).
+  function fld(name){ return form.elements[name]; }
+
+  var presets = __PRESETS__;
+  var sel = document.getElementById('pm-preset');
+  if (sel) sel.addEventListener('change', function(){
+    var p = presets[parseInt(sel.value, 10)];
+    if (!p) return;
+    fld('path').value = p.path;
+    fld('http_method').value = p.method;
+    fld('public').value = p.public ? '1' : '0';
+    rowsBox.innerHTML = '';
+    for (var i = 0; i < p.params.length; i++) {
+      rowsBox.appendChild(newRow(p.params[i][0], p.params[i][1]));
+    }
+    if (!p.params.length) rowsBox.appendChild(newRow());
+    fld('path').focus();
+  });
+
+  // Bấm 1 page_id ở bảng tra cứu -> chèn thẳng vào ô đường dẫn: thay chỗ
+  // {page_id} nếu có, không thì nối vào sau "pages/". Đỡ phải copy tay.
+  function usePageId(pid){
+    var el = fld('path'), v = el.value;
+    if (v.indexOf('{page_id}') >= 0) el.value = v.replace('{page_id}', pid);
+    else if (!v.trim()) el.value = 'pages/' + pid + '/conversations';
+    else el.value = v.replace(/pages\\/[^/]*/, 'pages/' + pid);
+    el.focus();
+  }
+  document.querySelectorAll('.pm-pid').forEach(function(el){
+    el.addEventListener('click', function(){ usePageId(el.textContent.trim()); });
+  });
+
+  // Nút Copy (token): clipboard API, có fallback cho trình duyệt cũ.
+  document.querySelectorAll('.pm-cp').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var src = document.getElementById(btn.getAttribute('data-cp'));
+      if (!src) return;
+      var text = src.textContent, old = btn.textContent;
+      function done(){ btn.textContent = '✓ Đã copy';
+                       setTimeout(function(){ btn.textContent = old; }, 1200); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function(){});
+        return;
+      }
+      var ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) {}
+      document.body.removeChild(ta);
+    });
+  });
+
+  // POST tới Pancake có thể GỬI TIN THẬT tới khách -> bắt xác nhận. Chặn ở
+  // 'submit' và không preventDefault khi đồng ý, để _NAV_JS vẫn gửi bằng AJAX.
+  form.addEventListener('submit', function(e){
+    if (fld('http_method').value !== 'POST') return;
+    var ok = confirm('POST có thể GỬI TIN THẬT tới khách hoặc đổi dữ liệu trên '
+      + 'Pancake — không hoàn tác được.\\n\\nTiếp tục gửi?');
+    if (!ok) e.preventDefault();
+  });
+})();
+"""
 
 
 def render_error(message: str) -> str:

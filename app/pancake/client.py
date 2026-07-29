@@ -407,6 +407,154 @@ async def list_conversations(
     return items
 
 
+# --------------------------------------------- hộp thư GỘP mọi page đang BẬT
+# Giá trị `page_id` đặc biệt cho chế độ gộp ở màn Tin nhắn (không phải id thật).
+ALL_PAGES = "ALL"
+
+# Gộp N page = N lời gọi Pancake. Hai van giảm áp để không dính 429:
+#   - Semaphore: tối đa 5 lời gọi chạy song song, dù bật bao nhiêu page.
+#   - Cache SWR riêng cho bản ĐÃ GỘP: nhịp auto-refresh của trình duyệt đọc
+#     thẳng bản gộp, chỉ bung ra N lời gọi tối đa 1 lần mỗi _ALL_FRESH giây.
+_ALL_CONCURRENCY = 5
+_ALL_CACHE: dict[tuple, dict] = {}
+_ALL_FRESH = 15.0
+_ALL_STALE = 600.0
+
+
+async def _fetch_all_conversations(msg_type: str, limit: int) -> list[dict]:
+    """Lấy song song hội thoại của MỌI page đang BẬT rồi trộn mới -> cũ.
+
+    Mỗi hội thoại được gắn thêm `page_id` + `page_name` vì ở chế độ gộp, giao
+    diện không còn suy ra được page từ ngữ cảnh nữa (mở khung chat và gửi trả
+    lời đều phải dùng đúng page thật của hội thoại đó).
+    """
+    pages = [p for p in await list_pages() if is_page_enabled(p["id"])]
+    if not pages:
+        return []
+    sem = asyncio.Semaphore(_ALL_CONCURRENCY)
+
+    async def one(page: dict) -> list[dict]:
+        async with sem:
+            items = await list_conversations(page["id"], msg_type, limit)
+        # Copy từng dict: bản gốc đang nằm trong _CONV_CACHE, gắn thẳng page_id
+        # vào đó sẽ rò sang cả chế độ xem 1 page.
+        return [
+            dict(c, page_id=page["id"], page_name=page.get("name") or "")
+            for c in items
+        ]
+
+    # 1 page hỏng (mất quyền, 429...) KHÔNG được làm sập cả hộp thư gộp.
+    results = await asyncio.gather(
+        *(one(p) for p in pages), return_exceptions=True
+    )
+    merged: list[dict] = []
+    for res in results:
+        if isinstance(res, list):
+            merged.extend(res)
+    merged.sort(key=lambda c: c["updated_at"], reverse=True)
+    return merged[:limit]
+
+
+async def _refresh_all_conversations(key: tuple, msg_type: str, limit: int) -> None:
+    """Làm mới cache gộp ngầm (SWR). Lỗi thì GIỮ bản cũ, chỉ mở lại khoá."""
+    try:
+        items = await _fetch_all_conversations(msg_type, limit)
+        _ALL_CACHE[key] = {"at": time.monotonic(), "data": items, "refreshing": False}
+    except Exception:
+        entry = _ALL_CACHE.get(key)
+        if entry:
+            entry["refreshing"] = False
+
+
+async def list_all_conversations(
+    msg_type: str = "INBOX", limit: int = 20
+) -> list[dict]:
+    """Hộp thư GỘP: hội thoại của mọi page đang BẬT, mới nhất trước.
+
+    Cùng cơ chế cache SWR như `list_conversations` nhưng ở mức bản đã gộp.
+    Page đang TẮT bị bỏ qua hoàn toàn (guard nằm sẵn trong `list_conversations`).
+    """
+    key = (msg_type, limit)
+    now = time.monotonic()
+    entry = _ALL_CACHE.get(key)
+
+    if entry:
+        age = now - entry["at"]
+        if age < _ALL_FRESH:
+            return entry["data"]
+        if age < _ALL_STALE:
+            if not entry.get("refreshing"):
+                entry["refreshing"] = True
+                asyncio.create_task(_refresh_all_conversations(key, msg_type, limit))
+            return entry["data"]
+
+    items = await _fetch_all_conversations(msg_type, limit)
+    _ALL_CACHE[key] = {"at": time.monotonic(), "data": items, "refreshing": False}
+    return items
+
+
+async def enabled_pages() -> list[dict]:
+    """Danh sách page đang BẬT (dùng để đếm/hiển thị ở ô chọn page)."""
+    return [p for p in await list_pages() if is_page_enabled(p["id"])]
+
+
+# ----------------------------------------------------- gọi API thô (tab Thử API)
+def mask_token(value: str) -> str:
+    """Che bớt token để chụp màn hình / dán log không lộ khoá."""
+    text = str(value or "")
+    if len(text) <= 14:
+        return "•" * len(text)
+    return f"{text[:8]}…{text[-4:]} ({len(text)} ký tự)"
+
+
+async def raw_call(
+    method: str, path: str, params: dict | None = None, public: bool = False
+) -> dict:
+    """Gọi THẲNG 1 endpoint Pancake, trả về cả request lẫn response chưa xử lý.
+
+    Dành riêng cho tab "Thử API" (/data/thu-api). KHÁC hẳn `_get`/`_post`:
+    không chuẩn hoá dữ liệu, không cache, không chặn theo công tắc page, và
+    KHÔNG raise khi Pancake trả lỗi — vì mục đích là xem đúng những gì đã gửi
+    đi và những gì máy chủ trả về, kể cả khi lỗi.
+
+    `public=True` -> dùng public API (`pancake_public_base_url`) và xác thực
+    bằng `page_access_token` do người dùng tự truyền, không đính access_token.
+    """
+    if public:
+        base = settings.pancake_public_base_url
+        query = dict(params or {})
+    else:
+        base = settings.pancake_base_url
+        query = _with_token(params)
+    url = f"{base.rstrip('/')}/{path.lstrip('/')}"
+
+    started = time.monotonic()
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.request(
+            method.upper(), url, params=query,
+            headers={"Accept": "application/json"},
+        )
+    elapsed_ms = (time.monotonic() - started) * 1000
+
+    try:
+        body, is_json = resp.json(), True
+    except ValueError:                      # trả HTML/text -> vẫn cho xem thô
+        body, is_json = resp.text, False
+
+    return {
+        "method": method.upper(),
+        "url": url,
+        "params": query,
+        "status": resp.status_code,
+        "reason": resp.reason_phrase,
+        "elapsed_ms": round(elapsed_ms, 1),
+        "size": len(resp.content),
+        "is_json": is_json,
+        "body": body,
+        "resp_headers": dict(resp.headers),
+    }
+
+
 def _plain_text(msg: dict) -> str:
     """Lấy nội dung text sạch: ưu tiên original_message, fallback bỏ tag HTML.
 

@@ -16,8 +16,11 @@ from app.bot.brain import extract_qa_candidates, suggest_reply
 from app.config import settings
 from app.db.queries import _count, insert_qa
 from app.pancake.client import (
+    ALL_PAGES,
     PancakeError,
+    enabled_pages,
     get_conversation,
+    list_all_conversations,
     list_conversations,
     list_pages,
     list_tags,
@@ -207,6 +210,7 @@ async def inbox(
     page_id: str = "",
     conv_id: str = "",
     customer_id: str = "",
+    conv_page_id: str = "",
     limit: int = _DEFAULT_LIMIT,
     tag: str = "",
     sent: int = 0,
@@ -214,42 +218,60 @@ async def inbox(
 ) -> HTMLResponse:
     """Hộp thư 2 cột: danh sách hội thoại bên trái, khung chat bên phải.
 
+    `page_id` = ALL -> hộp thư GỘP mọi page đang BẬT; khi đó `conv_page_id` cho
+    biết hội thoại đang mở bên phải thuộc page nào.
     `tag` (ID số) -> chỉ hiện hội thoại có gắn thẻ đó (lọc trong khung đã nạp).
     Không truyền `page_id` thì dùng lại page gần nhất (cookie) trước khi mặc định.
     """
     limit = max(1, min(limit, 50))
     page_id = _wanted_page_id(request, page_id)
+    merged = page_id == ALL_PAGES
     try:
-        pages, page = await _pick_page(page_id)
-        if page is None:
-            return HTMLResponse(
-                render_error("Token Pancake không thấy page nào.", "messages"),
-                status_code=502,
+        pages = await list_pages()
+        on_count = len(await enabled_pages())
+        if merged:
+            pid, page_name = ALL_PAGES, f"Tất cả page ({on_count} đang BẬT)"
+            convs = await list_all_conversations(limit=limit)
+            facet, tags_meta = [], {}
+            # Page thật của hội thoại đang mở (đến từ link ở cột trái).
+            thread_pid = conv_page_id
+        else:
+            _pages, page = await _pick_page(page_id)
+            if page is None:
+                return HTMLResponse(
+                    render_error("Token Pancake không thấy page nào.", "messages"),
+                    status_code=502,
+                )
+            pid, page_name = page["id"], page["name"]
+            # Có lọc thẻ -> nạp mẻ lớn để lấy hết hội thoại gắn thẻ; không thì nạp gọn.
+            convs = await list_conversations(
+                pid, limit=_TAG_FETCH_LIMIT if tag else limit
             )
-        pid = page["id"]
-        # Có lọc thẻ -> nạp mẻ lớn để lấy hết hội thoại gắn thẻ; không thì nạp gọn.
-        convs = await list_conversations(
-            pid, limit=_TAG_FETCH_LIMIT if tag else limit
-        )
-        # Thanh lọc thẻ dựng từ TẤT CẢ hội thoại đã nạp; danh sách thì lọc theo thẻ.
-        facet = _tag_facet(convs)
-        # Tên + màu thẻ thật (public API); không có page token thì trả {} -> fallback.
-        tags_meta = await list_tags(pid)
-        convs = _filter_by_tag(convs, tag)
-        # Chỉ nạp thread khi người dùng đã chọn một hội thoại.
+            # Thanh lọc thẻ dựng từ TẤT CẢ hội thoại đã nạp; danh sách lọc theo thẻ.
+            facet = _tag_facet(convs)
+            # Tên + màu thẻ thật (public API); không có page token -> {} -> fallback.
+            tags_meta = await list_tags(pid)
+            convs = _filter_by_tag(convs, tag)
+            thread_pid = pid
+        # Chỉ nạp thread khi đã chọn một hội thoại VÀ biết page thật của nó.
         convo = (
-            await get_conversation(pid, conv_id, customer_id or None)
-            if conv_id else None
+            await get_conversation(thread_pid, conv_id, customer_id or None)
+            if conv_id and thread_pid and thread_pid != ALL_PAGES else None
         )
     except (PancakeError, httpx.HTTPError) as exc:
         return HTMLResponse(render_error(str(exc), "messages"), status_code=502)
 
+    thread_page_name = next(
+        (p["name"] for p in pages if p["id"] == str(thread_pid)), ""
+    ) if merged else ""
+
     resp = HTMLResponse(
         render_inbox(
-            pages=pages, page_id=pid, page_name=page["name"], convs=convs,
+            pages=pages, page_id=pid, page_name=page_name, convs=convs,
             conv_id=conv_id, customer_id=customer_id, convo=convo, limit=limit,
             sent=bool(sent), error=error, tags_facet=facet, active_tag=tag,
-            tags_meta=tags_meta,
+            tags_meta=tags_meta, merged=merged, enabled_count=on_count,
+            thread_page_id=thread_pid, thread_page_name=thread_page_name,
         )
     )
     _remember_page(resp, pid)  # nhớ page vừa xem cho lần sau
@@ -261,38 +283,47 @@ async def inbox_list_fragment(
     request: Request,
     page_id: str = "", conv_id: str = "", limit: int = _DEFAULT_LIMIT, tag: str = ""
 ) -> HTMLResponse:
-    """Chỉ cột danh sách hội thoại (JS gọi lại mỗi 10 giây), giữ nguyên lọc thẻ."""
+    """Chỉ cột danh sách hội thoại (JS gọi lại mỗi 10-15 giây), giữ nguyên lọc thẻ."""
     limit = max(1, min(limit, 50))
     page_id = _wanted_page_id(request, page_id)
     try:
-        _pages, page = await _pick_page(page_id)
-        if page is None:
-            return HTMLResponse("", status_code=502)
-        convs = _filter_by_tag(
-            await list_conversations(
-                page["id"], limit=_TAG_FETCH_LIMIT if tag else limit
-            ),
-            tag,
-        )
+        if page_id == ALL_PAGES:
+            pid = ALL_PAGES
+            convs = await list_all_conversations(limit=limit)
+        else:
+            _pages, page = await _pick_page(page_id)
+            if page is None:
+                return HTMLResponse("", status_code=502)
+            pid = page["id"]
+            convs = _filter_by_tag(
+                await list_conversations(
+                    pid, limit=_TAG_FETCH_LIMIT if tag else limit
+                ),
+                tag,
+            )
     except (PancakeError, httpx.HTTPError):
         # 502 -> JS bỏ qua nhịp này, giữ nguyên nội dung đang hiển thị.
         return HTMLResponse("", status_code=502)
     return HTMLResponse(
-        render_recent_list(
-            convs, page["id"], "INBOX", mode="inbox", active=conv_id, tag=tag
-        )
+        render_recent_list(convs, pid, "INBOX", mode="inbox", active=conv_id, tag=tag)
     )
 
 
 @router.get("/tin-nhan/fragment/thread", response_class=HTMLResponse)
 async def inbox_thread_fragment(
     request: Request,
-    page_id: str = "", conv_id: str = "", customer_id: str = ""
+    page_id: str = "", conv_id: str = "", customer_id: str = "",
+    conv_page_id: str = "",
 ) -> HTMLResponse:
-    """Chỉ phần bong bóng chat (JS gọi lại mỗi 8 giây)."""
+    """Chỉ phần bong bóng chat (JS gọi lại mỗi 8 giây).
+
+    Ở hộp thư gộp, `page_id` là ALL nên page thật phải lấy từ `conv_page_id`.
+    """
     if not conv_id:
         return HTMLResponse("", status_code=204)
-    page_id = _wanted_page_id(request, page_id)
+    page_id = conv_page_id or _wanted_page_id(request, page_id)
+    if page_id == ALL_PAGES:
+        return HTMLResponse("", status_code=204)   # chưa biết page thật -> bỏ nhịp
     try:
         _pages, page = await _pick_page(page_id)
         if page is None:
@@ -314,8 +345,13 @@ async def inbox_reply(request: Request) -> RedirectResponse:
 
     page_id, conv_id = get("page_id"), get("conv_id")
     customer_id, message = get("customer_id"), get("message")
+    # `page_id` là page THẬT (để gửi đúng chỗ); `list_page_id` là cột trái đang
+    # xem — có thể là ALL, cần giữ để gửi xong không rơi khỏi hộp thư gộp.
+    list_page_id = get("list_page_id") or page_id
 
-    params = {"page_id": page_id, "conv_id": conv_id, "customer_id": customer_id}
+    params = {"page_id": list_page_id, "conv_id": conv_id, "customer_id": customer_id}
+    if list_page_id != page_id:
+        params["conv_page_id"] = page_id
     if not message:
         params["error"] = "Tin nhắn trống"
     else:

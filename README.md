@@ -311,6 +311,69 @@ uvicorn app.main:app --reload --port 8000
 Trang danh sách người nhắn và khung chat **tự cập nhật** (auto-refresh 8–10 giây)
 mà không cần F5; bấm vào một người để xem hội thoại và trả lời tay.
 
+## 🔍 Pancake API — có full quyền page thì lấy được những gì
+
+> Tài liệu công khai của Pancake không đọc được (trang SPA + cert `docs.pancake.vn`
+> hết hạn) nên phần này **dò thật bằng token trong `.env`** qua tab
+> [Thử API](http://127.0.0.1:8000/data/thu-api) — 26 lượt GET, chỉ đọc, ngày
+> **2026-07-29**, trên page `613327758541266`, token role `EDIT_PROFILE`.
+
+Base: `https://pages.fm/api/v1` · `access_token` đặt ở **query string**.
+
+### ✅ Chạy được (200) — chỉ cần user JWT, KHÔNG cần Admin
+
+| Endpoint                                          | Trả về gì                                                                                                                              |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET me`                                        | Tài khoản: email, phone, fb_id, timezone, chữ ký, affiliate_level · khối `me`: uid, session_id, token_for_business                    |
+| `GET pages`                                     | Toàn bộ page chia 4 nhóm (activated / inactivated / hidden / nopermission) — hàm`list_pages()`                                          |
+| `GET pages/{id}`                                | Chi tiết 1 page: `shop_id`, platform, business, `tag_sync_group_id`, special_feature                                                  |
+| **`GET pages/{id}/settings`** ⭐            | **`settings.tags` = toàn bộ thẻ kèm TÊN + MÀU** (52 thẻ) · `quick_replies` (**211 mẫu trả lời nhanh shop đang dùng thật**) · `warehouses` · `pinned_photos` (72) · `recent_photos` (80) · cấu hình chia ca round-robin |
+| `GET pages/{id}/users`                          | Nhân viên của page (35 người): id, name, fb_id,**`role_in_page`**, status_in_page                                                |
+| `GET pages/{id}/statistics`                     | `data.by_date` + `data.by_user`                                                                                                        |
+| `GET pages/{id}/conversations`                  | Danh sách hội thoại +`list_page_users` — hàm `list_conversations()`                                                                 |
+| `GET pages/{id}/conversations/{conv_id}/messages` | Tin nhắn + `notes`, `post`, `read_watermarks`, **`conv_phone_numbers`**, `banned_by`, `reports_by_phone` — hàm `get_conversation()` |
+| `GET pages/{id}/customers/{customer_id}`        | Chi tiết 1 khách — **phải có sẵn customer_id, KHÔNG list được**                                                              |
+| `POST pages/{id}/conversations/{conv_id}/messages?action=reply_inbox` | Gửi tin trả lời — hàm `send_message()`                                                                            |
+| `POST pages/{id}/generate_page_access_token`    | Sinh `page_access_token` cho public API — ⚠️ **cần quyền Admin**, token hiện tại không đủ                                    |
+
+### ❌ Không tồn tại (406 "Server internal error")
+
+`user` · `shops` · `me/pages` · `pages/{id}/tags` · `pages/{id}/customers` (dạng
+list) · `orders` · `products` · `insights` · `quick_messages` · `warehouses` ·
+`categories` · `pos_settings` · `activities` · `conversations/{conv_id}/tags`
+
+**Đọc mã trạng thái** (khi gửi `Accept: application/json`):
+
+| Mã                        | Nghĩa                                    |
+| -------------------------- | ------------------------------------------- |
+| `406`                    | Route **không tồn tại** dạng API |
+| `500`                    | Route API **có thật** nhưng lỗi    |
+| `200` + `success:false` | Lỗi nghiệp vụ (vd sai token)             |
+
+### ⭐ Lấy TÊN THẺ không cần quyền Admin
+
+`settings.tags` trong `GET pages/{id}/settings` trả thẳng mảng đầy đủ:
+
+```json
+{"id": 171, "text": "1 Phản Hồi", "color": "#a06fdc", "lighten_color": "rgba(160,111,220,0.4)"}
+{"id": 172, "text": "3 Báo Giá",  "color": "#ff4242"}
+{"id": 173, "text": "Đã XN",      "color": "#0d5aff"}
+```
+
+> ⚠️ **Đính chính kết luận cũ.** Trước đây ta chốt rằng muốn có tên thẻ thì
+> **phải** sinh `page_access_token` (cần Admin) rồi gọi Public API — nên mới đẻ ra
+> bảng `TAG_OVERRIDES` gõ tên thẻ bằng tay trong
+> [app/pancake/client.py](app/pancake/client.py) và màn Tin nhắn phải hiện
+> `Thẻ #171`. **Kết luận đó SAI** — có đường vòng không cần Admin.
+> `list_tags()` nên đổi sang đọc `settings.tags`, khi đó bỏ được cả
+> `TAG_OVERRIDES` lẫn `PANCAKE_TAG_PAGE_IDS`. *(chưa làm)*
+
+### Chưa dò
+
+**Đơn hàng / sản phẩm không nằm ở API của page.** Pancake tách POS riêng;
+`GET pages/{id}` có trả `shop_id` nên nhiều khả năng chúng nằm dưới
+`shops/{shop_id}/...` — chưa thử.
+
 ### Giao diện web — menu bên trái
 
 Mở [http://127.0.0.1:8000](http://127.0.0.1:8000) là vào thẳng giao diện quản trị.
@@ -322,7 +385,7 @@ cho màn hình máy tính (dưới 900px menu tự thu thành thanh ngang có ic
 | 📊**Bảng điều khiển** | `/bang-dieu-khien` | Số page, hội thoại, tin chưa đọc, kho dữ liệu bot, cấu hình đang chạy |
 | 💬**Tin nhắn**           | `/tin-nhan`        | Hộp thư 2 cột: danh sách hội thoại ↔ khung chat + ô trả lời             |
 | 👥**Khách hàng**        | `/khach-hang`      | Bảng khách đã nhắn (tên, FB ID, số tin, chưa đọc, lần cuối) + ô tìm |
-| 🧠**Dữ liệu bot**       | `/data/kich-ban`   | 3 tab: Kịch bản · Hội thoại mẫu · Thử tin nhắn                           |
+| 🧠**Dữ liệu bot**       | `/data/kich-ban`   | 4 tab: Kịch bản · Hội thoại mẫu · Thử tin nhắn · **Thử API**       |
 
 Màn **Tin nhắn** và **Bảng điều khiển** tự chọn page đang hoạt động đầu tiên; đổi
 page bằng ô chọn ở góc phải trên. Danh sách hội thoại làm mới mỗi 10 giây, khung
@@ -380,6 +443,7 @@ chỉ nói chuyện với Supabase/OpenAI, **Bảng điều khiển** đọc c�
 |                          |                                                                                                                                                                                                                                                                                                                                                      |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Cột trái**     | `GET /pages/{id}/conversations?type=INBOX` → `_normalize_conv()` rút gọn còn tên, ảnh, tin cuối, số tin, chưa đọc → **sắp theo `updated_at` giảm dần** rồi cắt 20 dòng                                                                                                                                                 |
+| **Hộp thư GỘP** (`?page_id=ALL`) | Mục **"📥 Tất cả page (N đang BẬT)"** ở đầu ô chọn page: gọi song song mọi page **đang BẬT** (semaphore 5 luồng, 1 page hỏng không làm sập cả danh sách), trộn rồi sắp lại theo `updated_at`. Mỗi dòng hiện thêm **tên page**. Link mở hội thoại kèm `conv_page_id` = page THẬT → khung chat/gửi tin/gợi ý vẫn đúng page, cột trái giữ nguyên chế độ gộp. Có **cache SWR riêng cho bản đã gộp** (15s) + nhịp auto-refresh 15s (thay vì 10s) để mỗi nhịp không bung ra N lời gọi Pancake. ⚠️ Chế độ gộp **không lọc thẻ** (thẻ là dữ liệu riêng từng page, cùng số ID ở 2 page là 2 thẻ khác nhau) |
 | **Cột phải**     | Chỉ tải khi đã bấm chọn một hội thoại:`GET .../conversations/{conv_id}/messages` (**bắt buộc kèm `customer_id`**) → `_normalize_msg()` → sắp **cũ → mới**; so `from.id` với `page_id` để biết tin nào của shop (bong bóng xanh phải) hay của khách (xám trái)                                    |
 | **Nội dung tin**  | Ưu tiên`original_message`; nếu không có thì bóc thẻ HTML nhưng **giữ xuống dòng** (`<br>`, `</div>` → `\n`). Ảnh/sticker hiện thumbnail, tệp khác hiện link                                                                                                                                                          |
 | **Tự cập nhật** | JS gọi 2 endpoint mảnh:`/tin-nhan/fragment/list` (10s) và `/tin-nhan/fragment/thread` (8s). Nhận HTML về **so với lần trước, khác mới thay** → không nháy màn, không mất ảnh đang tải. Nhịp đầu chỉ "mồi" để so sánh. Lỗi mạng trả 502 → JS **bỏ qua nhịp đó**, giữ nguyên nội dung đang xem |
@@ -403,6 +467,7 @@ chỉ nói chuyện với Supabase/OpenAI, **Bảng điều khiển** đọc c�
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Kịch bản**       | *Xem*: `list_scripts()` đọc bảng `kich_ban`, **cố ý không lấy cột `embedding`** cho nhẹ, rồi gom nhóm theo tên kịch bản. *Thêm*: nội dung → `embed()` gọi **OpenAI** → nhận vector 1536 chiều → ghi 1 dòng kèm vector dạng literal `[0.1,0.2,…]`                                                                                                                                      |
 | **Hội thoại mẫu** | Giống trên, ghi vào`hoi_thoai_mau`. Điểm khác: **vector hoá CÂU HỎI** (không phải câu trả lời) — vì lúc chạy thật ta so tin nhắn của khách với câu hỏi mẫu                                                                                                                                                                                                                                              |
+| **Thử API** ⚠️ *trang TEST, xoá khi xong dự án* | Đầu trang là **bảng tra cứu**: `PANCAKE_ACCESS_TOKEN` **hiện nguyên văn** (có nút Copy) + **danh sách toàn bộ page ID** (tên · page_id · nền tảng · công tắc) — bấm 1 `page_id` là chèn thẳng vào ô đường dẫn, khỏi đi tìm. Cố ý phơi bí mật ra màn hình cho tiện thử ở localhost; tick *"Che bớt access_token"* nếu cần chụp màn hình. **Thay cho Postman** — gọi thẳng endpoint Pancake, xem **JSON gốc** chưa qua lớp xử lý nào. Bố cục kiểu Postman: `[GET/POST][base URL][path][Gửi]` + bảng tham số key/value (thêm/xoá dòng). Hiện đủ **request đã gửi** (URL đầy đủ + từng tham số) và **response** (mã trạng thái, thời gian, dung lượng, body). Đổi được giữa **API nội bộ** (`/api/v1`, tự đính `access_token`) và **Public API** (`/api/public_api/v1`, tự truyền `page_access_token`). Có 4 **mẫu sẵn** điền nhanh. `access_token` **bị che mặc định** (tick để hiện) vì đây là trang hay bị chụp màn hình. Dùng `raw_call()` trong `pancake/client.py`: **không cache, không chuẩn hoá, không chặn theo công tắc page, không raise khi API lỗi** — lỗi HTTP vẫn hiện nguyên body để đọc. ⚠️ **POST hỏi xác nhận** vì có thể gửi tin thật tới khách |
 | **Thử tin nhắn**   | Gõ tin giả làm khách →`embed()` → gọi **2 RPC** `match_documents` + `match_kich_ban`. Phép so sánh cosine `<=>` chạy **trong Postgres** và dùng **index HNSW** — Python chỉ gửi vector rồi nhận về kết quả đã xếp hạng sẵn (không kéo cả bảng về). Tick ô *kèm câu trả lời* hiện **2 ô để đối chiếu**: **Bước 4 — Trả lời theo toàn bộ tri thức** (`build_prompt()` để LLM **tự viết** — chỉ để đối chiếu, KHÔNG gửi khách vì có thể sửa nghĩa) và **Bước 5 — Gợi ý trả lời** (`choose_reply()` — GPT **chỉ CHỌN** 1 trong top 3 câu mẫu rồi trả **NGUYÊN VĂN** câu đã duyệt, không hợp → **NO_MATCH → không gợi ý**; đúng logic nút "Gợi ý trả lời" ở màn Tin nhắn) |
 
 - **Chống gửi lại form**: mọi thao tác thêm/xoá đều POST rồi **redirect 303** kèm thông báo trên URL — bấm F5 sau khi thêm sẽ không tạo trùng dòng.
@@ -486,6 +551,7 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 | Cache danh sách page 60s (tránh Pancake chặn 429)                             | ✅ đã verify (hết 502 khi mở dồn dập)                   |
 | Cache **SWR** `list_conversations` (chuyển trang lần sau hết khựng)         | ✅ đã verify (trả bản cũ ngay + refresh nền, gọi đồng bộ chỉ lần đầu/ quá 10ph) |
 | **Công tắc BẬT/TẮT từng page** (Bảng điều khiển → danh sách page)             | ✅ đã verify — TẮT chặn lấy+gửi tin của page đó ở MỌI nơi (guard trong `pancake/client`), lưu `page_switches.json`, mặc định BẬT |
+| **Hộp thư GỘP mọi page đang BẬT** (`/tin-nhan?page_id=ALL`)                    | ✅ đã verify — gộp 20 dòng từ nhiều page, mở/gửi đúng page thật, chế độ xem 1 page không đổi |
 | RAG: embed, retrieve, LLM gpt-4o-mini, insert kèm embedding, distill            | ✅ đã verify                                                |
 | Tìm kiếm vector chạy**trong Postgres** (RPC + index HNSW)               | ✅ đã verify (RPC đã tạo trên DB)                       |
 | Ngưỡng lọc`match_threshold` (lạc đề → trả rỗng)                       | ✅ đã verify (0.6 → 0 dòng với câu lạc đề)           |
@@ -495,6 +561,9 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 | Phiên khách`trang_thai_khach` (session.py)                                   | ✅ đã căn theo schema thật (page_id/psid/ngu_canh) — round-trip verify trên bảng thật |
 | Kịch bản Bảng 1 (`bot/flow`)                                                | ⏳ khung, chưa cài logic khớp                              |
 | Tab**Thử tin nhắn** kèm câu trả lời của bot                         | ✅ đã verify (tick ô để gọi gpt-4o-mini)                |
+| Tab**Thử API** (Postman nội bộ — xem JSON gốc Pancake)              | ✅ đã verify (gọi thật 200/406, che token, đổi public API) |
+| Bản đồ endpoint Pancake (*Pancake API — lấy được những gì*)          | ✅ đã dò thật 26 lượt GET (2026-07-29) — 11 endpoint chạy, 14 endpoint 406 |
+| Đổi`list_tags()` sang đọc `settings.tags` (bỏ `TAG_OVERRIDES`)   | 📋 chưa làm — đã tìm ra cách, xem mục đính chính ở trên |
 | API`/api/chat` cho phần mềm ngoài + bảo mật API key                       | 📋 chưa làm — xem mục*Kế hoạch: mở API* ở cuối     |
 
 ## 🧭 Gợi ý lộ trình (NOTE) — nối 2 tính năng thành quy trình tự động

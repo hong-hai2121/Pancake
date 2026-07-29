@@ -221,16 +221,23 @@ def conv_href(conv: dict, page_id: str, mode: str = "pancake", tag: str = "") ->
     mode = "pancake" -> trang chat riêng cũ (/pancake/.../conversations/...)
     mode = "inbox"   -> màn Tin nhắn 2 cột (/tin-nhan?page_id=&conv_id=...)
     tag  -> giữ bộ lọc thẻ đang chọn khi mở hội thoại (chỉ dùng cho mode "inbox").
+
+    Ở hộp thư GỘP (`page_id` = ALL), hội thoại mang sẵn `page_id` thật của nó:
+    link giữ nguyên `page_id=ALL` cho danh sách bên trái, và nói riêng page thật
+    qua `conv_page_id` để khung chat bên phải mở/gửi đúng chỗ.
     """
     cust = conv.get("customer_id", "")
+    real_pid = str(conv.get("page_id") or page_id)
     if mode == "inbox":
         params = {"page_id": page_id, "conv_id": conv["conv_id"], "customer_id": cust}
+        if real_pid != str(page_id):
+            params["conv_page_id"] = real_pid
         if tag:
             params["tag"] = tag
         return f"/tin-nhan?{urlencode(params)}"
     query = urlencode({"customer_id": cust})
     return (
-        f'/pancake/pages/{escape(str(page_id))}/conversations/'
+        f'/pancake/pages/{escape(real_pid)}/conversations/'
         f'{escape(conv["conv_id"])}?{query}'
     )
 
@@ -255,6 +262,12 @@ def _conv_card(
         if unread else ""
     )
     cls = "card link on" if conv["conv_id"] == active else "card link"
+    # Chỉ hộp thư GỘP mới kèm `page_name` -> hiện thêm dòng cho biết hội thoại
+    # này của page nào; chế độ xem 1 page không có field này nên không đổi gì.
+    page_html = (
+        f'<div class="cpage">{escape(conv["page_name"])}</div>'
+        if conv.get("page_name") else ""
+    )
     return f"""
       <li>
         <a class="{cls}" href="{conv_href(conv, page_id, mode, tag)}">
@@ -264,6 +277,7 @@ def _conv_card(
               <span class="name">{name}</span>
               <span class="time" title="{abs_dt}">{shown_time}</span>
             </div>
+            {page_html}
             {_conv_tags_html(conv.get("tags") or [])}
             <div class="snippet">{snippet}</div>
             <div class="badges">

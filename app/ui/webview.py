@@ -7,6 +7,7 @@ Dùng lại các hàm dựng thẻ/bong bóng của Pancake để 2 màn chat gi
 from html import escape
 from urllib.parse import urlencode
 
+from app.pancake.client import ALL_PAGES
 from app.pancake.client import tag_label as _tag_label
 from app.pancake.switches import is_page_enabled
 from app.pancake.webview import (
@@ -53,18 +54,34 @@ def render_tag_filter(
     return f'<div class="tagbar">{chips}</div>'
 
 
-def _page_select(pages: list[dict], current: str, base: str) -> str:
+def _page_select(
+    pages: list[dict], current: str, base: str, all_label: str = ""
+) -> str:
     """Ô chọn page ở góc phải topbar; đổi lựa chọn là nhảy trang luôn.
 
     `data-nav-tpl` để `_NAV_JS` (app/ui/shell.py) bắt sự kiện đổi lựa chọn và
     điều hướng bằng AJAX, thay vì gán thẳng location.href (tải lại cả trang).
+
+    `all_label` — có thì thêm mục "gộp mọi page" (value=ALL) lên đầu. Chỉ màn
+    Tin nhắn dùng; các màn khác vẫn chỉ xem được từng page một.
     """
     if not pages:
         return ""
     opts = ""
+    if all_label:
+        sel = " selected" if str(current) == ALL_PAGES else ""
+        opts += f'<option value="{ALL_PAGES}"{sel}>{escape(all_label)}</option>'
     for p in pages:
         sel = " selected" if p["id"] == str(current) else ""
-        opts += f'<option value="{escape(p["id"])}"{sel}>{escape(p["name"])}</option>'
+        # Page TẮT vẫn liệt kê (để bấm vào còn biết đường bật lại) nhưng đánh dấu
+        # rõ — chọn phải nó mà không có nhãn thì màn hình trống, tưởng lỗi.
+        # Dùng ký hiệu chữ chứ không dùng CSS: <option> không tô màu được đồng
+        # nhất giữa các trình duyệt/hệ điều hành.
+        label = (
+            escape(p["name"]) if is_page_enabled(p["id"])
+            else f'○ {escape(p["name"])} — TẮT'
+        )
+        opts += f'<option value="{escape(p["id"])}"{sel}>{label}</option>'
     return (
         f'<select class="inp" data-nav-tpl="{escape(base)}?page_id=">'
         f"{opts}</select>"
@@ -98,19 +115,25 @@ def _dashboard_page_list(pages: list[dict]) -> str:
             "</form>"
         )
         rows += f"""
-          <li class="row" style="align-items:center">
+          <li class="row pgrow {"on" if on else "off"}" style="align-items:center">
             {_avatar(p).replace('class="avatar"', 'class="avatar sm"')}
             <div class="rbody">
-              <div class="name">{escape(p.get("name") or "(không tên)")}</div>
+              <div class="name">{escape(p.get("name") or "(không tên)")}
+                <span class="pgstate">{"ĐANG BẬT" if on else "ĐANG TẮT"}</span></div>
               <div class="rmeta">ID {pid} · {escape(p.get("platform") or "")}</div>
             </div>
             {switch}
             <a class="btn" style="flex:0 0 auto" href="/tin-nhan?page_id={pid}">Mở tin nhắn</a>
           </li>"""
+    on_total = sum(1 for p in pages if is_page_enabled(p.get("id", "")))
+    off_total = len(pages) - on_total
     return (
         '<section id="ds-page" class="ds-page"><div class="card">'
         '<div class="ds-page-head">'
         f'<b>Danh sách page ({len(pages)})</b>'
+        f'<span class="rmeta" style="margin:0">'
+        f'<span style="color:var(--ok);font-weight:700">● {on_total} BẬT</span> · '
+        f'{off_total} TẮT</span>'
         '<form method="post" action="/bang-dieu-khien/page-switch-all" '
         'style="margin:0 0 0 auto">'
         '<input type="hidden" name="action" value="on">'
@@ -241,13 +264,28 @@ def render_inbox(
     tags_facet: list[tuple[int, int]] | None = None,
     active_tag: str = "",
     tags_meta: dict | None = None,
+    merged: bool = False,
+    enabled_count: int = 0,
+    thread_page_id: str = "",
+    thread_page_name: str = "",
 ) -> str:
-    """Màn Tin nhắn 2 cột: trái = danh sách hội thoại, phải = khung chat."""
+    """Màn Tin nhắn 2 cột: trái = danh sách hội thoại, phải = khung chat.
+
+    `merged` — hộp thư GỘP mọi page đang BẬT (`page_id` = ALL). Khi đó mỗi thẻ
+    hội thoại tự mang `page_id` thật của nó, còn `thread_page_id` là page của
+    hội thoại đang mở bên phải (dùng để gửi trả lời / gợi ý cho đúng page).
+    """
+    # Thẻ là dữ liệu RIÊNG của từng page (cùng số id ở 2 page = 2 thẻ khác nhau)
+    # nên hộp thư gộp không lọc thẻ — gộp lại sẽ dán nhãn sai.
+    if merged:
+        tags_facet, active_tag, tags_meta = [], "", {}
     lhead_label = (
         f"{len(convs)} hội thoại có thẻ « {escape(_tag_label(int(active_tag), tags_meta))} »"
         if active_tag and active_tag.lstrip("-").isdigit()
         else f"{len(convs)} hội thoại mới nhất"
     )
+    if merged:
+        lhead_label += f" · {enabled_count} page đang BẬT"
     # Đang lọc thẻ -> danh sách là "ảnh chụp" mẻ lớn, không tự cập nhật (cho nhẹ).
     live_html = (
         '<span class="live" style="margin-left:auto">'
@@ -255,14 +293,23 @@ def render_inbox(
         if not active_tag
         else '<span class="lhint" style="margin-left:auto">ảnh chụp</span>'
     )
+    list_html = (
+        '<p class="empty">Mọi page đang TẮT nên không lấy tin nào. '
+        'Bật lại ở <a href="/bang-dieu-khien#ds-page">Bảng điều khiển</a>.</p>'
+        if merged and not enabled_count
+        else render_recent_list(
+            convs, page_id, "INBOX", mode="inbox", active=conv_id, tag=active_tag
+        )
+    )
     left = (
         '<div class="inbox-list">'
         f'<div class="lhead">{lhead_label}{live_html}</div>'
         f'{render_tag_filter(tags_facet or [], active_tag, page_id, tags_meta)}'
-        f'<div class="lbody" id="feed">'
-        f'{render_recent_list(convs, page_id, "INBOX", mode="inbox", active=conv_id, tag=active_tag)}'
-        "</div></div>"
+        f'<div class="lbody" id="feed">{list_html}</div></div>'
     )
+    # Page thật của hội thoại đang mở: chế độ gộp thì lấy từ URL, còn lại chính
+    # là page đang xem. Mọi hành động ghi (gửi tin, gợi ý) đều bám giá trị này.
+    thread_pid = thread_page_id or page_id
 
     if convo is None:
         right = (
@@ -285,8 +332,8 @@ def render_inbox(
             '<div class="pane">'
             f'<div class="chead">{_avatar(who)}'
             f'<div class="info"><div class="name">{cust_name}</div>'
-            f'<div class="sub">{escape(page_name)}</div></div>'
-            f'<a class="btn" href="{conv_href({"conv_id": conv_id, "customer_id": customer_id}, page_id)}">'
+            f'<div class="sub">{escape(thread_page_name or page_name)}</div></div>'
+            f'<a class="btn" href="{conv_href({"conv_id": conv_id, "customer_id": customer_id}, thread_pid)}">'
             "Mở toàn màn hình</a>"
             '<button type="button" id="btn-copy" class="btn" '
             'title="Sao chép toàn bộ hội thoại">📋 Copy</button></div>'
@@ -304,7 +351,12 @@ def render_inbox(
             + '<div id="extract-panel" style="padding:0 16px"></div>'
             + render_composer(
                 "/tin-nhan/tra-loi", customer_id,
+                # page_id = page THẬT của hội thoại (gửi tin/gợi ý phải đúng page).
+                # list_page_id = page đang xem ở cột trái (có thể là ALL) — chỉ
+                # dùng để quay lại đúng danh sách sau khi gửi.
                 extra=f'<input type="hidden" name="page_id" '
+                      f'value="{escape(str(thread_pid))}">'
+                      f'<input type="hidden" name="list_page_id" '
                       f'value="{escape(str(page_id))}">'
                       f'<input type="hidden" name="conv_id" '
                       f'value="{escape(str(conv_id))}">',
@@ -312,15 +364,23 @@ def render_inbox(
             + "</div>"
         )
 
+    # Luôn hiện mục gộp, kể cả khi 0 page BẬT — nếu ẩn đi thì người đang ở chế
+    # độ gộp mà lỡ tắt hết page sẽ không còn lối nào quay lại mục này.
+    all_label = f"📥 Tất cả page ({enabled_count} đang BẬT)"
+    sub = (
+        f"Gộp {enabled_count} page đang BẬT"
+        if merged else f"{escape(page_name)} · ID {escape(str(page_id))}"
+    )
     return render_shell(
         title=f"Tin nhắn — {page_name}",
         active="messages",
         heading="Tin nhắn",
-        sub=f"{escape(page_name)} · ID {escape(str(page_id))}",
-        actions=_page_select(pages, page_id, "/tin-nhan"),
+        sub=sub,
+        actions=_page_select(pages, page_id, "/tin-nhan", all_label=all_label),
         body=f'<div class="inbox">{left}{right}</div>',
         full=True,
-        script=_INBOX_JS.replace("__LIMIT__", str(limit)),
+        script=_INBOX_JS.replace("__LIMIT__", str(limit))
+                        .replace("__LIST_MS__", "15000" if merged else "10000"),
     )
 
 
@@ -412,7 +472,9 @@ _INBOX_JS = """
     }, ms));
   }
   // Đang lọc thẻ (?tag=): danh sách là ảnh chụp mẻ lớn -> không tự nạp lại.
-  if (!/[?&]tag=/.test(q)) poll('feed', '/tin-nhan/fragment/list' + q, 10000, false);
+  // Nhịp: 10s cho 1 page, 15s cho hộp thư gộp (khớp cache gộp ở client.py, để
+  // mỗi nhịp không bung ra N lời gọi Pancake).
+  if (!/[?&]tag=/.test(q)) poll('feed', '/tin-nhan/fragment/list' + q, __LIST_MS__, false);
   poll('thread', '/tin-nhan/fragment/thread' + q, 8000, true);
 
   var t = document.getElementById('thread');
@@ -529,20 +591,42 @@ _INBOX_JS = """
     return wrap;
   }
 
+  function closeExtract(){ extPanel.innerHTML = ''; }
+
+  // Thanh đầu bảng: tiêu đề + nút ✕ Đóng. Có ở MỌI trạng thái (lỗi / không có
+  // đề xuất / đã lưu / chưa lưu) vì bảng nằm chen giữa khung chat và ô soạn tin
+  // — không đóng được thì vướng chỗ trả lời khách.
+  function extractHead(){
+    var head = document.createElement('div');
+    head.className = 'ext-head';
+    var title = document.createElement('b');
+    title.textContent = '🧠 Trích tri thức';
+    var x = document.createElement('button');
+    x.type = 'button'; x.className = 'btn ext-close';
+    x.textContent = '✕ Đóng';
+    x.title = 'Đóng bảng trích tri thức';
+    x.addEventListener('click', closeExtract);
+    head.appendChild(title);
+    head.appendChild(x);
+    return head;
+  }
+
   function renderExtractPanel(d){
     extPanel.innerHTML = '';
     if (!d) return;
+    var box = document.createElement('div');
+    box.className = 'card form';
+    box.style.marginTop = '10px';
+    box.appendChild(extractHead());
     if (d.error) {
       var err = document.createElement('div');
       err.className = 'flash err';
       err.textContent = '✕ ' + d.error;
-      extPanel.appendChild(err);
+      box.appendChild(err);
+      extPanel.appendChild(box);
       return;
     }
     var items = d.items || [];
-    var box = document.createElement('div');
-    box.className = 'card form';
-    box.style.marginTop = '10px';
     if (!items.length) {
       var p = document.createElement('p');
       p.className = 'intro';
@@ -563,9 +647,16 @@ _INBOX_JS = """
     var saveBtn = document.createElement('button');
     saveBtn.type = 'button'; saveBtn.className = 'btn primary';
     saveBtn.textContent = '💾 Lưu các mục đã chọn';
+    // Nút đóng thứ 2 ở CUỐI bảng: danh sách đề xuất có thể dài, lưu xong mà
+    // phải cuộn ngược lên đầu mới đóng được thì rất vướng.
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button'; closeBtn.className = 'btn';
+    closeBtn.textContent = '✕ Đóng';
+    closeBtn.addEventListener('click', closeExtract);
     var resultSpan = document.createElement('span');
     resultSpan.className = 'shint';
     actions.appendChild(saveBtn);
+    actions.appendChild(closeBtn);
     actions.appendChild(resultSpan);
     box.appendChild(actions);
 
