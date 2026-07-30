@@ -351,10 +351,32 @@ def _tag_ids(conv: dict) -> list[int]:
     return ids
 
 
+def _phones(conv: dict) -> list[str]:
+    """Các số điện thoại Pancake bắt được trong hội thoại (đã bỏ trùng, giữ thứ tự).
+
+    Nằm ở `recent_phone_numbers`: mỗi phần tử có `phone_number`/`captured`.
+    """
+    out: list[str] = []
+    for item in conv.get("recent_phone_numbers") or []:
+        if not isinstance(item, dict):
+            continue
+        sdt = str(item.get("phone_number") or item.get("captured") or "").strip()
+        if sdt and sdt not in out:
+            out.append(sdt)
+    return out
+
+
 def _normalize_conv(conv: dict) -> dict:
-    """Rút gọn 1 conversation về các field cần cho webview 'người nhắn tin'."""
+    """Rút gọn 1 conversation về các field app dùng, KÈM bản thô để lưu lại.
+
+    Khoá `raw` giữ nguyên object Pancake trả về (32 trường) — webview không đụng
+    tới, nhưng kho `watcher.hoi_thoai` lưu lại để sau này cần trường nào cũng moi
+    ra được mà không phải gọi lại API (dữ liệu cũ thì gọi lại cũng không có).
+    """
     customer = (conv.get("customers") or [{}])[0]
     frm = conv.get("from") or {}
+    last_by = conv.get("last_sent_by") or {}
+    phones = _phones(conv)
     return {
         "conv_id": str(conv.get("id", "")),
         "customer_id": str(customer.get("id") or ""),
@@ -366,6 +388,20 @@ def _normalize_conv(conv: dict) -> dict:
         "unread_count": int(conv.get("unread_count") or 0),
         "seen": bool(conv.get("seen")),
         "tags": _tag_ids(conv),
+        # --- phần thêm để lưu kho (webview cũ không dùng, không ảnh hưởng gì) ---
+        "avatar_url": customer.get("avatar_url") or "",
+        "loai": conv.get("type") or "",
+        "inserted_at": conv.get("inserted_at") or "",
+        # Khác `updated_at`: cái kia đổi cả khi PAGE trả lời, cái này chỉ đổi khi
+        # KHÁCH nhắn -> dùng để biết ai đang chờ được trả lời.
+        "last_customer_at": conv.get("last_customer_interactive_at") or "",
+        "last_sent_by_id": str(last_by.get("id") or ""),
+        "last_sent_by_name": last_by.get("name") or last_by.get("displayName") or "",
+        "phones": phones,
+        "has_phone": bool(conv.get("has_phone") or phones),
+        "assignee_ids": [str(x) for x in (conv.get("assignee_ids") or [])],
+        "is_pinned": bool(conv.get("is_pinned")),
+        "raw": conv,
     }
 
 
@@ -441,6 +477,25 @@ async def list_conversations(
     # Không có cache hoặc đã quá cũ -> gọi đồng bộ (lần đầu chịu delay).
     items = await _fetch_conversations(page_id, msg_type, limit)
     _CONV_CACHE[key] = {"at": time.monotonic(), "data": items, "refreshing": False}
+    return items
+
+
+async def fetch_conversations_fresh(
+    page_id: str, msg_type: str = "INBOX", limit: int = 20
+) -> list[dict]:
+    """Gọi Pancake THẲNG, bỏ qua cache — dành cho worker poller (app/workers).
+
+    Poller là nguồn ghi duy nhất của kho `watcher.hoi_thoai` nên phải thấy dữ
+    liệu thật, không phải bản cũ trong cache. Kết quả được **nạp luôn vào
+    `_CONV_CACHE`** để các màn còn lại (Khách hàng, lọc thẻ...) dùng ké, khỏi
+    gọi Pancake thêm lần nữa.
+    """
+    if not is_page_enabled(page_id):
+        return []
+    items = await _fetch_conversations(page_id, msg_type, limit)
+    _CONV_CACHE[(str(page_id), msg_type, limit)] = {
+        "at": time.monotonic(), "data": items, "refreshing": False,
+    }
     return items
 
 

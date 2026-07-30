@@ -21,7 +21,12 @@ import db
 import sentiment
 
 SERVER_DIR = Path(__file__).parent
+# Cài đặt riêng của ZPancake (cách quét, key OpenAI, hiện log) vẫn ở .env này.
 ENV_PATH = SERVER_DIR / ".env"
+# RIÊNG token Telegram để ở .env GỐC của dự án — dùng chung cho cả app chính
+# (app/workers/sentiment.py) lẫn ZPancake, khỏi phải điền 2 nơi.
+ROOT_ENV_PATH = SERVER_DIR.parents[1] / ".env"
+TELEGRAM_KEYS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 PID_PATH = SERVER_DIR / "server.pid"  # để tắt được server kể cả khi đóng rồi mở lại GUI
 ICON_PATH = SERVER_DIR / "icon.ico"  # icon cửa sổ + taskbar, cũng dùng cho shortcut Desktop
 LOG_PATH = SERVER_DIR / "server.log"  # log của main.py (uvicorn) khi bật qua GUI, xem mục start_server()
@@ -42,8 +47,23 @@ COLOR_SUCCESS = "#16a34a"
 COLOR_SUCCESS_HOVER = "#15803d"
 COLOR_DANGER = "#ef4444"
 COLOR_DANGER_SOFT = "#fee2e2"
+COLOR_WARNING = "#d97706"   # server sống nhưng chưa nối được Postgres
 COLOR_LOG_BG = "#111827"
 COLOR_LOG_TEXT = "#d1d5db"
+
+
+def _doc_env(path: Path, values: dict) -> None:
+    """Đọc `path` rồi điền vào `values` những khoá đã khai báo sẵn (bỏ dòng #)."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if key in values:
+            values[key] = val.strip()
 
 
 def read_env() -> dict:
@@ -54,15 +74,11 @@ def read_env() -> dict:
         "TELEGRAM_CHAT_ID": "",
         "SHOW_SCAN_LOG": "1",  # bật/tắt hiện log quét tin nhắn trong khung Nhật ký (xem _poll_scan_events)
     }
-    if ENV_PATH.exists():
-        for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, val = line.partition("=")
-            key = key.strip()
-            if key in values:
-                values[key] = val.strip()
+    # .env GỐC trước (nguồn của token Telegram), .env riêng sau nên vẫn ghi đè
+    # được — ai muốn ZPancake bắn sang kênh Telegram khác app chính thì cứ khai
+    # lại trong ZPancake/server/.env.
+    _doc_env(ROOT_ENV_PATH, values)
+    _doc_env(ENV_PATH, values)
     return values
 
 
@@ -77,21 +93,49 @@ def _center_window(win: tk.Misc, width: int, height: int) -> None:
 
 
 def write_env(values: dict) -> None:
-    # TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID không có ô sửa trên GUI (chỉnh tay
-    # trong .env, xem .env.example) nhưng VẪN phải ghi lại nguyên giá trị đang
-    # có ở đây — nếu không, mỗi lần bấm "Lưu cài đặt" sẽ ghi đè cả file .env
-    # chỉ với 2 dòng SENTIMENT_METHOD/OPENAI_API_KEY và xoá mất cấu hình Telegram.
+    """Lưu cài đặt: phần riêng của ZPancake vào .env của nó, Telegram vào .env gốc.
+
+    Token Telegram KHÔNG còn được ghi vào file này nữa — nó nằm ở .env gốc để app
+    chính dùng chung; nếu vẫn ghi ở cả 2 nơi thì file nào sửa sau sẽ âm thầm đè
+    file kia (ZPancake nạp .env riêng SAU .env gốc).
+    """
     lines = [
         "# File này do gui.py tự ghi khi bấm \"Lưu cài đặt\" — có thể chỉnh tay",
         "# nhưng lần sau lưu qua GUI sẽ ghi đè lại theo đúng các dòng dưới.",
+        "# Token Telegram nằm ở .env GỐC của dự án, không phải ở đây.",
         f"SENTIMENT_METHOD={values['SENTIMENT_METHOD']}",
         f"OPENAI_API_KEY={values['OPENAI_API_KEY']}",
-        f"TELEGRAM_BOT_TOKEN={values['TELEGRAM_BOT_TOKEN']}",
-        f"TELEGRAM_CHAT_ID={values['TELEGRAM_CHAT_ID']}",
         f"SHOW_SCAN_LOG={values['SHOW_SCAN_LOG']}",
         "",
     ]
     ENV_PATH.write_text("\n".join(lines), encoding="utf-8")
+
+
+def write_telegram_env(values: dict) -> None:
+    """Vá TELEGRAM_* vào .env GỐC, GIỮ NGUYÊN mọi dòng khác của file.
+
+    Bắt buộc phải vá tại chỗ chứ không ghi đè cả file như `write_env`: .env gốc
+    còn chứa PANCAKE_ACCESS_TOKEN, DATABASE_URL, SUPABASE_*, OPENAI_API_KEY...
+    của app chính — ghi đè là mất sạch.
+    """
+    lines = (
+        ROOT_ENV_PATH.read_text(encoding="utf-8").splitlines()
+        if ROOT_ENV_PATH.exists() else []
+    )
+    con_lai = {k: values.get(k, "") for k in TELEGRAM_KEYS}
+    for i, line in enumerate(lines):
+        if line.strip().startswith("#") or "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key in con_lai:
+            lines[i] = f"{key}={con_lai.pop(key)}"
+    if con_lai:                                   # chưa có dòng nào -> thêm mới
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append("# Báo Telegram khi phát hiện hội thoại tiêu cực (dùng chung"
+                     " cho app chính + ZPancake)")
+        lines += [f"{k}={v}" for k, v in con_lai.items()]
+    ROOT_ENV_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 class ServerControlApp:
@@ -106,6 +150,9 @@ class ServerControlApp:
                 pass  # icon lỗi định dạng hoặc hệ điều hành không hỗ trợ .ico -> bỏ qua, không crash GUI
 
         self.process: subprocess.Popen | None = None  # tiến trình do CHÍNH gui này bật
+        # Lỗi DB đã ghi ra khung Nhật ký gần nhất — chỉ ghi lại khi ĐỔI nội dung,
+        # để đèn vàng poll 2s/lần không spam cùng một dòng lỗi mãi.
+        self._last_db_error = ""
         # Con trỏ (seq) đã hiện tới trong /api/scan-events — dùng để chỉ lấy sự
         # kiện MỚI mỗi lần poll (xem _poll_scan_events). Lấy seq hiện tại của
         # server ngay khi mở GUI (nếu server đang chạy) để không dội nguyên
@@ -361,12 +408,23 @@ class ServerControlApp:
 
     # ------------------------------------------------------------ logic
 
-    def is_healthy(self) -> bool:
+    def fetch_health(self) -> dict | None:
+        """Gọi /health -> dict, hoặc None nếu server không phản hồi (đã tắt).
+
+        Server trả 200 kể cả khi Postgres chưa bật; trạng thái DB nằm ở khoá
+        `db` ("ok" | "down") để đèn phân biệt được 3 tình huống.
+        """
         try:
             with urlopen(HEALTH_URL, timeout=0.6) as resp:
-                return resp.status == 200
-        except (URLError, OSError, TimeoutError):
-            return False
+                if resp.status != 200:
+                    return None
+                return json.loads(resp.read().decode("utf-8"))
+        except (URLError, OSError, TimeoutError, ValueError):
+            return None
+
+    def is_healthy(self) -> bool:
+        """Server có sống không (KHÔNG quan tâm DB) — dùng cho bật/tắt/chờ khởi động."""
+        return self.fetch_health() is not None
 
     def start_server(self) -> None:
         if self.is_healthy():
@@ -491,8 +549,9 @@ class ServerControlApp:
         if not token or not chat_id:
             messagebox.showwarning(
                 "Pancake Watcher",
-                "Chưa cấu hình TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID trong .env.\n\n"
-                "Xem hướng dẫn lấy 2 giá trị này trong file .env.example (cùng thư mục server/).",
+                "Chưa cấu hình TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID.\n\n"
+                f"Điền 2 dòng đó vào .env GỐC của dự án:\n{ROOT_ENV_PATH}\n\n"
+                "Hướng dẫn lấy token/chat id có trong .env.example cùng thư mục đó.",
             )
             return
 
@@ -512,7 +571,8 @@ class ServerControlApp:
             self.log(f"Gửi tin nhắn thử Telegram thất bại: {err}")
             messagebox.showerror(
                 "Pancake Watcher",
-                f"Gửi thất bại: {err}\n\nKiểm tra lại TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID trong .env.",
+                f"Gửi thất bại: {err}\n\nKiểm tra lại TELEGRAM_BOT_TOKEN/"
+                f"TELEGRAM_CHAT_ID trong .env gốc:\n{ROOT_ENV_PATH}",
             )
             return
 
@@ -534,15 +594,13 @@ class ServerControlApp:
         os.startfile(str(LOG_PATH))  # mở bằng app mặc định của Windows cho .log (thường là Notepad)
 
     def save_settings(self) -> None:
-        # Giữ nguyên OPENAI_API_KEY/TELEGRAM_* đang có trong .env — GUI không
-        # có ô để sửa các giá trị này (xem ghi chú ở _build_ui), chỉ đổi
-        # SENTIMENT_METHOD.
+        # Giữ nguyên OPENAI_API_KEY đang có trong .env — GUI không có ô để sửa
+        # giá trị này (xem ghi chú ở _build_ui), chỉ đổi SENTIMENT_METHOD.
+        # TELEGRAM_* nằm ở .env GỐC nên KHÔNG ghi vào file này nữa.
         current = read_env()
         values = {
             "SENTIMENT_METHOD": self.method_var.get() or "keyword",
             "OPENAI_API_KEY": current["OPENAI_API_KEY"],
-            "TELEGRAM_BOT_TOKEN": current["TELEGRAM_BOT_TOKEN"],
-            "TELEGRAM_CHAT_ID": current["TELEGRAM_CHAT_ID"],
             "SHOW_SCAN_LOG": "1" if self.show_scan_log_var.get() else "0",
         }
         write_env(values)
@@ -553,12 +611,28 @@ class ServerControlApp:
             self.root.after(800, self.start_server)
 
     def _poll_status(self) -> None:
-        if self.is_healthy():
+        health = self.fetch_health()
+        if health is None:
+            self.status_dot.itemconfig(self.status_circle, fill=COLOR_DANGER)
+            self.status_label.configure(text="🔴 Đã dừng", foreground=COLOR_DANGER)
+        elif health.get("db") == "ok":
             self.status_dot.itemconfig(self.status_circle, fill=COLOR_SUCCESS)
             self.status_label.configure(text="🟢 Đang chạy", foreground=COLOR_SUCCESS)
         else:
-            self.status_dot.itemconfig(self.status_circle, fill=COLOR_DANGER)
-            self.status_label.configure(text="🔴 Đã dừng", foreground=COLOR_DANGER)
+            # Server sống nhưng Postgres (Docker) chưa lên: tin nhắn extension gửi
+            # sang sẽ bị từ chối (503) cho tới khi bật DB, nên phải nói rõ ra đây
+            # thay vì để đèn xanh như không có chuyện gì.
+            self.status_dot.itemconfig(self.status_circle, fill=COLOR_WARNING)
+            self.status_label.configure(
+                text="🟡 Chạy nhưng CHƯA nối được Postgres — chạy `docker compose up -d`",
+                foreground=COLOR_WARNING,
+            )
+            err = (health.get("dbError") or "").strip()
+            if err and err != self._last_db_error:
+                self._last_db_error = err
+                self.log(f"⚠️ DB: {err}")
+        if health is not None and health.get("db") == "ok":
+            self._last_db_error = ""
         self.root.after(2000, self._poll_status)
 
     def _fetch_scan_event_cursor(self) -> int:
@@ -784,9 +858,19 @@ class KeywordsDialog(tk.Toplevel):
     def _save(self) -> None:
         keywords = self._parse()
         sentiment.set_keywords(keywords)
-        db.init_db()  # đảm bảo bảng customers đã tồn tại kể cả khi chưa từng bật server
-        requeued = db.reset_non_negative_sentiment()
         self._log(f"Đã lưu danh sách từ khoá tiêu cực ({len(keywords)} từ).")
+        try:
+            db.init_db()  # đảm bảo bảng đã tồn tại kể cả khi chưa từng bật server
+            requeued = db.reset_non_negative_sentiment()
+        except Exception as err:  # noqa: BLE001 — Postgres (Docker) có thể chưa bật
+            # Từ khoá ĐÃ lưu vào keywords.json ở trên nên không mất; chỉ phần đặt
+            # lại hội thoại để quét lại là chưa làm được.
+            self._log(
+                "⚠️ Chưa nối được Postgres nên chưa đặt lại được các hội thoại cũ "
+                "để quét theo từ khoá mới. Chạy `docker compose up -d` rồi lưu lại "
+                f"lần nữa. Chi tiết: {err}"
+            )
+            return
         if requeued:
             self._log(f"Đã đặt lại {requeued} hội thoại (chưa từng tiêu cực) để quét lại theo từ khoá mới.")
         self.destroy()

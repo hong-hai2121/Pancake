@@ -59,6 +59,29 @@ class Settings(BaseSettings):
     # thì lọt câu lạc đề. 0 = tắt (để GPT tự quyết hoàn toàn).
     rag_suggest_threshold: float = 0.55
 
+    # --- Worker nền: kéo hội thoại + quét cảm xúc (app/workers/) ---
+    # Chạy suốt vòng đời server, KHÔNG phụ thuộc có ai mở trang hay không.
+    inbox_poll_enabled: bool = True      # tắt = không kéo, màn Tin nhắn tự quay về gọi Pancake trực tiếp
+    # NHỊP THÍCH ỨNG theo từng page: page vừa có tin mới -> hỏi lại sau
+    # `inbox_poll_interval` giây; im lặng thì giãn GẤP ĐÔI mỗi lượt cho tới trần
+    # `inbox_poll_max_interval`. Nhờ vậy page bận vẫn nhanh mà page ế không đốt
+    # quota (Pancake trả 429 khá sớm).
+    inbox_poll_interval: float = 20.0        # nhịp nhanh nhất (page đang có khách)
+    inbox_poll_max_interval: float = 300.0   # trần khi page im lặng liên tục
+    # Mỗi lượt chỉ xin `inbox_poll_limit_small` hội thoại; NGHI có sót (mọi dòng
+    # trả về đều mới hơn mốc đã biết) thì mới xin thêm theo `inbox_poll_limit` ->
+    # `inbox_poll_limit_max`. Xem `_CATCH_UP` trong app/workers/poller.py.
+    inbox_poll_limit_small: int = 5
+    inbox_poll_limit: int = 20
+    inbox_poll_limit_max: int = 50
+    # NGẮT MẠCH: page lỗi liên tiếp ngần này lượt (page bị Pancake vô hiệu hoá,
+    # mất quyền...) thì nghỉ hẳn `inbox_poll_error_backoff` giây mới thử lại.
+    inbox_poll_error_threshold: int = 3
+    inbox_poll_error_backoff: float = 1800.0
+    sentiment_enabled: bool = True       # tắt = không quét cảm xúc (kho vẫn được cập nhật)
+    sentiment_interval: float = 8.0      # giây giữa 2 mẻ quét
+    sentiment_batch: int = 10            # số hội thoại tối đa mỗi mẻ (llm: canh chi phí ở đây)
+
     # --- Chọn nơi lưu dữ liệu ---
     # postgres = Postgres + pgvector cài trên máy này (mặc định).
     # supabase = Postgres trên cloud của Supabase (REST + pgvector).

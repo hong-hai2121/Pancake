@@ -16,8 +16,8 @@ _DISPLAY_TZ = timezone(timedelta(hours=7))
 
 # Bảng màu cho avatar chữ cái đầu (ổn định theo id).
 _AVATAR_COLORS = [
-    "#2563eb", "#7c3aed", "#db2777", "#dc2626", "#ea580c",
-    "#ca8a04", "#16a34a", "#0891b2", "#4f46e5", "#0d9488",
+    "#6f5a9c", "#a8718f", "#e91e8c", "#c4868f", "#8c6a9b",
+    "#b06a9a", "#7a4c88", "#9a86ad", "#d4778c", "#5f4b8b",
 ]
 
 
@@ -35,8 +35,8 @@ def _avatar(page: dict) -> str:
 
 # Bảng màu chip thẻ — ổn định theo ID để cùng 1 thẻ luôn 1 màu (khớp thanh lọc).
 _TAG_COLORS = [
-    "#2563eb", "#7c3aed", "#db2777", "#dc2626", "#ea580c",
-    "#ca8a04", "#16a34a", "#0891b2", "#4f46e5", "#0d9488",
+    "#6f5a9c", "#a8718f", "#e91e8c", "#c4868f", "#8c6a9b",
+    "#b06a9a", "#7a4c88", "#9a86ad", "#d4778c", "#5f4b8b",
 ]
 
 
@@ -268,6 +268,13 @@ def _conv_card(
         f'<div class="cpage">{escape(conv["page_name"])}</div>'
         if conv.get("page_name") else ""
     )
+    # Chỉ hội thoại đọc từ kho mới có `sentiment` (worker nền quét — xem
+    # app/workers/sentiment.py); đường gọi Pancake trực tiếp không có -> không badge.
+    neg_html = (
+        '<span class="neg" title="Worker nền phát hiện dấu hiệu tiêu cực'
+        f' (cách quét: {escape(conv.get("sentiment_method") or "?")})">⚠ tiêu cực</span>'
+        if conv.get("sentiment") == "negative" else ""
+    )
     return f"""
       <li>
         <a class="{cls}" href="{conv_href(conv, page_id, mode, tag)}">
@@ -283,6 +290,7 @@ def _conv_card(
             <div class="badges">
               <span class="badge">{conv.get('message_count', 0)} tin nhắn</span>
               {unread_html}
+              {neg_html}
             </div>
           </div>
         </a>

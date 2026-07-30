@@ -4,6 +4,7 @@ Các màn hình này gọi Pancake API (đọc hội thoại) và Supabase (đ�
 Mọi lỗi đều được bắt lại và hiển thị ngay trên trang — không để 500 trắng màn.
 """
 
+import asyncio
 import json
 from collections import Counter
 from urllib.parse import parse_qs, urlencode
@@ -14,6 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.bot.brain import extract_qa_candidates, suggest_reply
 from app.config import settings
+from app.db import inbox_store
 from app.db.backends import backend_name
 from app.db.queries import _count, insert_qa
 from app.pancake.client import (
@@ -45,6 +47,24 @@ _CUSTOMER_LIMIT = 100
 # Khi LỌC theo thẻ: nạp một mẻ lớn rồi lọc phía Python (Pancake không lọc thẻ ở
 # server), để "gọi ra" gần như toàn bộ hội thoại có gắn thẻ, không chỉ khung 20.
 _TAG_FETCH_LIMIT = 200
+# Hộp thư GỘP đọc từ kho `watcher.hoi_thoai` (worker nền đổ về) nên không còn bị
+# giới hạn bởi 1 lời gọi Pancake -> cho phép hiện nhiều hơn hẳn chế độ 1 page.
+_MERGED_DEFAULT_LIMIT = 100
+_MERGED_MAX_LIMIT = 500
+
+
+async def _merged_convs(limit: int) -> list[dict]:
+    """Hội thoại gộp mọi page: ưu tiên ĐỌC KHO, kho rỗng mới gọi Pancake.
+
+    Kho do worker nền (app/workers/poller.py) đổ về nên: hiện đủ mọi page, không
+    sót hội thoại rơi khỏi top-N giữa 2 vòng, và render không tốn lời gọi nào.
+    Kho rỗng = worker vừa bật lần đầu (hoặc bị TẮT trong .env) -> quay về cách cũ
+    để trang không bao giờ trống trơn.
+    """
+    convs = await asyncio.to_thread(inbox_store.list_recent, limit)
+    if convs:
+        return convs
+    return await list_all_conversations(limit=min(limit, 50))
 
 
 # Nhớ page đang chọn qua cookie: vào lại /tin-nhan, /khach-hang (kể cả bấm menu,
@@ -236,15 +256,21 @@ async def inbox(
     `tag` (ID số) -> chỉ hiện hội thoại có gắn thẻ đó (lọc trong khung đã nạp).
     Không truyền `page_id` thì dùng lại page gần nhất (cookie) trước khi mặc định.
     """
-    limit = max(1, min(limit, 50))
     page_id = _wanted_page_id(request, page_id)
     merged = page_id == ALL_PAGES
+    # Gộp: đọc kho nên cho hiện nhiều (mặc định 100, trần 500). Xem 1 page: vẫn
+    # là 1 lời gọi Pancake nên giữ trần 50 như cũ.
+    limit = (
+        max(1, min(limit if limit != _DEFAULT_LIMIT else _MERGED_DEFAULT_LIMIT,
+                   _MERGED_MAX_LIMIT))
+        if merged else max(1, min(limit, 50))
+    )
     try:
         pages = await list_pages()
         on_count = len(await enabled_pages())
         if merged:
             pid, page_name = ALL_PAGES, f"Tất cả page ({on_count} đang BẬT)"
-            convs = await list_all_conversations(limit=limit)
+            convs = await _merged_convs(limit)
             facet, tags_meta = [], {}
             # Page thật của hội thoại đang mở (đến từ link ở cột trái).
             thread_pid = conv_page_id
@@ -297,12 +323,16 @@ async def inbox_list_fragment(
     page_id: str = "", conv_id: str = "", limit: int = _DEFAULT_LIMIT, tag: str = ""
 ) -> HTMLResponse:
     """Chỉ cột danh sách hội thoại (JS gọi lại mỗi 10-15 giây), giữ nguyên lọc thẻ."""
-    limit = max(1, min(limit, 50))
     page_id = _wanted_page_id(request, page_id)
+    limit = (
+        max(1, min(limit if limit != _DEFAULT_LIMIT else _MERGED_DEFAULT_LIMIT,
+                   _MERGED_MAX_LIMIT))
+        if page_id == ALL_PAGES else max(1, min(limit, 50))
+    )
     try:
         if page_id == ALL_PAGES:
             pid = ALL_PAGES
-            convs = await list_all_conversations(limit=limit)
+            convs = await _merged_convs(limit)
         else:
             _pages, page = await _pick_page(page_id)
             if page is None:

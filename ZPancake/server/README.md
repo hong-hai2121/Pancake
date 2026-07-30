@@ -1,10 +1,15 @@
 # Pancake Watcher — Local Server
 
 Server FastAPI chạy **ở máy của bạn** (`127.0.0.1:8787`), nhận dữ liệu tin
-nhắn mới do extension quét được và lưu vào file SQLite. Hoàn toàn độc lập với
-backend chính ở thư mục gốc repo (`app/`) — không dùng chung DB, không dùng
+nhắn mới do extension quét được và lưu vào **Postgres** — cùng container Docker
+với dự án gốc nhưng **schema riêng `watcher`** (xem `db.py`). Vẫn không dùng
 access token Pancake nào cả, chỉ lưu lại đúng những gì extension gửi sang
 (snippet rút gọn + metadata hội thoại, chưa phải nội dung tin nhắn đầy đủ).
+
+> **Cần bật DB trước:** `docker compose up -d` ở **thư mục gốc repo**. Quên bật
+> thì server vẫn chạy nhưng GUI hiện đèn 🟡 và các endpoint cần DB trả **503**
+> kèm câu hướng dẫn; bật DB lên là tự chạy tiếp, **không phải khởi động lại
+> server**.
 
 ## Cài đặt & chạy
 
@@ -65,14 +70,15 @@ $Shortcut.Save()
 > Extension (`background.js`) gọi cố định tới `http://localhost:8787/api/messages`
 > — server phải đang chạy thì dữ liệu mới được lưu. Nếu server tắt, extension
 > vẫn hoạt động bình thường (popup/panel/log console không phụ thuộc server
-> này), chỉ là không có bản sao trong SQLite; `background.js` sẽ log 1 dòng
+> này), chỉ là không có bản sao trong DB; `background.js` sẽ log 1 dòng
 > cảnh báo (không lặp lại liên tục) mỗi lần gửi thất bại.
 
 ## Schema
 
-`data/pancake_watcher.db` (tự tạo khi chạy lần đầu) — **1 bảng duy nhất**
-`customers`: mỗi khách hàng (hội thoại, khoá `raw_id`) 1 dòng, chứa đúng tin
-nhắn cuối cùng gửi đến (ghi đè mỗi khi có tin mới, không giữ log lịch sử):
+`watcher.customers` trong database `pancakebot` (schema + bảng + index tự tạo ở
+lần chạy đầu) — **1 bảng duy nhất**: mỗi khách hàng (hội thoại, khoá `raw_id`)
+1 dòng, chứa đúng tin nhắn cuối cùng gửi đến (ghi đè mỗi khi có tin mới, không
+giữ log lịch sử):
 
 ```
 raw_id, platform, kind, page_id, conv_id, name,
@@ -81,7 +87,19 @@ first_seen_at, last_seen_at,
 sentiment, sentiment_method, sentiment_checked_at
 ```
 
-Xem nhanh qua webview `/history` (xem mục bên dưới), hoặc dùng [DB Browser for SQLite](https://sqlitebrowser.org/) (miễn phí) — mở file `data/pancake_watcher.db` — khi cần truy vấn SQL tuỳ ý.
+Các cột thời gian cố ý giữ kiểu **text ISO-8601 UTC** (không đổi sang
+`timestamptz`) để mọi so sánh `sentiment_checked_at < detected_at`, dữ liệu
+extension gửi lên và JSON trả về giữ nguyên hành vi như bản SQLite cũ.
+
+Xem nhanh qua webview `/history` (mục bên dưới); cần truy vấn SQL tuỳ ý thì:
+
+```powershell
+# psql trong container (chạy ở thư mục gốc repo)
+docker compose exec db psql -U postgres -d pancakebot -c "select * from watcher.customers;"
+
+# hoặc giao diện web Adminer
+docker compose --profile ui up -d      # rồi mở http://127.0.0.1:8080/?pgsql=db
+```
 
 ## Quét cảm xúc tiêu cực (`sentiment.py`)
 
@@ -128,18 +146,21 @@ worker). Tin nhắn gồm tên khách, nền tảng (Zalo/Facebook) và snippet.
    `"chat":{"id": ...}` trong JSON trả về — đó là `TELEGRAM_CHAT_ID`. (Muốn
    nhận vào 1 nhóm thay vì chat riêng: thêm bot vào nhóm, nhắn 1 tin trong
    nhóm đó rồi lấy id tương tự — id nhóm là số **âm**.)
-3. Điền 2 giá trị trên vào `server/.env` (copy từ `.env.example` nếu chưa
-   có):
+3. Điền 2 giá trị trên vào **`.env` ở thư mục GỐC của dự án** (không phải
+   `server/.env` nữa — 2 dòng này dùng chung cho cả app chính lẫn ZPancake nên
+   để một chỗ, khỏi điền 2 nơi rồi lệch nhau):
    ```
    TELEGRAM_BOT_TOKEN=123456789:AAExxxxxxxxxxxxxxxxxxxxxxx
    TELEGRAM_CHAT_ID=987654321
    ```
+   > Muốn ZPancake bắn sang **kênh Telegram khác** app chính thì khai lại 2 dòng
+   > đó trong `server/.env` — file này được nạp SAU nên ghi đè `.env` gốc.
 4. Khởi động lại server (hoặc mở `gui.py` → **"🔔 Kiểm tra kết nối
    Telegram..."** để gửi thử ngay 1 tin nhắn xác nhận, không cần chờ có
    khách hàng tiêu cực thật).
 
 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` không có ô sửa trên GUI chính (giống
-`OPENAI_API_KEY`, coi là thông tin nhạy cảm) — chỉnh trực tiếp trong `.env`.
+`OPENAI_API_KEY`, coi là thông tin nhạy cảm) — chỉnh trực tiếp trong `.env` gốc.
 Chỉ gửi thông báo khi có **tin mới** khiến 1 khách chuyển sang "negative"
 (dựa theo cùng điều kiện `get_unanalyzed()` ở trên) — không gửi lặp lại mỗi
 8 giây cho cùng 1 khách nếu không có gì thay đổi.
@@ -156,16 +177,19 @@ không mất/lỗi dữ liệu:
   1 request duy nhất, thay vì tạo thêm request riêng. Tự thử lại tối đa 3 lần
   (chờ tăng dần 600ms/1200ms) nếu server chưa phản hồi kịp trước khi đánh dấu
   thất bại (☁️✗ trên popup/panel).
-- **Phía server**: bật `PRAGMA journal_mode=WAL` (SQLite) để đọc/ghi đồng thời
-  tốt hơn, và dùng `INSERT ... ON CONFLICT DO UPDATE` (upsert nguyên tử trong
-  1 câu lệnh) thay vì kiểu "kiểm tra rồi ghi" — loại bỏ khoảng hở race giữa 2
-  bước đó khi 2 request cùng đến cho cùng 1 hội thoại.
-- Đã kiểm thử: 60 luồng ghi đồng thời (kể cả nhiều luồng cùng ghi 1 `raw_id`
-  — tình huống xấu nhất) → 0 lỗi, dữ liệu đúng.
+- **Phía server**: Postgres xử lý ghi đồng thời sẵn (không còn cảnh "database
+  is locked" như SQLite), cộng với `INSERT ... ON CONFLICT DO UPDATE` (upsert
+  nguyên tử trong 1 câu lệnh) thay vì kiểu "kiểm tra rồi ghi" — loại bỏ khoảng
+  hở race giữa 2 bước đó khi 2 request cùng đến cho cùng 1 hội thoại.
+- Connection pool dùng CHUNG với dự án gốc (`app/db/client.py::get_pg_pool`),
+  nên không mở kết nối mới cho từng truy vấn và an toàn khi FastAPI chạy handler
+  trong nhiều thread.
 
 ## API
 
-- `GET /health` → `{"status": "ok"}`
+- `GET /health` → `{"status": "ok"|"degraded", "db": "ok"|"down", "dbError": "..."}`
+  — luôn 200 khi tiến trình server còn sống (GUI dùng để biết server bật/tắt);
+  `db` cho biết Postgres đã lên chưa. Trả lời trong ~0.05s kể cả khi DB tắt.
 - `POST /api/messages` — body `{"events": [...]}`, mỗi phần tử khớp shape sự
   kiện extension gửi (`rawId`, `platform`, `kind`, `pageId`, `convId`, `name`,
   `snippet`, `time`, `unreadCount`, `platformClass`, `reason`, `detectedAt`).
@@ -182,8 +206,10 @@ không mất/lỗi dữ liệu:
   khách hàng (không phân trang), dùng cho webview `/history`. `sort` chỉ nhận
   các cột trong whitelist `SORTABLE_COLUMNS` (`db.py`), sai tên tự rơi về
   `detected_at`.
-- `DELETE /api/customers/{raw_id}` — xoá hẳn 1 khách hàng khỏi SQLite (không
-  thể hoàn tác). 404 nếu `raw_id` không tồn tại.
+- `DELETE /api/customers/{raw_id}` — xoá hẳn 1 khách hàng khỏi DB (không thể
+  hoàn tác). 404 nếu `raw_id` không tồn tại.
+- Mọi endpoint chạm DB trả **503** kèm câu "Chưa nối được Postgres. Chạy
+  `docker compose up -d`..." khi DB chưa lên, thay vì 500 khó hiểu.
 
 ## Webview lịch sử (`/history`)
 

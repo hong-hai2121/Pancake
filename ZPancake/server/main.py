@@ -1,11 +1,16 @@
-"""Server local nhận dữ liệu từ extension Pancake Watcher và lưu vào SQLite.
+"""Server local nhận dữ liệu từ extension Pancake Watcher và lưu vào Postgres.
 
 Chạy: uvicorn main:app --host 127.0.0.1 --port 8787 --reload
 (hoặc `python main.py`)
 
-Độc lập hoàn toàn với backend chính ở thư mục gốc repo (app/) — không dùng
-chung DB, không dùng chung access token Pancake, chỉ lưu lại đúng những gì
-extension quét được (snippet rút gọn + metadata hội thoại).
+Dữ liệu nằm trong **schema `watcher`** của Postgres chạy bằng Docker ở thư mục
+gốc repo (`docker compose up -d`) — xem `db.py`. Vẫn KHÔNG dùng chung access
+token Pancake với app/, chỉ lưu đúng những gì extension quét được (snippet rút
+gọn + metadata hội thoại).
+
+Postgres chưa bật thì server VẪN chạy: `/health` báo `db: "down"` (GUI hiện đèn
+vàng kèm cách xử lý), các endpoint cần DB trả 503, và workers tự nối lại ngay khi
+DB sẵn sàng — không phải tắt/bật lại server.
 """
 
 import asyncio
@@ -25,6 +30,7 @@ import sentiment
 import telegram
 from db import (
     cleanup_scanned,
+    db_status,
     delete_customer,
     get_all_customers,
     get_recent_sentiments,
@@ -93,6 +99,46 @@ def _record_scan_event(*, name: Optional[str], raw_id: str, snippet: Optional[st
     )
 
 
+# ------------------------------------------------------ sẵn sàng của DB
+
+# Postgres chạy trong Docker, có thể bật SAU server (hoặc tắt giữa chừng). Thay
+# vì để startup chết, ta thử tạo schema mỗi khi cần và nhớ kết quả — hễ DB sống
+# lại là mọi thứ tự chạy tiếp, không phải khởi động lại server.
+_DB_READY = False
+_DB_ERROR = ""
+
+
+def ensure_db() -> bool:
+    """Đảm bảo schema `watcher` đã có. Trả False (kèm ghi lại lỗi) nếu DB chưa lên."""
+    global _DB_READY, _DB_ERROR
+    if _DB_READY:
+        return True
+    # Thăm dò nhanh trước: `init_db()` mượn connection với timeout mặc định của
+    # pool (10s), mà hàm này được gọi TỪ TRONG worker async — chờ 10s ở đó là
+    # chặn cả event loop, /health cũng đứng theo. Thăm dò 0.5s rồi mới tạo schema.
+    ok, err = db_status()
+    if not ok:
+        _DB_ERROR = err
+        return False
+    try:
+        init_db()
+    except Exception as err:  # noqa: BLE001 — DB chưa bật là trạng thái bình thường
+        _DB_ERROR = str(err)
+        return False
+    _DB_READY, _DB_ERROR = True, ""
+    print("[db] Đã nối Postgres, schema `watcher` sẵn sàng.")
+    return True
+
+
+def db_health() -> dict:
+    """Trạng thái DB cho `/health` — GUI dựa vào đây để đổi màu đèn."""
+    global _DB_READY, _DB_ERROR
+    ok, err = db_status()
+    if not ok:
+        _DB_READY, _DB_ERROR = False, err          # rớt giữa chừng -> ép nối lại
+    return {"db": "ok" if ok else "down", "dbError": "" if ok else (err or _DB_ERROR)}
+
+
 # ------------------------------------------------------ worker nền: sentiment
 
 SENTIMENT_WORKER_INTERVAL_S = 8  # quét lại mỗi 8s, đủ nhanh mà không tốn CPU vô ích
@@ -110,6 +156,9 @@ async def sentiment_worker() -> None:
     """
     while True:
         try:
+            if not ensure_db():
+                await asyncio.sleep(SENTIMENT_WORKER_INTERVAL_S)
+                continue
             rows = get_unanalyzed(limit=SENTIMENT_BATCH_SIZE)
             for row in rows:
                 try:
@@ -151,6 +200,9 @@ async def cleanup_worker() -> None:
     """
     while True:
         try:
+            if not ensure_db():
+                await asyncio.sleep(CLEANUP_WORKER_INTERVAL_S)
+                continue
             deleted = cleanup_scanned(
                 older_than_hours=CLEANUP_OLDER_THAN_HOURS, keep_recent=CLEANUP_KEEP_RECENT
             )
@@ -163,14 +215,25 @@ async def cleanup_worker() -> None:
 
 @app.on_event("startup")
 def on_startup() -> None:
-    init_db()
+    # DB chưa bật KHÔNG được làm chết server: extension vẫn gọi tới, GUI vẫn phải
+    # hiện trạng thái. Workers sẽ tự thử lại cho tới khi Postgres lên.
+    if not ensure_db():
+        print(
+            "[db] Chưa nối được Postgres — chạy `docker compose up -d` ở thư mục "
+            f"gốc repo. Server vẫn chạy, sẽ tự nối lại. Chi tiết: {_DB_ERROR}"
+        )
     asyncio.create_task(sentiment_worker())
     asyncio.create_task(cleanup_worker())
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    """Luôn trả 200 khi tiến trình server còn sống (GUI dùng để biết server bật/tắt).
+
+    Trạng thái DB nằm ở khoá `db` — GUI đổi đèn xanh/vàng theo đó.
+    """
+    info = db_health()
+    return {"status": "ok" if info["db"] == "ok" else "degraded", **info}
 
 
 @app.get("/api/scan-events/cursor")
@@ -189,8 +252,21 @@ def scan_events(after: int = 0, limit: int = 50) -> dict:
     return {"items": items, "latestSeq": SCAN_EVENTS[-1]["seq"] if SCAN_EVENTS else after}
 
 
+def _require_db() -> None:
+    """503 + câu hướng dẫn khi Postgres chưa bật — rõ hơn 500 "Internal Error"."""
+    if not ensure_db():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Chưa nối được Postgres. Chạy `docker compose up -d` ở thư mục gốc "
+                f"repo rồi thử lại. Chi tiết: {_DB_ERROR}"
+            ),
+        )
+
+
 @app.post("/api/messages")
 def receive_messages(payload: MessagesPayload) -> dict:
+    _require_db()
     inserted = 0
     for ev in payload.events:
         # Tin do PAGE tự gửi (nhãn "Botcake", xem sentiment.is_page_message)
@@ -207,6 +283,7 @@ def receive_messages(payload: MessagesPayload) -> dict:
 def sentiment_updates() -> dict:
     """Extension poll định kỳ (chrome.alarms, ~1 phút/lần) để lấy kết quả quét
     cảm xúc mới nhất, gộp vào danh sách đang hiển thị trên popup/panel."""
+    _require_db()
     rows = get_recent_sentiments(limit=200)
     return {
         "items": [
@@ -231,6 +308,7 @@ def history_page() -> str:
 
 @app.get("/api/customers")
 def list_customers(sort: str = "detected_at", order: str = "desc") -> dict:
+    _require_db()
     rows = get_all_customers(order_by=sort, direction=order)
     return {
         "items": [
@@ -259,6 +337,7 @@ def list_customers(sort: str = "detected_at", order: str = "desc") -> dict:
 
 @app.delete("/api/customers/{raw_id}")
 def delete_customer_endpoint(raw_id: str) -> dict:
+    _require_db()
     if not delete_customer(raw_id):
         raise HTTPException(status_code=404, detail="raw_id không tồn tại")
     return {"status": "ok"}

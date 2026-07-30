@@ -30,6 +30,8 @@ _ICONS = {
                  '<circle cx="9.5" cy="7" r="4"/>'
                  '<path d="M22 21v-2a4 4 0 0 0-3-3.9"/>'
                  '<path d="M16 3.1a4 4 0 0 1 0 7.8"/>',
+    "sentiment": '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9'
+                 'a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
     "data": '<path d="M12 2a3 3 0 0 0-3 3v.4A3.2 3.2 0 0 0 7 11a3 3 0 0 0 2 5.6V18'
             'a3 3 0 0 0 6 0v-1.4A3 3 0 0 0 17 11a3.2 3.2 0 0 0-2-5.6V5a3 3 0 0 0-3-3z"/>'
             '<path d="M12 2v20"/>',
@@ -40,6 +42,7 @@ MENU: list[tuple[str, str, str, str]] = [
     ("/bang-dieu-khien", "Bảng điều khiển", "dashboard", "dashboard"),
     ("/tin-nhan", "Tin nhắn", "messages", "messages"),
     ("/khach-hang", "Khách hàng", "customers", "customers"),
+    ("/cam-xuc", "Cảm xúc", "sentiment", "sentiment"),
     ("/data/kich-ban", "Dữ liệu bot", "data", "data"),
 ]
 
@@ -166,22 +169,37 @@ _CSS = """
 .side{view-transition-name:side}
 .topbar{view-transition-name:topbar}
 .tabs{view-transition-name:tabs}
+/* Bảng màu tím–hồng (lấy theo giao diện Kallet CRM): nền tím rất nhạt, chữ mực
+   tím đậm, nhấn bằng tím #6f5a9c + hồng #e91e8c, đổ bóng ám tím thay vì xám. */
 :root{
-  --bg:#f4f5f7; --card:#fff; --text:#111827; --sub:#6b7280; --border:#e4e7eb;
-  --accent:#2563eb; --soft:#eef4ff; --ok:#16a34a; --err:#dc2626; --warn:#d97706;
-  --side:#111827; --side-tx:#9aa4b2; --side-on:#1f2937; --in:#eceef1; --out:#2563eb;
-  --shadow:0 1px 2px rgba(16,24,40,.06);
+  --bg:#f5eff6; --card:#fff; --text:#2b2230; --sub:#8a7f98; --border:#eee3f0;
+  --accent:#6f5a9c; --accent2:#a8718f; --hot:#e91e8c; --soft:#f7f1fa;
+  --ok:#16a34a; --err:#e5484d; --warn:#e0900a;
+  --ok-bg:#e9f7ee; --err-bg:#fdecec; --warn-bg:#fff5e2; --hot-bg:#fdeef5;
+  --side:linear-gradient(185deg,#6f5a9c 0%,#8c6a9b 48%,#c4868f 100%);
+  --side-tx:rgba(255,255,255,.78); --side-on:rgba(255,255,255,.16);
+  --in:#efe9f1; --out:#6f5a9c;
+  --shadow:0 2px 10px rgba(111,90,156,.08);
+  --shadow-lg:0 6px 16px rgba(142,94,156,.18);
+  --r:12px;
 }
 @media (prefers-color-scheme:dark){
   :root{
-    --bg:#0d1117; --card:#161b22; --text:#e6edf3; --sub:#9198a1; --border:#30363d;
-    --accent:#4493f8; --soft:#132039; --ok:#3fb950; --err:#f85149; --warn:#d29922;
-    --side:#010409; --side-tx:#8b949e; --side-on:#161b22; --in:#21262d; --out:#2f6fed;
-    --shadow:none;
+    --bg:#15111a; --card:#1d1824; --text:#ece6f2; --sub:#9d92ab; --border:#2f2739;
+    --accent:#b39ddb; --accent2:#c4868f; --hot:#f472b6; --soft:#241d2d;
+    --ok:#3fb950; --err:#f85149; --warn:#d29922;
+    --ok-bg:#152a1c; --err-bg:#2c1719; --warn-bg:#2c2313; --hot-bg:#2d1a26;
+    --side:linear-gradient(185deg,#3a2f4a 0%,#4a3a55 48%,#5d4550 100%);
+    --side-tx:rgba(255,255,255,.72); --side-on:rgba(255,255,255,.12);
+    --in:#241d2d; --out:#7e63b3;
+    --shadow:0 2px 10px rgba(0,0,0,.35); --shadow-lg:0 6px 16px rgba(0,0,0,.45);
   }
 }
 *{box-sizing:border-box}
-html,body{height:100%}
+/* min-height chứ KHÔNG phải height: `height:100%` giới hạn khung chứa của
+   position:sticky đúng 1 màn hình, cuộn quá đó là menu trái hết chỗ bám và trôi
+   theo. min-height cho body cao bằng nội dung -> sidebar bám được suốt trang. */
+html,body{min-height:100%}
 body{
   margin:0; display:flex; background:var(--bg); color:var(--text); line-height:1.45;
   font-family:-apple-system,"Segoe UI",Roboto,system-ui,sans-serif; font-size:14px;
@@ -191,13 +209,18 @@ a{color:var(--accent)}
 /* ---------- sidebar ---------- */
 .side{
   flex:0 0 236px; width:236px; background:var(--side); color:var(--side-tx);
-  position:sticky; top:0; height:100vh; display:flex; flex-direction:column;
-  padding:16px 12px;
+  /* align-self:flex-start là BẮT BUỘC: mặc định flex item bị kéo giãn (stretch)
+     cao bằng cả body, mà đã cao bằng khung chứa thì sticky không còn khoảng nào
+     để bám -> vẫn trôi. Cố định 100vh rồi tự cuộn bên trong nếu menu dài. */
+  position:sticky; top:0; align-self:flex-start; height:100vh; overflow-y:auto;
+  display:flex; flex-direction:column;
+  padding:16px 12px; box-shadow:2px 0 12px rgba(111,90,156,.18);
 }
 .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:#fff;
   padding:6px 8px 16px}
-.logo{width:32px;height:32px;border-radius:9px;background:var(--accent);
-  display:grid;place-items:center;font-weight:800;font-size:13px;color:#fff}
+.logo{width:32px;height:32px;border-radius:10px;background:#fff;color:var(--accent);
+  display:grid;place-items:center;font-weight:800;font-size:13px;
+  box-shadow:0 3px 10px rgba(80,50,100,.18)}
 .bname{font-weight:700;font-size:15px}
 .nav{display:flex;flex-direction:column;gap:2px}
 .nav-item{
@@ -205,27 +228,32 @@ a{color:var(--accent)}
   color:var(--side-tx);text-decoration:none;font-size:14px;font-weight:500;
 }
 .nav-item:hover{background:var(--side-on);color:#fff}
-.nav-item.on{background:var(--side-on);color:#fff;font-weight:600;
-  box-shadow:inset 3px 0 0 var(--accent)}
+.nav-item.on{background:#fff;color:var(--accent);font-weight:650;
+  box-shadow:0 3px 10px rgba(80,50,100,.18)}
 .ico{width:19px;height:19px;flex:0 0 auto}
 .side-foot{margin-top:auto;font-size:11px;color:var(--side-tx);opacity:.6;padding:8px}
 
 /* ---------- khung phải ---------- */
 .main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh}
+/* Thanh trên + tab + nội dung: nền chạy hết bề ngang, còn CHỮ thì căn giữa theo
+   cùng một khung 1280px — trước đây chỉ .content bị giới hạn bề rộng mà không
+   có margin auto nên cả trang dồn về mép trái khi màn hình rộng. */
 .topbar{
   position:sticky;top:0;z-index:6;background:var(--card);
-  border-bottom:1px solid var(--border);padding:14px 26px;
+  border-bottom:1px solid var(--border);
+  padding:14px max(26px, calc((100% - 1280px) / 2));
   display:flex;align-items:center;gap:16px;flex-wrap:wrap;
 }
 .page-head{min-width:0}
 .topbar h1{font-size:18px;margin:0;font-weight:650}
 .page-sub{color:var(--sub);font-size:12.5px;margin-top:2px}
 .page-actions{margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.content{padding:22px 26px 40px;width:100%;max-width:1280px}
-.content.full{padding:0;max-width:none;flex:1;min-height:0;display:flex}
+.content{padding:22px 26px 40px;width:100%;max-width:1280px;margin-inline:auto}
+.content.full{padding:0;max-width:none;margin-inline:0;flex:1;min-height:0;display:flex}
 
 /* ---------- tab con ---------- */
-.tabs{display:flex;gap:6px;padding:10px 26px 0;background:var(--card);
+.tabs{display:flex;gap:6px;background:var(--card);
+  padding:10px max(26px, calc((100% - 1280px) / 2)) 0;
   border-bottom:1px solid var(--border);flex-wrap:wrap}
 .tab{padding:8px 14px;border-radius:8px 8px 0 0;text-decoration:none;
   color:var(--sub);font-size:13.5px;font-weight:500;border-bottom:2px solid transparent;
@@ -234,7 +262,7 @@ a{color:var(--accent)}
 .tab.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:650}
 
 /* ---------- thành phần chung ---------- */
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
   padding:16px;box-shadow:var(--shadow)}
 .intro{color:var(--sub);font-size:13px;margin:0 0 14px}
 .grp{font-size:12px;margin:22px 0 8px;color:var(--sub);text-transform:uppercase;
@@ -244,8 +272,10 @@ a{color:var(--accent)}
 .empty{background:var(--card);border:1px dashed var(--border);border-radius:12px;
   padding:24px;color:var(--sub);text-align:center}
 .flash{padding:9px 12px;border-radius:9px;font-size:13px;margin-bottom:14px}
-.flash.ok{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok)}
-.flash.err{background:color-mix(in srgb,var(--err) 14%,transparent);color:var(--err)}
+.flash.ok{background:var(--ok-bg);color:var(--ok);
+  border:1px solid color-mix(in srgb,var(--ok) 25%,transparent)}
+.flash.err{background:var(--err-bg);color:var(--err);
+  border:1px solid color-mix(in srgb,var(--err) 25%,transparent)}
 .note{color:var(--sub);font-size:12px;margin:10px 0 0}
 code{font-family:ui-monospace,Consolas,monospace;font-size:12px;background:var(--bg);
   padding:1px 5px;border-radius:5px}
@@ -253,8 +283,10 @@ code{font-family:ui-monospace,Consolas,monospace;font-size:12px;background:var(-
   background:var(--card);color:var(--text);border-radius:8px;padding:7px 13px;
   text-decoration:none;font-size:13px;font-weight:550;cursor:pointer}
 .btn:hover{border-color:var(--accent);color:var(--accent)}
-.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn.primary:hover{opacity:.9;color:#fff}
+.btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));
+  border-color:transparent;color:#fff;box-shadow:0 3px 10px rgba(80,50,100,.18)}
+.btn.primary:hover{filter:brightness(1.06);color:#fff}
+.btn:hover{border-color:var(--accent);color:var(--accent);background:var(--soft)}
 select,.inp{border:1px solid var(--border);background:var(--card);color:var(--text);
   border-radius:8px;padding:7px 10px;font:inherit;font-size:13px}
 .live{display:inline-flex;align-items:center;gap:5px}
@@ -318,10 +350,13 @@ summary{cursor:pointer}
 
 /* ---------- bảng điều khiển ---------- */
 .stats{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
-.stat{background:var(--card);border:1px solid var(--border);border-radius:12px;
+.stat{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
   padding:14px 16px;box-shadow:var(--shadow)}
+.stat.link:hover{border-color:var(--accent);box-shadow:var(--shadow-lg)}
 .s-label{color:var(--sub);font-size:12px;font-weight:550}
-.s-value{font-size:24px;font-weight:700;margin-top:4px;letter-spacing:-.02em}
+/* Số to tô màu nhấn cho bảng điều khiển đỡ đơn điệu (tone ok/err/warn ghi đè) */
+.s-value{font-size:24px;font-weight:700;margin-top:4px;letter-spacing:-.02em;
+  color:var(--accent)}
 .s-hint{color:var(--sub);font-size:11.5px;margin-top:3px}
 .stat.ok .s-value{color:var(--ok)}
 .stat.err .s-value{color:var(--err)}
@@ -382,6 +417,45 @@ a.name:hover{color:var(--accent)}
 .badge.platform{text-transform:capitalize;color:var(--accent)}
 .unread{background:var(--err);color:#fff;border-radius:20px;font-size:11px;
   font-weight:700;padding:2px 8px;min-width:20px;text-align:center}
+/* Nhãn cảm xúc tiêu cực do worker nền quét (app/workers/sentiment.py) */
+.neg{background:var(--err-bg);color:var(--err);border-radius:20px;
+  border:1px solid color-mix(in srgb,var(--err) 35%,transparent);
+  font-size:11px;font-weight:700;padding:2px 8px}
+/* Khung quản lý từ khoá tiêu cực (màn Cảm xúc) */
+.kwadd{display:flex;gap:8px;padding:14px 14px 0}
+.kwadd .inp{flex:1}
+.kwlist{display:flex;flex-wrap:wrap;gap:6px;padding:12px 14px}
+.kwchip{display:inline-flex;align-items:center;gap:6px;background:var(--soft);
+  border:1px solid var(--border);border-radius:20px;padding:3px 6px 3px 11px;
+  font-size:12.5px}
+.kwchip button{border:0;background:transparent;color:var(--sub);cursor:pointer;
+  font-size:15px;line-height:1;padding:0 4px;border-radius:50%}
+.kwchip button:hover{background:var(--err);color:#fff}
+/* Thu gọn danh sách từ khoá về ĐÚNG 1 hàng; bấm mới bung ra đầy đủ */
+.kwbox{border-top:1px solid var(--border);margin-top:12px}
+.kwbox summary{display:flex;align-items:center;gap:10px;cursor:pointer;
+  padding:10px 14px;list-style:none}
+.kwbox summary::-webkit-details-marker{display:none}
+.kwbox summary:hover{background:var(--soft)}
+.kwsum-n{flex:none;font-weight:600;font-size:13px}
+/* Phần dư của dòng xem trước bị cắt bằng "…" thay vì xuống dòng */
+.kwsum-preview{flex:1;min-width:0;color:var(--sub);font-size:12.5px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kwsum-more{flex:none;color:var(--accent);font-size:12.5px;font-weight:600}
+.kwbox[open] .kwsum-preview{visibility:hidden}   /* mở ra rồi thì khỏi lặp lại */
+.kwbox[open] .kwsum-more::after{content:" ▲"}
+.kwbox:not([open]) .kwsum-more::after{content:" ▼"}
+.kwbulk{border-top:1px solid var(--border);padding:12px 14px 14px}
+.kwbulk-lbl{font-size:12.5px;color:var(--sub)}
+.kwbulk textarea{width:100%;margin-top:6px;font-family:inherit;resize:vertical}
+/* Dòng danh sách ở màn Cảm xúc: nội dung bên trái, nút mở hội thoại bên phải */
+.link-row{display:flex;align-items:center;gap:12px}
+.link-row .info{flex:1;min-width:0}
+.link-row .btn{flex:none}
+.tblwrap{overflow-x:auto}
+.tbl td.nowrap{white-space:nowrap}
+.tbl td.snip{color:var(--sub);max-width:420px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
 .snippet{color:var(--sub);font-size:13px;margin-top:2px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 /* Tên page trên thẻ hội thoại — CHỈ hiện ở hộp thư gộp (page_id=ALL) */
