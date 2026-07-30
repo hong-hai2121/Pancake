@@ -59,10 +59,24 @@ class Settings(BaseSettings):
     # thì lọt câu lạc đề. 0 = tắt (để GPT tự quyết hoàn toàn).
     rag_suggest_threshold: float = 0.55
 
-    # --- Supabase / Postgres ---
+    # --- Chọn nơi lưu dữ liệu ---
+    # postgres = Postgres + pgvector cài trên máy này (mặc định).
+    # supabase = Postgres trên cloud của Supabase (REST + pgvector).
+    # Đổi backend KHÔNG đổi code: mọi hàm trong app/db/queries.py giữ nguyên
+    # chữ ký, chỉ định tuyến sang lớp cài đặt tương ứng (xem app/db/backends/).
+    db_backend: str = "postgres"            # postgres | supabase
+
+    # --- Postgres local (dùng khi db_backend=postgres) ---
+    # Chuỗi kết nối tới Postgres ĐÃ CÀI extension pgvector. Bảng + index HNSW tự
+    # tạo ở lần chạy đầu (xem app/db/backends/postgres_be.py).
+    database_url: str = "postgresql://postgres:postgres@127.0.0.1:5432/pancakebot"
+    pg_pool_min: int = 1                # số connection giữ sẵn trong pool
+    pg_pool_max: int = 10               # trần connection (đủ cho uvicorn 1 tiến trình)
+    pg_connect_timeout: float = 10.0    # giây chờ xin connection từ pool
+
+    # --- Supabase (dùng khi db_backend=supabase) ---
     supabase_url: str = ""      # https://<project>.supabase.co
     supabase_key: str = ""      # SECRET key (chạy phía server, bỏ qua RLS)
-    database_url: str = ""      # chuỗi kết nối Postgres trực tiếp (hiện chưa dùng)
 
 
 @lru_cache

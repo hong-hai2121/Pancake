@@ -10,11 +10,85 @@ trả lời tự nhiên.
 > Pancake** định kỳ. Thư mục `app/webhook/` cũ đã bỏ; `app/messenger/` (Facebook
 > Send API) vẫn giữ nhưng hiện không dùng.
 
+## 🚀 Chạy dự án
+
+Dự án cần **2 thứ chạy song song**: DB (Postgres trong Docker) và app (uvicorn).
+
+### Mỗi ngày — 2 lệnh
+
+```powershell
+cd d:\Python\pancakebot
+docker compose up -d                                   # 1) bật DB
+$env:PYTHONUTF8=1                                      #    log tiếng Việt không lỗi font
+python -m uvicorn app.main:app --reload --port 8000    # 2) chạy app (Ctrl+C để dừng)
+```
+
+Mở **http://127.0.0.1:8000** → tự nhảy vào Bảng điều khiển. Ô *"Nơi lưu dữ liệu"*
+phải hiện `postgres` màu xanh; nếu đỏ là DB chưa lên.
+
+> `docker compose up -d` chạy 1 lần là container tự bật lại mỗi khi mở máy
+> (`restart: unless-stopped`), nên thường chỉ cần lệnh uvicorn. Chạy lại lệnh
+> Docker cũng vô hại — đang chạy rồi thì nó không làm gì.
+
+### Lần đầu trên máy mới — 4 bước
+
+```powershell
+# 1) Thư viện Python (cần Python 3.11+)
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+
+# 2) Docker Desktop — cài xong PHẢI khởi động lại máy
+winget install Docker.DockerDesktop
+
+# 3) Khoá API: copy mẫu rồi điền PANCAKE_ACCESS_TOKEN + OPENAI_API_KEY
+copy .env.example .env
+
+# 4) Bật DB — bảng + index HNSW TỰ TẠO ở lần chạy đầu, không phải chạy SQL tay
+docker compose up -d
+docker compose ps            # phải thấy pancakebot-pg ... (healthy)
+```
+
+Xong bước 4 thì quay lại phần "Mỗi ngày" ở trên. Có sẵn dữ liệu ở Supabase hoặc
+file `.db` cũ thì chép sang bằng
+[script chuyển dữ liệu](#chuyển-dữ-liệu-sẵn-có-sang).
+
+**Linux / macOS**: giống hệt, chỉ đổi `.venv\Scripts\activate` → `source
+.venv/bin/activate`, bỏ dòng `$env:PYTHONUTF8=1`, và cài Docker theo cách của
+hệ điều hành đó.
+
+### Dừng lại
+
+| Muốn gì                       | Lệnh                                                   |
+| ------------------------------- | -------------------------------------------------------- |
+| Tắt app                       | `Ctrl + C` ở cửa sổ đang chạy uvicorn              |
+| Tắt DB (dữ liệu **vẫn còn**) | `docker compose down`                                  |
+| Tắt DB +**XOÁ SẠCH** dữ liệu | `docker compose down -v`                               |
+
+### Cổng nào đang dùng gì
+
+| Địa chỉ                        | Là gì                                                |
+| ---------------------------------- | ------------------------------------------------------ |
+| http://127.0.0.1:8000            | App (uvicorn) — giao diện chính                     |
+| `127.0.0.1:5432`                 | Postgres (container `pancakebot-pg`)                   |
+| http://127.0.0.1:8080/?pgsql=db  | Adminer xem DB —**không tự bật**, xem [Xem dữ liệu trong DB](#xem-dữ-liệu-trong-db) |
+
+### Chạy không lên thì xem đây
+
+| Triệu chứng                                          | Nguyên nhân & cách sửa                                  |
+| -------------------------------------------------------- | ------------------------------------------------------------ |
+| `Không nối được Postgres (...)`                        | DB chưa bật →`docker compose up -d`, kiểm tra `docker compose ps` thấy `healthy` |
+| Treo ~10 giây rồi mới báo lỗi                        | `DATABASE_URL` đang để `localhost` → đổi thành **`127.0.0.1`** (Docker chỉ nghe IPv4) |
+| `error while attaching to network` / lệnh docker đứng | Docker Desktop chưa chạy — mở app Docker Desktop lên trước |
+| `[Errno 10048] address already in use`                 | Cổng 8000 đang bận → chạy `--port 8001`                 |
+| `ModuleNotFoundError: psycopg`                         | Chưa `pip install -r requirements.txt` (hoặc quên `activate` venv) |
+| `KHÔNG có extension pgvector`                          | Đang dùng Postgres cài tay thiếu pgvector → dùng image `pgvector/pgvector:pg17` trong [docker-compose.yml](docker-compose.yml) |
+
 ## Kiến trúc
 
 ```
 pancakebot/
-├── .env                    # khóa API + Supabase (KHÔNG commit — đã gitignore)
+├── .env                    # khóa API + chọn nơi lưu dữ liệu (KHÔNG commit — đã gitignore)
 ├── .env.example            # mẫu các biến cần khai báo
 ├── requirements.txt
 │
@@ -47,9 +121,13 @@ pancakebot/
 │   │   ├── retriever.py     # embed câu hỏi -> tìm cặp Q&A gần nhất
 │   │   └── llm.py           # gọi LLM (OpenAI gpt-4o-mini)
 │   │
-│   ├── db/
-│   │   ├── client.py        # kết nối Supabase (REST)
-│   │   └── queries.py       # đọc/ghi bảng + insert kèm embedding + gọi RPC tìm kiếm
+│   ├── db/                  # đổi nơi lưu dữ liệu bằng DB_BACKEND, không sửa code
+│   │   ├── queries.py       # ⭐ API dùng chung — mọi nơi khác chỉ import từ đây
+│   │   ├── client.py        # tạo kết nối (pool psycopg / client Supabase)
+│   │   └── backends/
+│   │       ├── base.py         # hợp đồng chung mọi backend phải theo
+│   │       ├── postgres_be.py  # ⭐ Postgres + pgvector trên máy này (mặc định)
+│   │       └── supabase_be.py  # Postgres cloud, tìm kiếm qua RPC (dự phòng)
 │   │
 │   └── messenger/
 │       └── send_api.py      # Facebook Send API (giữ lại, hiện không dùng)
@@ -59,9 +137,13 @@ pancakebot/
 │   ├── distill.py           # dùng LLM chưng cất chat -> cặp hỏi–đáp
 │   └── run_ingest.py        # chat thô (data/chats.json) -> distill -> embed -> lưu
 │
+├── docker-compose.yml       # ⭐ bật Postgres + pgvector trên máy: docker compose up -d
+│
 ├── scripts/
-│   ├── rpc_match.sql        # ⭐ tạo 2 hàm RPC tìm kiếm vector — PHẢI chạy 1 lần
-│   └── init_db.sql          # ⚠ CŨ — schema thật trong Supabase đã khác (xem dưới)
+│   ├── init_pg.sql          # schema Postgres local (app tự tạo, file này để tham khảo)
+│   ├── rpc_match.sql        # 2 hàm RPC tìm kiếm — CHỈ cần cho backend supabase
+│   ├── migrate_supabase_to_postgres.py  # chép dữ liệu cloud -> Postgres máy mình
+│   └── migrate_sqlite_to_postgres.py    # cứu dữ liệu từ file .db cũ (chạy 1 lần)
 │
 └── supabase/functions/
     └── embed-insert/        # Edge Function — KHÔNG dùng (đã chọn chạy ở máy mình)
@@ -73,9 +155,10 @@ pancakebot/
 Tin khách ──> bot/brain ──┬── bot/flow (kịch bản) ──> trả lời luôn nếu khớp
                           │
                           └── rag/retriever ─embed─> rag/embedding
-                                    │  RPC match_documents (Postgres tính cosine)
+                                    │  tìm cosine trên hoi_thoai_mau (vector 1536)
                                     ▼
-                              db/queries ──> Supabase (hoi_thoai_mau, vector 1536)
+                              db/queries ──> db/backends ──┬─ postgres (pgvector, máy mình)
+                                    │                      └─ supabase (pgvector qua RPC)
                                     │
                                     ▼
                        bot/prompt ──> rag/llm (gpt-4o-mini) ──> câu trả lời
@@ -89,29 +172,37 @@ Tin khách ──> bot/brain ──┬── bot/flow (kịch bản) ──> tr�
 | `LLM_PROVIDER=openai` · `LLM_MODEL=gpt-4o-mini`                                                  | Não LLM                                                                                         |
 | `OPENAI_API_KEY`                                                                                    | Key OpenAI (dùng cho cả LLM và embedding)                                                     |
 | `EMBEDDING_PROVIDER=openai` · `EMBEDDING_MODEL=text-embedding-3-small` · `EMBEDDING_DIM=1536` | Vector hóa;**1536 phải khớp cột `embedding` trong DB**                               |
-| `SUPABASE_URL` · `SUPABASE_KEY`                                                                  | `SUPABASE_KEY` = **secret key** `sb_secret_...` (chạy phía server)                   |
+| `DB_BACKEND=postgres` · `DATABASE_URL`                                                           | Nơi lưu dữ liệu. Mặc định Postgres trên máy:`postgresql://postgres:postgres@127.0.0.1:5432/pancakebot` (**127.0.0.1**, không phải `localhost`) |
+| `SUPABASE_URL` · `SUPABASE_KEY`                                                                  | Chỉ cần khi`DB_BACKEND=supabase`. `SUPABASE_KEY` = **secret key** `sb_secret_...` (chạy phía server) |
 | `RAG_TOP_K=5` · `RAG_MATCH_THRESHOLD=0.0`                                                        | Số kết quả lấy về · ngưỡng lọc (đặt`0.6` để "không đủ giống thì trả rỗng") |
 | `RAG_SUGGEST_THRESHOLD=0.55`                                                                        | **Ngưỡng chặn (code)** cho nút **"Gợi ý trả lời"**: bỏ câu mẫu có similarity < ngưỡng **TRƯỚC** khi gọi LLM; không câu nào đạt → NO_MATCH luôn, **không tốn 1 lượt gọi model**. **PHẢI tune** trên bộ test thật (xem điểm ở trang Thử tin nhắn). `0` = tắt |
-| `FB_*`, `GEMINI_API_KEY`, `DATABASE_URL`                                                        | Không bắt buộc (luồng Graph/Gemini hiện không dùng)                                       |
+| `FB_*`, `GEMINI_API_KEY`                                                                        | Không bắt buộc (luồng Graph/Gemini hiện không dùng)                                       |
 
-## Database (Supabase)
+## Database — schema 3 bảng
 
-> ⚠️ **`scripts/init_db.sql` đã lỗi thời** — dùng schema chuẩn dưới đây thay thế.
-> Điểm khác chính: `embedding` là **`vector(1536)`**, `hoi_thoai_mau` không có
-> `noi_dung`, `trang_thai_khach` dùng `page_id`/`psid`/`ngu_canh`. Code bám theo
-> schema này. Các bảng đã được tạo sẵn trong project.
+> Schema dưới đây là **nguồn sự thật**: `embedding` là **`vector(1536)`**,
+> `hoi_thoai_mau` **không** có `noi_dung`, `trang_thai_khach` dùng
+> `page_id`/`psid`/`ngu_canh`. Backend `postgres` **tự tạo** đúng schema này ở
+> lần chạy đầu (bản SQL đọc được ở [scripts/init_pg.sql](scripts/init_pg.sql));
+> trên Supabase thì các bảng đã tạo sẵn từ trước.
 
 Tóm tắt cột: `kich_ban`(ten_kich_ban, buoc, noi_dung, dieu_kien, buoc_tiep,
 **embedding vector(1536)**, meta) · `hoi_thoai_mau`(cau_hoi, cau_tra_loi, nguon,
 **embedding vector(1536)**, meta) · `trang_thai_khach`(page_id, psid, kich_ban,
 buoc_hien_tai, ngu_canh, trang_thai).
 
-### Phân chia công việc: nhập ở Python, tìm ở Postgres
+> **Tên cột, kiểu cột giống hệt nhau ở cả hai backend** — cùng là Postgres +
+> pgvector, chỉ khác chỗ đặt (máy mình / cloud) và cách nói chuyện (psycopg /
+> REST).
+
+### Phân chia công việc: nhập ở Python, tìm ở tầng lưu trữ
 
 | Việc                                      | Chạy ở đâu                    | Chi tiết                                                        |
 | ------------------------------------------ | --------------------------------- | ---------------------------------------------------------------- |
-| **Nhập dữ liệu** (tạo embedding) | **Python** (máy chạy app) | Gọi OpenAI lấy vector rồi`INSERT` qua PostgREST             |
-| **Tìm kiếm** (so sánh vector)     | **Postgres**                | Gọi RPC — dùng toán tử cosine`<=>` + index **HNSW** |
+| **Nhập dữ liệu** (tạo embedding) | **Python** (máy chạy app) | Gọi OpenAI lấy vector rồi`INSERT` — giống nhau ở mọi backend |
+| **Tìm kiếm** (so sánh vector)     | **Postgres**                | Cosine`<=>` + index **HNSW** chạy trong DB · `postgres`: SQL thẳng qua psycopg · `supabase`: phải bọc trong hàm RPC |
+
+Phần dưới của mục này chỉ áp dụng cho `DB_BACKEND=supabase`.
 
 Vì PostgREST **không hỗ trợ toán tử pgvector** trực tiếp, phép so sánh phải bọc
 trong hàm SQL rồi gọi qua RPC (đúng cách n8n làm). Hai hàm cần có:
@@ -124,11 +215,15 @@ trong hàm SQL rồi gọi qua RPC (đúng cách n8n làm). Hai hàm cần có:
 Cả hai nhận `(query_embedding vector(1536), match_count int, match_threshold float)`.
 Tạo bằng cách chạy [scripts/rpc_match.sql](scripts/rpc_match.sql) trong SQL Editor.
 
+> Backend `postgres` **không cần** 2 hàm này: nối thẳng bằng psycopg nên chạy
+> được `<=>` ngay trong câu `SELECT` (xem `_match()` trong
+> [postgres_be.py](app/db/backends/postgres_be.py)) — cùng công thức, cùng index.
+
 **`match_threshold`** = ngưỡng lọc: chỉ trả dòng có `similarity >= ngưỡng`.
 Đặt qua `RAG_MATCH_THRESHOLD` trong `.env` (mặc định `0.0` = không lọc).
 Đặt `0.6` để có hành vi "không đủ giống thì trả **rỗng**" giống n8n.
 
-### Schema chuẩn (chạy trong Supabase → SQL Editor)
+### Schema chuẩn (backend `postgres`: app tự tạo; backend `supabase`: chạy trong SQL Editor)
 
 ```sql
 -- Bật extension vector TRƯỚC mọi cột vector(...)
@@ -196,25 +291,165 @@ create trigger trg_trang_thai_khach_updated
     for each row execute function set_updated_at();
 ```
 
-## Supabase — file nào làm chức năng gì
+## Nơi lưu dữ liệu: Postgres + pgvector trên máy này
+
+| `DB_BACKEND`             | Lưu ở đâu                | Cần cài gì                   | Tìm kiếm tương đồng                             |
+| -------------------------- | -------------------------- | ------------------------------ | ------------------------------------------------- |
+| `postgres` **(mặc định)** | Postgres ngay trên máy | Docker (image có sẵn pgvector) | pgvector + index **HNSW**, SQL thẳng qua psycopg |
+| `supabase`               | Postgres cloud             | tài khoản Supabase           | pgvector + index HNSW, gọi qua **RPC**          |
+
+Cả hai đều là Postgres + pgvector nên **cùng schema, cùng công thức cosine, cùng
+kết quả**; đổi qua lại chỉ bằng 1 dòng `.env` (backend `sqlite` cũ đã bị bỏ).
+
+### Bật DB — 3 bước
+
+```powershell
+# 1) Bật Postgres (lần đầu tự tải image ~150 MB, dữ liệu nằm trong volume `pgdata`)
+docker compose up -d
+
+# 2) .env trỏ vào đó (đã có sẵn giá trị này trong .env.example)
+#    DB_BACKEND=postgres
+#    DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/pancakebot
+
+# 3) Chạy app — bảng + index HNSW TỰ TẠO ở lần chạy đầu
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+> ⚠️ **Dùng `127.0.0.1`, đừng dùng `localhost`.** Docker chỉ nghe trên IPv4
+> (`127.0.0.1:5432`), còn Windows phân giải `localhost` ra `::1` **trước** →
+> kết nối treo cho tới khi hết `connect_timeout`. Pool đã đặt sẵn timeout để
+> báo lỗi rõ thay vì đứng im, nhưng cứ để `127.0.0.1` cho khỏi chậm.
+
+Kiểm tra nhanh: `docker compose ps` (phải thấy `healthy`), rồi vào
+`/bang-dieu-khien` — ô "Nơi lưu dữ liệu" hiện `postgres` kèm chuỗi kết nối đã che
+mật khẩu.
+
+### Xem dữ liệu trong DB
+
+```powershell
+# 1) Dòng lệnh — nhanh nhất, không cài gì
+docker compose exec db psql -U postgres -d pancakebot
+#    trong psql:  \dt   \d hoi_thoai_mau   select id, cau_hoi from hoi_thoai_mau;   \q
+
+# 2) Giao diện web Adminer (đã cấu hình sẵn, chỉ bật khi cần)
+docker compose --profile ui up -d
+#    mở http://127.0.0.1:8080/?pgsql=db  · user postgres / pass postgres / db pancakebot
+#    tắt: docker compose stop adminer
+```
+
+Cách 3: dùng app desktop ([DBeaver](https://dbeaver.io/), pgAdmin, TablePlus) hoặc
+extension PostgreSQL của VS Code — kết nối `127.0.0.1:5432`, db `pancakebot`,
+user/pass `postgres`/`postgres`.
+
+> Cột `embedding` có 1536 số nên nhìn bằng mắt vô nghĩa; muốn xem cho gọn thì
+> `select id, cau_hoi, vector_dims(embedding) from hoi_thoai_mau;`
+
+Không dùng Docker cũng được: cài Postgres 14+ bất kỳ **đã có extension pgvector**,
+tạo 1 database rỗng rồi sửa `DATABASE_URL` cho khớp. Nếu user của app không có
+quyền `create extension` thì chạy tay [scripts/init_pg.sql](scripts/init_pg.sql)
+bằng tài khoản superuser trước.
+
+### Lệnh Docker hay dùng
+
+| Lệnh                          | Làm gì                                                       |
+| ------------------------------- | -------------------------------------------------------------- |
+| `docker compose up -d`        | Bật DB (tự bật lại khi mở máy nhờ`restart: unless-stopped`) |
+| `docker compose ps`           | Xem trạng thái — phải thấy `healthy`                     |
+| `docker compose logs -f db`   | Xem log Postgres                                              |
+| `docker compose down`         | Tắt container —**dữ liệu vẫn còn** trong volume `pgdata` |
+| `docker compose down -v`      | Tắt +**XOÁ SẠCH** dữ liệu                              |
+| `docker compose exec db psql -U postgres -d pancakebot` | Mở psql để chạy SQL tuỳ ý              |
+
+Sao lưu / khôi phục:
+
+```powershell
+docker compose exec -T db pg_dump -U postgres pancakebot > data\backup.dump.sql
+docker compose exec -T db psql -U postgres -d pancakebot < data\backup.dump.sql
+```
+
+### Chuyển dữ liệu sẵn có sang
+
+```powershell
+# Từ Supabase cloud xuống (cần SUPABASE_URL + SUPABASE_KEY trong .env)
+python -m scripts.migrate_supabase_to_postgres           # xem trước, KHÔNG ghi
+python -m scripts.migrate_supabase_to_postgres --apply   # ghi thật
+
+# Từ file .db của backend sqlite cũ (chạy 1 lần rồi xoá được cả file .db)
+python -m scripts.migrate_sqlite_to_postgres --apply
+```
+
+Chi tiết đáng lưu ý về 2 script:
+
+- Embedding được chép **nguyên vẹn**, không gọi lại OpenAI → không tốn tiền, không
+  lệch vector so với nguồn.
+- **Không chép `id`**: cột id ở Postgres là `generated always as identity` nên để
+  DB tự cấp (3 bảng không tham chiếu id lẫn nhau).
+- Chạy lại lần nữa thì **dừng** kèm cảnh báo thay vì nhân đôi dữ liệu; muốn chép đè
+  thì thêm `--force` (`truncate ... restart identity` rồi chép lại).
+- Không phụ thuộc `DB_BACKEND` đang đặt là gì — script tự dựng backend nó cần.
+
+**Quay ngược về cloud**: đổi `DB_BACKEND=supabase` trong `.env`. Dữ liệu trên
+Supabase vẫn còn nguyên, script chỉ **đọc** chứ không đụng vào nguồn.
+
+> ⚠️ **DB local ≠ chạy offline.** `embed()` vẫn gọi OpenAI qua mạng ở cả hai
+> backend, vì Postgres không tự sinh được vector. Muốn offline hẳn phải đổi sang
+> embedding model chạy trên máy — việc riêng, kèm đổi số chiều vector
+> (`EMBEDDING_DIM`, và phải tạo lại bảng vì cột là `vector(1536)` cố định).
+
+### Đã kiểm chứng trên máy (30/07/2026)
+
+Chạy thật, không phải suy đoán — Postgres **17.10** + pgvector **0.8.6** trong
+container `pancakebot-pg`:
+
+| Kiểm tra                          | Kết quả                                                                 |
+| ---------------------------------- | ------------------------------------------------------------------------- |
+| Tự tạo schema ở lần chạy đầu | 3 bảng đúng chuẩn, 2 index **HNSW**`vector_cosine_ops`, trigger `updated_at` chạy |
+| Chép dữ liệu từ file`.db` cũ | 3 cặp hỏi–đáp sang nguyên vẹn, **không gọi lại OpenAI**            |
+| Tìm kiếm vector                  | Lấy embedding dòng id=1 làm truy vấn →`1.000000 / 0.466082 / 0.391866`, đúng thứ tự |
+| Ngưỡng lọc                      | `threshold=0.99` → còn đúng 1 dòng                                   |
+| `kich_ban`                       | insert → match (sim `1.000000`) → delete, `meta` ra đúng `dict`     |
+| `trang_thai_khach`               | upsert 2 lần cùng`(page_id, psid)` → vẫn 1 dòng, `updated_at` tự nhảy |
+| Toàn chuỗi RAG (có OpenAI)     | `/data/thu-tin-nhan` với câu hỏi thật → embed 1536 chiều → điểm `0.511 / 0.370 / 0.283` |
+| Bảng điều khiển                | hiện`postgres` + `postgresql://postgres:***@127.0.0.1:5432/pancakebot`  |
+
+Điểm `0.466082` **trùng khít** con số đo được trên Supabase trước đây — cùng
+pgvector, cùng công thức nên cùng kết quả.
+
+### Vì sao Postgres local thay cho SQLite
+
+- **Cùng một DB với bản cloud** — cùng pgvector, cùng schema, cùng SQL. Hết cảnh
+  hai đường code tìm kiếm khác nhau (numpy vs `<=>`) phải đối chiếu cho khớp.
+- **Tìm kiếm chạy trong DB**, có index **HNSW** thật: không phải kéo toàn bộ vector
+  lên RAM tiến trình app như bản SQLite, nên **không có trần ~100k dòng** nữa.
+- Đổi lên/xuống cloud chỉ là đổi `DATABASE_URL`, dữ liệu `pg_dump` mang đi được.
+
+**Thêm backend mới**: viết 1 file trong
+[app/db/backends/](app/db/backends/) cài đủ các phương thức của
+[base.py](app/db/backends/base.py), khai báo 1 dòng ở `_REGISTRY` trong
+[app/db/backends/\_\_init\_\_.py](app/db/backends/__init__.py). Không đụng tới
+`queries.py` hay bất kỳ chỗ nào khác trong app.
+
+## Tầng dữ liệu — file nào làm chức năng gì
 
 ### 1. Kết nối & cấu hình
 
 | File                                | Chức năng                                                                                                                           |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `.env`                            | Khai báo`SUPABASE_URL`, `SUPABASE_KEY` (**secret key** `sb_secret_...`), `RAG_TOP_K`, `RAG_MATCH_THRESHOLD`          |
-| [app/config.py](app/config.py)       | Đọc`.env` → `settings.supabase_url`, `settings.supabase_key`, `settings.rag_*`                                             |
-| [app/db/client.py](app/db/client.py) | `get_supabase()` — tạo client REST dùng chung (cache 1 lần). `get_pg_pool()` nối thẳng Postgres, **chưa cài đặt** |
+| `.env`                            | `DB_BACKEND` (`postgres`\|`supabase`); `DATABASE_URL` hoặc `SUPABASE_URL`+`SUPABASE_KEY` (**secret key** `sb_secret_...`); `RAG_TOP_K`, `RAG_MATCH_THRESHOLD` |
+| [app/config.py](app/config.py)       | Đọc`.env` → `settings.db_backend`, `settings.database_url`, `settings.pg_pool_*`, `settings.supabase_*`, `settings.rag_*`                                             |
+| [app/db/backends/\_\_init\_\_.py](app/db/backends/__init__.py) | `get_backend()` — chọn backend theo `DB_BACKEND` (cache 1 lần). Import nằm trong lambda nên chỉ nạp thư viện của backend đang dùng |
+| [app/db/client.py](app/db/client.py) | `get_pg_pool()` — pool psycopg dùng chung (`dict_row` + `autocommit`, an toàn theo thread). `get_supabase()` — client REST dùng chung |
 
 ### 2. Đọc/ghi dữ liệu — [app/db/queries.py](app/db/queries.py) (file trung tâm)
 
-Mọi truy vấn Supabase đều nằm ở đây.
+Mọi nơi khác trong app **chỉ** import từ đây; file này không biết dữ liệu nằm ở đâu,
+nó chỉ chuẩn hoá tham số + gọi embedding rồi đẩy xuống backend. Chữ ký các hàm giữ
+nguyên như trước khi tách lớp, nên brain / flow / session / ui / ingestion không phải sửa gì.
 
 | Nhóm                      | Hàm                                                    | Chức năng                                                                                                                               |
 | -------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Tiện ích                 | `_pgvector()`                                         | Đổi list số → chuỗi`[a,b,c]` để Postgres hiểu là `vector`                                                                    |
-|                            | `_rpc()`                                              | Gọi 1 hàm RPC; báo lỗi rõ nếu hàm chưa được tạo                                                                               |
-|                            | `_count()`                                            | Đếm số dòng (tuỳ chọn: chỉ dòng đã có embedding)                                                                               |
+| Tiện ích                 | `_count()`                                            | Đếm số dòng (tuỳ chọn: chỉ dòng đã có embedding)                                                                               |
+|                            | `_k_and_threshold()`                                  | Điền mặc định `rag_top_k` / `rag_match_threshold` từ settings                                                                     |
 | `kich_ban`               | `load_scripts()`                                      | Lấy toàn bộ kịch bản (cho bot)                                                                                                       |
 |                            | `list_scripts()`                                      | Danh sách cho giao diện (**không** kéo cột embedding cho nhẹ)                                                                 |
 |                            | `insert_script()`                                     | **Python gọi OpenAI** tạo embedding → `INSERT`                                                                                 |
@@ -222,19 +457,27 @@ Mọi truy vấn Supabase đều nằm ở đây.
 | `hoi_thoai_mau`          | `list_qa_pairs()`                                     | Danh sách cặp hỏi–đáp cho giao diện                                                                                                |
 |                            | `insert_qa()`                                         | Embed câu hỏi →`INSERT` (text gốc lưu vào `meta.embed_text`)                                                                    |
 |                            | `delete_qa()`                                         | Xoá 1 cặp theo id                                                                                                                       |
-| **Tìm kiếm (RPC)** | `search_similar()`                                    | Gọi`match_documents` → **Postgres tính**, trả Q&A gần nhất                                                                  |
-|                            | `search_similar_scripts()`                            | Gọi`match_kich_ban` → bước kịch bản gần nhất                                                                                    |
-|                            | `debug_search()`                                      | Gọi cả 2 RPC + số liệu chẩn đoán (cho tab "Thử tin nhắn")                                                                        |
+| **Tìm kiếm**       | `search_similar()`                                    | Q&A gần nhất — postgres: `SELECT ... <=>`; supabase: RPC`match_documents`                                                          |
+|                            | `search_similar_scripts()`                            | Bước kịch bản gần nhất — `SELECT ... <=>` / RPC`match_kich_ban`                                                                     |
+|                            | `debug_search()`                                      | Tìm ở cả 2 bảng + số liệu chẩn đoán (cho tab "Thử tin nhắn")                                                                     |
 | `trang_thai_khach`       | `load_customer_state(page_id, psid)` / `upsert_customer_state(...)` | Phiên khách theo **(page_id, psid)** — ✅ đã căn đúng schema thật (`kich_ban`/`buoc_hien_tai`/`ngu_canh`/`trang_thai`), upsert `on_conflict=page_id,psid` |
 
-### 3. SQL phải chạy trên Supabase
+### 3. Backend — [app/db/backends/](app/db/backends/)
+
+| File                                                    | Chức năng                                                                                                                    |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| [base.py](app/db/backends/base.py)                       | Hợp đồng chung: vector đi vào/ra là`list[float]`, cột JSON là `dict`, `match_*` trả list đã xếp hạng kèm `similarity` |
+| [postgres_be.py](app/db/backends/postgres_be.py)         | `_schema()` tự tạo bảng+index HNSW ở lần chạy đầu; ghi vector bằng `%s::vector`, `meta` bọc `Jsonb`; `_match()` chạy `<=>` thẳng trong SQL |
+| [supabase_be.py](app/db/backends/supabase_be.py)         | `_pgvector()` đổi list số → chuỗi `[a,b,c]`; `_rpc()` gọi hàm SQL, báo lỗi rõ nếu chưa tạo hàm            |
+
+### 4. File SQL
 
 | File                                          | Chức năng                                                                                                                                             |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [scripts/rpc_match.sql](scripts/rpc_match.sql) | Tạo 2 hàm RPC`match_documents` + `match_kich_ban`. **Bắt buộc chạy 1 lần** trong SQL Editor, nếu không phần tìm kiếm sẽ báo lỗi |
-| [scripts/init_db.sql](scripts/init_db.sql)     | ⚠️**CŨ, không dùng** — schema chuẩn nằm ở mục *Database* phía trên                                                                  |
+| [scripts/init_pg.sql](scripts/init_pg.sql)     | Schema cho Postgres local. **Không bắt buộc chạy** — app tự tạo y hệt; để đọc tham khảo hoặc tạo tay khi user app thiếu quyền `create extension` |
+| [scripts/rpc_match.sql](scripts/rpc_match.sql) | Tạo 2 hàm RPC`match_documents` + `match_kich_ban`. **Chỉ** cần cho `DB_BACKEND=supabase`, chạy 1 lần trong SQL Editor |
 
-### 4. Nơi gọi tới Supabase
+### 5. Nơi gọi tới tầng dữ liệu
 
 | File                                                                                                       | Dùng để làm gì                                                                                                             |
 | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
@@ -242,7 +485,7 @@ Mọi truy vấn Supabase đều nằm ở đây.
 | [app/rag/retriever.py](app/rag/retriever.py)                                                                | Gọi`search_similar()` lấy ngữ cảnh cho bot trả lời                                                                      |
 | [ingestion/load_scripts.py](ingestion/load_scripts.py) · [ingestion/run_ingest.py](ingestion/run_ingest.py) | Nạp hàng loạt từ file JSON vào 2 bảng                                                                                     |
 
-### 5. File Supabase KHÔNG dùng
+### 6. File Supabase KHÔNG dùng
 
 | File                                                                                | Ghi chú                                                                                                                                                                                |
 | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -251,32 +494,18 @@ Mọi truy vấn Supabase đều nằm ở đây.
 > **Nhắc lại:** embedding **luôn** do OpenAI sinh ra — Postgres không tự tạo được.
 > Khác biệt chỉ là *ai gọi OpenAI*: hiện tại là **Python ở máy bạn**.
 
-## Cài đặt
+## Cài đặt & chạy
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate            # Windows PowerShell
-pip install -r requirements.txt
+Các bước đầy đủ nằm ở mục [🚀 Chạy dự án](#-chạy-dự-án) đầu file. Vài điểm bổ sung:
 
-copy .env.example .env            # rồi điền PANCAKE_ACCESS_TOKEN, OPENAI_API_KEY, SUPABASE_*
-```
-
-## Chạy server
-
-### Windows (PowerShell)
-
-```powershell
-$env:PYTHONUTF8=1     # để log/HTML tiếng Việt hiển thị đúng trên console
-python -m uvicorn app.main:app --reload --port 8000
-```
-
-Thấy `Uvicorn running on http://127.0.0.1:8000` là chạy. Dừng bằng `Ctrl + C`.
-
-### Linux / macOS
-
-```bash
-uvicorn app.main:app --reload --port 8000
-```
+- Gói DB duy nhất cần cho backend mặc định là `psycopg[binary,pool]` (đã có trong
+  `requirements.txt`) — **không** cần `pgvector` hay `numpy` phía Python.
+- Muốn dùng cloud thay vì DB trên máy: đặt `DB_BACKEND=supabase`, điền
+  `SUPABASE_URL` + `SUPABASE_KEY`, và chạy
+  [scripts/rpc_match.sql](scripts/rpc_match.sql) một lần trong SQL Editor. Lúc đó
+  không cần Docker.
+- `--reload` chỉ hợp lúc phát triển (sửa code là tự khởi động lại). Chạy lâu dài
+  thì bỏ `--reload` đi cho đỡ tốn RAM.
 
 ## Các endpoint
 
@@ -305,8 +534,9 @@ uvicorn app.main:app --reload --port 8000
 | `POST /data/hoi-thoai/{id}/xoa`                                   | Xoá 1 cặp hỏi–đáp                                 |
 
 > **Chỉ dùng phần xem Pancake?** Chỉ cần `PANCAKE_ACCESS_TOKEN` là các trang
-> `/pancake/...` chạy được — chưa cần OpenAI/Supabase. Não RAG + gửi liên quan
-> mới cần thêm `OPENAI_API_KEY` và `SUPABASE_*`.
+> `/pancake/...` chạy được — chưa cần OpenAI hay DB. Não RAG + gửi liên quan mới
+> cần thêm `OPENAI_API_KEY` và một nơi lưu dữ liệu (`DATABASE_URL` với
+> `DB_BACKEND=postgres`, hoặc `SUPABASE_*`).
 
 Trang danh sách người nhắn và khung chat **tự cập nhật** (auto-refresh 8–10 giây)
 mà không cần F5; bấm vào một người để xem hội thoại và trả lời tay.
@@ -414,7 +644,7 @@ chat mỗi 8 giây — không phải F5.
 **Hai nguồn dữ liệu, không trộn nhau:**
 
 ```
-Pancake API (pages.fm)          Supabase (Postgres + pgvector)
+Pancake API (pages.fm)          DB bot (Postgres máy mình HOẶC Supabase)
    tin nhắn, khách hàng            kịch bản, hội thoại mẫu, vector
         │                                    │
         ├── Bảng điều khiển ◄────────────────┤   (đọc cả 2 để hiện số liệu)
@@ -425,16 +655,16 @@ Pancake API (pages.fm)          Supabase (Postgres + pgvector)
 ```
 
 Nói ngắn: **Tin nhắn + Khách hàng** chỉ nói chuyện với Pancake, **Dữ liệu bot**
-chỉ nói chuyện với Supabase/OpenAI, **Bảng điều khiển** đọc cả hai.
+chỉ nói chuyện với DB bot + OpenAI, **Bảng điều khiển** đọc cả hai.
 
 #### 📊 Bảng điều khiển — `/bang-dieu-khien`
 
 |                            |                                                                                                                                                                                                                                                                                                          |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Lấy dữ liệu**   | 3 khối**độc lập**: (1) Pancake — `list_pages()` + `list_conversations(limit=50)`; (2) Supabase — 4 lệnh đếm; (3) cấu hình — đọc `settings` từ `.env`, không gọi mạng                                                                                                     |
+| **Lấy dữ liệu**   | 3 khối**độc lập**: (1) Pancake — `list_pages()` + `list_conversations(limit=50)`; (2) DB bot — 4 lệnh đếm (qua `db/queries._count`, backend nào cũng chạy); (3) cấu hình — đọc `settings` từ `.env`, không gọi mạng                                                                                                     |
 | **Xử lý**          | Tin chưa đọc =**cộng dồn** `unread_count` của mọi hội thoại. Khách gần nhất = hội thoại đầu danh sách (đã sắp mới→cũ), đổi sang chữ "5 phút trước". Tên chủ token lấy bằng cách **giải mã payload JWT tại chỗ** (`token_owner()`), không gọi API |
 | **Đếm kiểu nhẹ** | `_count()` dùng `select("id", count="exact").limit(1)` — Postgres trả về **con số**, không kéo dòng nào về. Cột `embedding` (1536 số/dòng) không bao giờ bị tải                                                                                                             |
-| **Chịu lỗi**       | Mỗi khối`try/except` riêng: Pancake hỏng thì khối Supabase vẫn hiện bình thường, lỗi chỉ đỏ trong đúng ô của nó — không 500 trắng màn                                                                                                                                          |
+| **Chịu lỗi**       | Mỗi khối`try/except` riêng: Pancake hỏng thì khối DB bot vẫn hiện bình thường, lỗi chỉ đỏ trong đúng ô của nó — không 500 trắng màn                                                                                                                                          |
 | **Ghi gì?**         | **Không ghi gì cả**, thuần đọc                                                                                                                                                                                                                                                               |
 | **File**             | [app/ui/routes.py](app/ui/routes.py) → `dashboard()` · [app/ui/webview.py](app/ui/webview.py) → `render_dashboard()`                                                                                                                                                                                |
 
@@ -448,7 +678,7 @@ chỉ nói chuyện với Supabase/OpenAI, **Bảng điều khiển** đọc c�
 | **Nội dung tin**  | Ưu tiên`original_message`; nếu không có thì bóc thẻ HTML nhưng **giữ xuống dòng** (`<br>`, `</div>` → `\n`). Ảnh/sticker hiện thumbnail, tệp khác hiện link                                                                                                                                                          |
 | **Tự cập nhật** | JS gọi 2 endpoint mảnh:`/tin-nhan/fragment/list` (10s) và `/tin-nhan/fragment/thread` (8s). Nhận HTML về **so với lần trước, khác mới thay** → không nháy màn, không mất ảnh đang tải. Nhịp đầu chỉ "mồi" để so sánh. Lỗi mạng trả 502 → JS **bỏ qua nhịp đó**, giữ nguyên nội dung đang xem |
 | **Gửi trả lời** | `POST /tin-nhan/tra-loi` → `send_message()` → `POST .../messages?action=reply_inbox` → redirect **303** về đúng hội thoại kèm `?sent=1` (F5 không gửi lại tin)                                                                                                                                                             |
-| **Ghi gì?**       | ⚠️**Gửi tin THẬT tới khách** — chỉ khi bạn tự bấm nút Gửi. Không ghi Supabase                                                                                                                                                                                                                                                    |
+| **Ghi gì?**       | ⚠️**Gửi tin THẬT tới khách** — chỉ khi bạn tự bấm nút Gửi. Không ghi vào DB bot                                                                                                                                                                                                                                                    |
 | **File**           | [app/ui/routes.py](app/ui/routes.py) → `inbox()` · [app/pancake/client.py](app/pancake/client.py) → `list_conversations` / `get_conversation` / `send_message`                                                                                                                                                                              |
 
 #### 👥 Khách hàng — `/khach-hang`
@@ -458,7 +688,7 @@ chỉ nói chuyện với Supabase/OpenAI, **Bảng điều khiển** đọc c�
 | **Lấy dữ liệu** | **Cùng một nguồn với màn Tin nhắn** — `list_conversations(limit=100)`. Mỗi hội thoại INBOX = một khách                                                                                                                                              |
 | **Xử lý**        | Đổ thẳng vào bảng: tên,`fb_id`, `message_count`, `unread_count`, `updated_at` (đổi sang "2 ngày trước", di chuột hiện giờ chính xác). Nút *Nhắn tin* dựng sẵn link kèm `conv_id` + `customer_id` để bấm là mở đúng khung chat |
 | **Ô tìm nhanh**  | Lọc**ngay tại trình duyệt** bằng JS trên bảng đã tải (khớp tên + FB ID) — gõ không gọi lại server, không tốn thêm 1 lượt Pancake                                                                                                            |
-| **Ghi gì?**       | Không ghi. ⚠️ Danh sách khách**chưa được lưu vào Supabase** — mỗi lần mở là đọc mới từ Pancake, nên chưa có lịch sử/ghi chú theo khách                                                                                                 |
+| **Ghi gì?**       | Không ghi. ⚠️ Danh sách khách**chưa được lưu vào DB bot** — mỗi lần mở là đọc mới từ Pancake, nên chưa có lịch sử/ghi chú theo khách                                                                                                 |
 | **File**           | [app/ui/routes.py](app/ui/routes.py) → `customers()` · [app/ui/webview.py](app/ui/webview.py) → `render_customers()`                                                                                                                                               |
 
 #### 🧠 Dữ liệu bot — `/data/...` (3 tab)
@@ -508,7 +738,7 @@ Phục Hồi Giấc Ngủ Từ Gốc**):
 
 ## Nạp/ import dữ liệu có embedding
 
-Có 3 cách, dùng cách nào cũng **tự tạo embedding** rồi ghi Supabase.
+Có 3 cách, dùng cách nào cũng **tự tạo embedding** rồi ghi vào DB bot (Postgres local hay Supabase tuỳ `DB_BACKEND`).
 
 ### 1. Giao diện web (dễ nhất — tự nhập tay)
 
@@ -553,12 +783,13 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 | **Công tắc BẬT/TẮT từng page** (Bảng điều khiển → danh sách page)             | ✅ đã verify — TẮT chặn lấy+gửi tin của page đó ở MỌI nơi (guard trong `pancake/client`), lưu `page_switches.json`, mặc định BẬT |
 | **Hộp thư GỘP mọi page đang BẬT** (`/tin-nhan?page_id=ALL`)                    | ✅ đã verify — gộp 20 dòng từ nhiều page, mở/gửi đúng page thật, chế độ xem 1 page không đổi |
 | RAG: embed, retrieve, LLM gpt-4o-mini, insert kèm embedding, distill            | ✅ đã verify                                                |
-| Tìm kiếm vector chạy**trong Postgres** (RPC + index HNSW)               | ✅ đã verify (RPC đã tạo trên DB)                       |
+| Tìm kiếm vector chạy**trong Postgres** (pgvector + index HNSW)          | ✅ đã verify trên **Postgres local** (`SELECT ... <=>` thẳng, không cần RPC) |
 | Ngưỡng lọc`match_threshold` (lạc đề → trả rỗng)                       | ✅ đã verify (0.6 → 0 dòng với câu lạc đề)           |
 | Giao diện tự nhập**kịch bản** &**hội thoại mẫu** (`/data`) | ✅ đã verify (thêm/xoá/báo lỗi trùng)                  |
 | Nút**"Gợi ý trả lời"** trong khung chat (human-in-the-loop, không tự gửi) | ✅ đã verify (test mock: happy-path, thiếu tin, lỗi LLM không 500) |
 | Bot**tự động poll + gợi ý/trả lời** hội thoại                     | 🟡 đã chốt thiết kế,**chưa code**                 |
 | Phiên khách`trang_thai_khach` (session.py)                                   | ✅ đã căn theo schema thật (page_id/psid/ngu_canh) — round-trip verify trên bảng thật |
+| **DB Postgres + pgvector chạy local** (Docker, thay hẳn SQLite)              | ✅ đã verify end-to-end 30/07/2026 — tự tạo schema, chép dữ liệu cũ, tìm kiếm khớp số cũ |
 | Kịch bản Bảng 1 (`bot/flow`)                                                | ⏳ khung, chưa cài logic khớp                              |
 | Tab**Thử tin nhắn** kèm câu trả lời của bot                         | ✅ đã verify (tick ô để gọi gpt-4o-mini)                |
 | Tab**Thử API** (Postman nội bộ — xem JSON gốc Pancake)              | ✅ đã verify (gọi thật 200/406, che token, đổi public API) |
@@ -585,7 +816,7 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
    tin**) → câu gợi ý **đổ sẵn vào ô trả lời để người sửa rồi tự bấm Gửi**
    (human-in-the-loop).
    **Logic (GPT là người chọn, không phải cosine):**
-   1. Nhúng câu hỏi → Supabase lấy **top 5** câu mẫu tương đồng (`hoi_thoai_mau`),
+   1. Nhúng câu hỏi → DB lấy **top 5** câu mẫu tương đồng (`hoi_thoai_mau`),
       **không cắt cứng** theo điểm cosine.
    2. Gửi câu hỏi + **top 3** câu mẫu (có đánh SỐ) lên GPT để GPT **CHỌN** câu phù
       hợp nhất (trả về SỐ). Câu gửi khách lấy **NGUYÊN VĂN** câu trả lời đã duyệt —
@@ -659,6 +890,21 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
 - **Pancake trả `429 Too many requests`** (trang hiện 502) — gọi API quá dồn; chờ
   vài giây rồi tải lại.
 - **Tiếng Việt lỗi font trên console** — đặt `$env:PYTHONUTF8=1` trước khi chạy.
+- **"Không nối được Postgres (...)"** — DB chưa bật hoặc sai địa chỉ. Chạy
+  `docker compose up -d` rồi `docker compose ps` (phải `healthy`). Nếu container
+  đang chạy mà vẫn lỗi/treo lâu: **`DATABASE_URL` để `localhost`** — đổi sang
+  `127.0.0.1` (Docker chỉ nghe IPv4, Windows phân giải `localhost` ra `::1` trước).
+- **"Postgres đang chạy nhưng KHÔNG có extension pgvector"** — dùng đúng image
+  `pgvector/pgvector:pg17` trong [docker-compose.yml](docker-compose.yml), hoặc cài
+  pgvector cho bản Postgres tự cài. Nếu user app không có quyền `create extension`
+  thì chạy [scripts/init_pg.sql](scripts/init_pg.sql) bằng superuser.
+- **`expected 1536 dimensions, not 768`** khi thêm dữ liệu — `EMBEDDING_MODEL` /
+  `EMBEDDING_DIM` không khớp cột `vector(1536)`. Đặt lại về
+  `text-embedding-3-small` + `1536`; đã lỡ đổi model thì phải **nhúng lại** toàn bộ
+  (đổi số chiều = phải tạo lại bảng).
+- **Cổng 5432 đã bị chiếm** (Postgres khác đang chạy) — sửa cổng ngoài trong
+  [docker-compose.yml](docker-compose.yml) (ví dụ `"127.0.0.1:5433:5432"`) rồi đổi
+  `DATABASE_URL` cho khớp.
 
 ## 🔒 Kế hoạch: mở API cho phần mềm ngoài gọi vào
 
@@ -685,10 +931,10 @@ biết URL đều có thể:
 
 - 📖 Đọc toàn bộ **tin nhắn khách hàng thật** (`/pancake/.../conversations/...`)
 - 📨 **Gửi tin nhắn tới khách hàng thật** qua `/reply` — không hoàn tác được
-- 🗑️ Thêm/xoá dữ liệu Supabase qua `/data/...`
+- 🗑️ Thêm/xoá dữ liệu bot qua `/data/...`
 - 💸 **Tiêu tiền OpenAI** của bạn bằng cách spam endpoint gọi LLM
 
-Vì token Pancake / key OpenAI / secret Supabase đều nằm phía server, người lạ gọi
+Vì token Pancake / key OpenAI / secret DB đều nằm phía server, người lạ gọi
 endpoint là đang dùng **danh nghĩa và ví tiền của bạn**.
 → Thứ tự đúng: **thêm bảo mật trước, rồi mới mở ra ngoài.**
 
@@ -766,6 +1012,11 @@ Việc cần quyết khi làm: dùng **một key chung** hay **mỗi bên gọi 
 
 ## Chạy 24/7 (dùng máy này làm server)
 
+0. **DB tự bật cùng máy:** container `pancakebot-pg` để `restart: unless-stopped`
+   nên tự chạy lại khi khởi động — chỉ cần bật **Docker Desktop** khi đăng nhập
+   (Settings → General → *Start Docker Desktop when you sign in*). App khởi động
+   trước DB cũng không sao: chỉ báo lỗi ở trang dùng DB, hết `docker compose ps`
+   thấy `healthy` là chạy tiếp bình thường.
 1. **Không cho máy ngủ:** Settings → Power → Sleep = *Never* (khi cắm điện).
 2. **Phơi ra Internet** (nếu cần gọi từ xa) bằng **Cloudflare Tunnel**:
    ```powershell

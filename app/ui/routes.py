@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.bot.brain import extract_qa_candidates, suggest_reply
 from app.config import settings
+from app.db.backends import backend_name
 from app.db.queries import _count, insert_qa
 from app.pancake.client import (
     ALL_PAGES,
@@ -145,13 +146,25 @@ async def dashboard(page_id: str = "") -> HTMLResponse:
             "kb_total": _count("kich_ban"),
             "kb_emb": _count("kich_ban", only_with_embedding=True),
         }
-    except Exception as exc:  # lỗi Supabase/cấu hình — không làm hỏng cả trang
+    except Exception as exc:  # lỗi DB/cấu hình — không làm hỏng cả trang
         errors["data"] = str(exc)
+
+    # Nơi lưu dữ liệu: postgres = DB trên máy, supabase = Postgres cloud.
+    backend = backend_name()
+    if backend == "postgres":
+        from app.db.backends.postgres_be import dsn_summary
+
+        db_ready, db_target = bool(settings.database_url), dsn_summary()
+    else:
+        db_ready = bool(settings.supabase_url and settings.supabase_key)
+        db_target = settings.supabase_url
 
     config = {
         "pancake_token": bool(settings.pancake_access_token),
         "openai_key": bool(settings.openai_api_key),
-        "supabase": bool(settings.supabase_url and settings.supabase_key),
+        "db_backend": backend,
+        "db_ready": db_ready,
+        "db_target": db_target,
         "llm_model": settings.llm_model,
         "embedding_model": settings.embedding_model,
         "embedding_dim": settings.embedding_dim,

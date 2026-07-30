@@ -1,0 +1,66 @@
+# Postgres + pgvector chạy ngay trên máy này (DB_BACKEND=postgres).
+#
+#   docker compose up -d        # bật (lần đầu tự tải image ~150 MB)
+#   docker compose ps           # xem trạng thái
+#   docker compose logs -f db   # xem log
+#   docker compose down         # tắt  (dữ liệu VẪN CÒN trong volume)
+#   docker compose down -v      # tắt + XOÁ SẠCH dữ liệu
+#
+# Image `pgvector/pgvector` = Postgres chính chủ đã cài sẵn extension pgvector,
+# nên không phải build hay copy DLL gì. Bảng + index HNSW do app tự tạo ở lần
+# chạy đầu (xem app/db/backends/postgres_be.py), khớp với DATABASE_URL:
+#
+#   DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/pancakebot
+#
+# ⚠️ 3 biến POSTGRES_* dưới đây CHỈ có tác dụng lúc tạo DB lần đầu (khi volume
+# `pgdata` còn rỗng). Sửa sau đó mà không xoá volume thì KHÔNG đổi được gì —
+# xem mục "Đổi tên DB / user / mật khẩu" trong README.
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: pancakebot-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pancakebot
+      # Tăng tốc tạo index HNSW một chút, không ảnh hưởng độ chính xác.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      # Chỉ mở trên máy này (127.0.0.1), không phơi ra LAN.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pancakebot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Giao diện web xem/sửa DB — KHÔNG tự bật (nằm trong profile `ui`), chỉ chạy
+  # khi cần cho nhẹ máy:
+  #
+  #   docker compose --profile ui up -d      # bật
+  #   docker compose stop adminer            # tắt riêng nó
+  #
+  # Mở http://127.0.0.1:8080/?pgsql=db (có `?pgsql=db` để chọn sẵn PostgreSQL,
+  # vào thẳng http://127.0.0.1:8080 thì phải tự đổi ô System từ MySQL sang).
+  # Đăng nhập: User=postgres · Password=postgres · Database=pancakebot.
+  # Server để nguyên `db` — tên service ở trên, vì Adminer nối trong mạng Docker
+  # chứ không qua 127.0.0.1 của Windows.
+  adminer:
+    image: adminer:5
+    container_name: pancakebot-adminer
+    profiles: ["ui"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

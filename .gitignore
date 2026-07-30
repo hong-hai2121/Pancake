@@ -26,3 +26,13 @@ page_switches.json
 ZPancake/server/data/*.db
 ZPancake/server/data/*.db-journal
 ZPancake/server/server.pid
+
+# DB_BACKEND=postgres: dữ liệu nằm trong volume Docker `pgdata`, không có file
+# nào trong repo. Dump tay (pg_dump) thì để ở đây và cũng không đẩy lên git.
+data/*.dump
+data/*.sql
+
+# File .db của backend sqlite CŨ (đã bỏ) — giữ tạm để chép dữ liệu sang Postgres
+data/*.db
+data/*.db-wal
+data/*.db-shm

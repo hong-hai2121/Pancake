@@ -28,6 +28,48 @@ class PancakeError(RuntimeError):
     """Lỗi khi gọi Pancake API (HTTP lỗi hoặc success=false)."""
 
 
+# --------------------------------------------------- kết nối HTTP dùng chung
+# Trước đây mỗi lời gọi tự `async with httpx.AsyncClient(...)` -> mở kết nối và
+# BẮT TAY TLS LẠI TỪ ĐẦU mỗi request. Hộp thư gộp bật N page thì mỗi nhịp
+# auto-refresh là N lần bắt tay. Dùng chung 1 client để giữ keep-alive.
+#
+# KHÔNG đặt header mặc định `Accept: application/json` ở đây: Pancake đổi hành
+# vi theo header đó (route không phải API trả 406 thay vì HTML), giữ nguyên như
+# cũ để không đổi ngầm kết quả của các endpoint đang chạy.
+_HTTP: httpx.AsyncClient | None = None
+
+# Task refresh nền (SWR). Phải GIỮ tham chiếu: asyncio chỉ giữ weak reference
+# tới task đang chạy, không giữ thì có thể bị GC dọn giữa chừng -> mất lượt
+# làm mới mà không báo lỗi gì.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def http() -> httpx.AsyncClient:
+    """Client HTTP dùng chung; tạo lười ở lần gọi đầu (trong event loop)."""
+    global _HTTP
+    if _HTTP is None or _HTTP.is_closed:
+        _HTTP = httpx.AsyncClient(
+            timeout=20,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _HTTP
+
+
+async def close_http() -> None:
+    """Đóng client dùng chung (app gọi lúc shutdown — xem app/main.py)."""
+    global _HTTP
+    if _HTTP is not None and not _HTTP.is_closed:
+        await _HTTP.aclose()
+    _HTTP = None
+
+
+def _spawn(coro) -> None:
+    """Chạy 1 coroutine nền và GIỮ tham chiếu tới khi nó xong."""
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+
+
 def _handle(resp: httpx.Response) -> dict:
     """Kiểm tra response Pancake, trả JSON dict hoặc raise PancakeError."""
     if resp.status_code != 200:
@@ -60,16 +102,14 @@ def _with_token(params: dict | None) -> dict:
 async def _get(path: str, params: dict | None = None) -> dict:
     """GET tới Pancake API, tự đính kèm access_token, trả về JSON dict."""
     query = _with_token(params)
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(_url(path), params=query)
+    resp = await http().get(_url(path), params=query)
     return _handle(resp)
 
 
 async def _post(path: str, params: dict | None = None) -> dict:
     """POST tới Pancake API (access_token + params ở query string)."""
     query = _with_token(params)
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.post(_url(path), params=query)
+    resp = await http().post(_url(path), params=query)
     return _handle(resp)
 
 
@@ -274,11 +314,10 @@ async def list_tags(page_id: str) -> dict[int, dict]:
 
     url = f"{settings.pancake_public_base_url.rstrip('/')}/pages/{pid}/tags"
     try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(
-                url, params={"page_access_token": token},
-                headers={"Accept": "application/json"},
-            )
+        resp = await http().get(
+            url, params={"page_access_token": token},
+            headers={"Accept": "application/json"},
+        )
         data = resp.json()
     except (httpx.HTTPError, ValueError):
         return {}
@@ -396,9 +435,7 @@ async def list_conversations(
         if age < _CONV_STALE:
             if not entry.get("refreshing"):          # tránh nhiều refresh chồng nhau
                 entry["refreshing"] = True
-                asyncio.create_task(
-                    _refresh_conversations(key, page_id, msg_type, limit)
-                )
+                _spawn(_refresh_conversations(key, page_id, msg_type, limit))
             return entry["data"]                      # SWR: trả bản cũ ngay
 
     # Không có cache hoặc đã quá cũ -> gọi đồng bộ (lần đầu chịu delay).
@@ -485,7 +522,7 @@ async def list_all_conversations(
         if age < _ALL_STALE:
             if not entry.get("refreshing"):
                 entry["refreshing"] = True
-                asyncio.create_task(_refresh_all_conversations(key, msg_type, limit))
+                _spawn(_refresh_all_conversations(key, msg_type, limit))
             return entry["data"]
 
     items = await _fetch_all_conversations(msg_type, limit)
@@ -529,11 +566,11 @@ async def raw_call(
     url = f"{base.rstrip('/')}/{path.lstrip('/')}"
 
     started = time.monotonic()
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.request(
-            method.upper(), url, params=query,
-            headers={"Accept": "application/json"},
-        )
+    resp = await http().request(
+        method.upper(), url, params=query,
+        headers={"Accept": "application/json"},
+        timeout=30,          # dò tay có thể chạm endpoint chậm hơn luồng thường
+    )
     elapsed_ms = (time.monotonic() - started) * 1000
 
     try:

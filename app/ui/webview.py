@@ -209,7 +209,14 @@ def render_dashboard(
         '<div class="card">'
         + kv("Pancake token", pill(config["pancake_token"]))
         + kv("OpenAI API key", pill(config["openai_key"]))
-        + kv("Supabase", pill(config["supabase"]))
+        + kv(
+            "Nơi lưu dữ liệu",
+            pill(config["db_ready"], yes=config["db_backend"], no="chưa cấu hình")
+            + (
+                f' <code>{escape(config["db_target"])}</code>'
+                if config["db_target"] else ""
+            ),
+        )
         + kv("Model trả lời", f'<code>{escape(config["llm_model"])}</code>')
         + kv("Model embedding",
              f'<code>{escape(config["embedding_model"])}</code> '
