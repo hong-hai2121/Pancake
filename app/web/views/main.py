@@ -4,10 +4,11 @@ Chỉ lo phần hiển thị — dữ liệu do `app/web/routes/main.py` lấy s
 Dùng lại các hàm dựng thẻ/bong bóng của Pancake để 2 màn chat giống hệt nhau.
 """
 
+from collections import Counter
 from html import escape
 from urllib.parse import urlencode
 
-from app.integrations.pancake.client import ALL_PAGES
+from app.integrations.pancake.client import ALL_PAGES, pages_cache_luc
 from app.integrations.pancake.client import tag_label as _tag_label
 from app.integrations.pancake.switches import is_page_enabled
 from app.web.views.pancake import (
@@ -89,6 +90,47 @@ def _page_select(
 
 
 # ---------------------------------------------------------- bảng điều khiển
+# Quyền của token Pancake trên từng page. Pancake trả sẵn `role_in_page` trong
+# danh sách page nên KHÔNG phải gọi thêm API nào để biết — đã đối chiếu thực tế:
+# `ADMINISTER` đúng bằng tập page sinh được page_access_token (và lấy được tên +
+# màu thẻ thật), mọi vai khác đều bị Pancake trả "Thiếu quyền Admin".
+_VAI_ADMIN = "ADMINISTER"
+
+
+def quyen_page(p: dict) -> tuple[str, str, str]:
+    """(khoá, nhãn ngắn, giải thích) về quyền trên 1 page.
+
+    Khoá: "vo_hieu" | "du" | "thieu" — dùng để đếm tổng và chọn màu.
+    """
+    if not p.get("is_activated"):
+        return (
+            "vo_hieu", "✕ trang bị vô hiệu hoá",
+            "Pancake báo trang này đã bị vô hiệu hoá — không lấy được tin lẫn "
+            "thẻ. Nên TẮT page để poller khỏi gọi vô ích.",
+        )
+    if str(p.get("role") or "") == _VAI_ADMIN:
+        return (
+            "du", "✓ đủ quyền (Admin)",
+            "Token có quyền Admin: sinh được page_access_token nên màn Tin nhắn "
+            "hiện được TÊN + MÀU thẻ thật.",
+        )
+    return (
+        "thieu", "⚠ thiếu quyền Admin",
+        f'Vai hiện tại: {p.get("role") or "không rõ"}. Đọc/gửi tin vẫn bình '
+        "thường, chỉ KHÔNG sinh được page_access_token nên thẻ chỉ hiện dạng "
+        '"Thẻ #171" thay vì tên thật. Nhờ chủ tài khoản Pancake nâng lên Admin.',
+    )
+
+
+def _the_quyen(p: dict) -> str:
+    """Nhãn quyền hiện trong dòng page (di chuột vào có giải thích đầy đủ)."""
+    khoa, nhan, giai_thich = quyen_page(p)
+    return (
+        f'<span class="pgquyen {khoa}" title="{escape(giai_thich)}">'
+        f"{escape(nhan)}</span>"
+    )
+
+
 def _dashboard_page_list(pages: list[dict], loi_page: dict | None = None) -> str:
     """Panel danh sách page hiện NGAY trên bảng điều khiển (ẩn, bấm ô stat mới mở).
 
@@ -104,6 +146,7 @@ def _dashboard_page_list(pages: list[dict], loi_page: dict | None = None) -> str
     loi_page = loi_page or {}
     rows = ""
     for p in pages:
+        quyen_html = _the_quyen(p)
         pid = escape(str(p.get("id", "")))
         on = is_page_enabled(p.get("id", ""))
         # Chỉ cảnh báo page ĐANG BẬT: page đã tắt thì poller không hỏi nữa, lỗi
@@ -148,7 +191,8 @@ def _dashboard_page_list(pages: list[dict], loi_page: dict | None = None) -> str
             <div class="rbody">
               <div class="name">{escape(p.get("name") or "(không tên)")}
                 {trang_thai}</div>
-              <div class="rmeta">ID {pid} · {escape(p.get("platform") or "")}</div>
+              <div class="rmeta">ID {pid} · {escape(p.get("platform") or "")}
+                · {quyen_html}</div>
               {canh_bao}
             </div>
             {switch}
@@ -163,6 +207,33 @@ def _dashboard_page_list(pages: list[dict], loi_page: dict | None = None) -> str
     loi_html = (
         f' · <span style="color:var(--warn);font-weight:700">⚠ {loi_total} LỖI</span>'
         if loi_total else ""
+    )
+    # Tổng kết quyền: nhìn 1 dòng biết ngay bao nhiêu page hiện được tên thẻ thật.
+    # Kèm mốc cập nhật + nút hỏi lại tay: danh sách page được cache 15 phút cho
+    # đỡ tốn lượt gọi Pancake, nên phải nói rõ số đang xem cũ tới đâu.
+    dem = Counter(quyen_page(p)[0] for p in pages)
+    luc = pages_cache_luc()
+    quyen_tong = (
+        f'<div class="pgquyen-sum">Quyền lấy thẻ: '
+        f'<span class="pgquyen du">✓ {dem["du"]} đủ quyền</span>'
+        f'<span class="pgquyen thieu">⚠ {dem["thieu"]} thiếu quyền Admin</span>'
+        + (f'<span class="pgquyen vo_hieu">✕ {dem["vo_hieu"]} bị vô hiệu hoá</span>'
+           if dem["vo_hieu"] else "")
+        + '<span class="rmeta" style="margin:0">— chỉ page đủ quyền mới hiện được '
+          'TÊN + MÀU thẻ thật ở màn Tin nhắn, còn lại hiện “Thẻ #id”.</span>'
+        # Mốc + nút gói chung 1 cụm để chúng luôn đi liền nhau khi dòng bị
+        # xuống hàng, thay vì nút rơi xuống một mình ở dòng dưới.
+        + '<span class="pgquyen-act">'
+          '<span class="pgquyen-luc" id="pgquyen-luc">'
+          + (f'cập nhật lúc {escape(luc.strftime("%H:%M:%S %d/%m"))}' if luc
+             else "chưa lấy lần nào")
+          + "</span>"
+          + '<button type="button" class="btn" id="btn-lam-moi-page" '
+            'title="Hỏi lại Pancake ngay. Bình thường danh sách page + quyền được '
+            'nhớ 15 phút để khỏi gọi API thừa; bấm nút này khi vừa được nâng quyền '
+            'Admin hoặc vừa thêm/bớt page.">⟳ Cập nhật trạng thái</button>'
+          + "</span>"
+        + "</div>"
     )
     return (
         '<section id="ds-page" class="ds-page"><div class="card">'
@@ -179,8 +250,9 @@ def _dashboard_page_list(pages: list[dict], loi_page: dict | None = None) -> str
         '<input type="hidden" name="action" value="off">'
         '<button type="submit" class="btn">Tắt tất cả</button></form>'
         '<a class="btn" href="#">Đóng</a></div>'
-        f'<ul class="list">{rows}</ul>'
-        "</div></section>"
+        + quyen_tong
+        + f'<ul class="list">{rows}</ul>'
+        + "</div></section>"
     )
 
 
@@ -312,15 +384,22 @@ def render_inbox(
     enabled_count: int = 0,
     thread_page_id: str = "",
     thread_page_name: str = "",
+    tags_by_page: dict | None = None,
 ) -> str:
     """Màn Tin nhắn 2 cột: trái = danh sách hội thoại, phải = khung chat.
 
     `merged` — hộp thư GỘP mọi page đang BẬT (`page_id` = ALL). Khi đó mỗi thẻ
     hội thoại tự mang `page_id` thật của nó, còn `thread_page_id` là page của
     hội thoại đang mở bên phải (dùng để gửi trả lời / gợi ý cho đúng page).
+
+    `tags_meta` — tên/màu thẻ của page ĐANG XEM, cho thanh lọc thẻ.
+    `tags_by_page` — cùng dữ liệu nhưng theo từng page, cho pill thẻ trên mỗi
+    hội thoại; chế độ gộp phải dùng bản này vì mỗi dòng một page khác nhau.
     """
     # Thẻ là dữ liệu RIÊNG của từng page (cùng số id ở 2 page = 2 thẻ khác nhau)
-    # nên hộp thư gộp không lọc thẻ — gộp lại sẽ dán nhãn sai.
+    # nên hộp thư gộp không lọc thẻ — gộp lại sẽ dán nhãn sai. Pill trên từng
+    # hội thoại thì vẫn hiện tên bình thường: `tags_by_page` tra theo page thật
+    # của chính hội thoại đó nên không có chuyện lẫn thẻ giữa hai page.
     if merged:
         tags_facet, active_tag, tags_meta = [], "", {}
     lhead_label = (
@@ -342,7 +421,8 @@ def render_inbox(
         'Bật lại ở <a href="/bang-dieu-khien#ds-page">Bảng điều khiển</a>.</p>'
         if merged and not enabled_count
         else render_recent_list(
-            convs, page_id, "INBOX", mode="inbox", active=conv_id, tag=active_tag
+            convs, page_id, "INBOX", mode="inbox", active=conv_id, tag=active_tag,
+            tags_by_page=tags_by_page,
         )
     )
     left = (
@@ -1004,6 +1084,31 @@ _DASHBOARD_JS = """
         .catch(function(){ btn.disabled = false; });
     });
   }
+  // Nút "⟳ Cập nhật trạng thái": hỏi lại Pancake NGAY (bỏ qua cache 15 phút).
+  // Xong thì tải lại trang để cả dòng tổng kết lẫn nhãn quyền từng page cùng
+  // khớp dữ liệu mới — dùng location.reload() chứ không thay từng mẩu, vì
+  // reload giữ nguyên #ds-page nên panel danh sách page vẫn mở.
+  var lm = document.getElementById('btn-lam-moi-page');
+  if (lm) {
+    lm.addEventListener('click', function(){
+      var cu = lm.textContent, moc = document.getElementById('pgquyen-luc');
+      lm.disabled = true; lm.textContent = 'Đang hỏi Pancake…';
+      fetch('/bang-dieu-khien/lam-moi-page', {
+        method: 'POST', headers: {'X-Requested-With': 'fetch'}
+      })
+        .then(function(r){ return r.json().catch(function(){ return null; }); })
+        .then(function(d){
+          if (d && d.ok) { location.reload(); return; }
+          lm.disabled = false; lm.textContent = cu;
+          if (moc) moc.textContent = 'lỗi: ' + ((d && d.loi) || 'không hỏi được Pancake');
+        })
+        .catch(function(){
+          lm.disabled = false; lm.textContent = cu;
+          if (moc) moc.textContent = 'lỗi mạng, thử lại';
+        });
+    });
+  }
+
   // Bật/tắt TẤT CẢ
   var all = document.querySelectorAll('form[action="/bang-dieu-khien/page-switch-all"]');
   for (var j = 0; j < all.length; j++) {

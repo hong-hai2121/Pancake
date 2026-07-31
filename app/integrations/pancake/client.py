@@ -6,6 +6,7 @@ import binascii
 import json
 import re
 import time
+from datetime import datetime, timezone
 from html import unescape
 from pathlib import Path
 
@@ -132,8 +133,24 @@ def _normalize(page: dict, group_key: str, group_label: str) -> dict:
 # Bộ nhớ đệm danh sách page. Gần như mọi trang đều cần danh sách này (kể cả các
 # lần auto-refresh mỗi 8–10 giây), trong khi nó rất ít thay đổi. Không cache thì
 # gọi Pancake dồn dập và bị chặn (HTTP 429/5xx) khi mở nhiều tab cùng lúc.
-_PAGES_CACHE: dict = {"at": 0.0, "data": []}
-_PAGES_TTL = 60.0  # giây
+#
+# TTL để DÀI (15 phút) chứ không phải 1 phút: danh sách page, vai trò
+# (`role_in_page`) và trạng thái kích hoạt hầu như không đổi trong ngày, mà nhịp
+# tự cập nhật của màn Tin nhắn thì gọi hàm này liên tục — TTL 1 phút nghĩa là
+# đều đặn 60 lượt gọi Pancake mỗi giờ chỉ để nhận lại y hệt dữ liệu cũ. Khi cần
+# mới ngay (vừa nâng quyền Admin, vừa thêm page) thì bấm nút "Cập nhật trạng
+# thái" ở Bảng điều khiển — nó gọi `list_pages(force=True)`.
+_PAGES_CACHE: dict = {"at": 0.0, "data": [], "luc": None}
+_PAGES_TTL = 900.0  # giây (15 phút)
+
+
+def pages_cache_luc():
+    """Thời điểm (datetime) lần chót thực sự hỏi Pancake. None = chưa lần nào.
+
+    Dùng để hiện "cập nhật lúc ..." cạnh nút bấm — không có mốc này thì người
+    dùng không biết số liệu đang xem là mới hay đã cũ 15 phút.
+    """
+    return _PAGES_CACHE.get("luc")
 
 
 async def list_pages(force: bool = False) -> list[dict]:
@@ -141,7 +158,7 @@ async def list_pages(force: bool = False) -> list[dict]:
 
     Mỗi phần tử là dict đã chuẩn hóa (xem `_normalize`), gắn kèm nhóm
     (đang hoạt động / chưa kích hoạt / ẩn / không quyền).
-    Kết quả được nhớ đệm 60 giây; `force=True` để lấy mới ngay.
+    Kết quả được nhớ đệm `_PAGES_TTL` giây; `force=True` để lấy mới ngay.
     """
     now = time.monotonic()
     if not force and _PAGES_CACHE["data"] and now - _PAGES_CACHE["at"] < _PAGES_TTL:
@@ -157,6 +174,7 @@ async def list_pages(force: bool = False) -> list[dict]:
                 pages.append(_normalize(page, key, label))
 
     _PAGES_CACHE["at"], _PAGES_CACHE["data"] = now, pages
+    _PAGES_CACHE["luc"] = datetime.now(timezone.utc).astimezone()
     return pages
 
 
@@ -168,9 +186,14 @@ async def get_page(page_id: str) -> dict | None:
     return None
 
 
-# Ghi đè TÊN + MÀU thẻ thủ công. Public API cần token quyền Admin mới lấy được
-# tên/màu thẻ; khi chưa có, khai báo tay ở đây để màn Tin nhắn hiện đúng như
-# Pancake. Khóa = ID thẻ (chính là số "#id" hiện ở tab hội thoại).
+# Ghi đè TÊN + MÀU thẻ thủ công — chỉ còn là LƯỚI ĐỠ cho page KHÔNG có quyền
+# Admin (không sinh được page_access_token nên không lấy được thẻ thật). Khóa =
+# ID thẻ (chính là số "#id" hiện ở tab hội thoại).
+#
+# ⚠️ Bảng này KHÔNG theo page, mà cùng một số ID ở 2 page là 2 thẻ khác nhau —
+# nên nó xếp SAU dữ liệu thật: page nào lấy được thẻ thì luôn hiện tên thật của
+# chính page đó, khai báo ở đây không đè lên được (khai đúng cho page A sẽ dán
+# nhầm cho page B). Càng ít mục ở đây càng tốt.
 TAG_OVERRIDES: dict[int, dict] = {
     175: {"text": "Đã nhận hàng", "color": "#15AFAF"},
     # Thêm thẻ khác theo mẫu: 171: {"text": "Đã chốt đơn", "color": "#16A34A"},
@@ -180,13 +203,14 @@ TAG_OVERRIDES: dict[int, dict] = {
 def tag_label(tag_id: int, meta: dict | None = None) -> str:
     """Tên hiển thị của 1 thẻ.
 
-    Ưu tiên: TAG_OVERRIDES (khai báo tay) > public API (`meta`) > "Thẻ #id".
+    Ưu tiên: tên THẬT của page (`meta` — public API hoặc kho) > TAG_OVERRIDES
+    (khai báo tay) > "Thẻ #id".
     """
+    if meta and (meta.get(tag_id) or {}).get("text"):
+        return meta[tag_id]["text"]
     override = TAG_OVERRIDES.get(tag_id)
     if override and override.get("text"):
         return override["text"]
-    if meta and (meta.get(tag_id) or {}).get("text"):
-        return meta[tag_id]["text"]
     return "Hệ thống" if tag_id < 0 else f"Thẻ #{tag_id}"
 
 
@@ -291,29 +315,48 @@ async def ensure_page_token(page_id: str) -> str | None:
     return token
 
 
-# Cache tên thẻ theo page (thẻ gần như không đổi; tránh gọi public API mỗi request).
-_TAGS_CACHE: dict[str, tuple[float, dict[int, dict]]] = {}
-_TAGS_TTL = 300.0  # giây
+# Tên/màu thẻ lấy theo BA TẦNG, vì mỗi tầng bù đúng chỗ yếu của tầng sau:
+#
+#   1. RAM (dưới đây)     — thẻ gần như không đổi, khỏi gọi gì mỗi lần render.
+#   2. Kho `watcher.the_pancake` — bản sao bền: mất token/Pancake lỗi/vừa restart
+#      vẫn có tên thẻ mà hiện, thay vì tụt về "Thẻ #175". Cũng là nguồn DUY NHẤT
+#      của hộp thư GỘP (chế độ đó không gọi Pancake lúc render).
+#   3. Public API         — nguồn sự thật; gọi được là ghi đè lại tầng 2.
+#
+# Mỗi mục cache mang theo TTL riêng: bản lấy từ API sống lâu (5 phút), bản đọc
+# tạm từ kho sống ngắn (1 phút) để token vừa được cấp lại là thử API lại sớm.
+_TAGS_CACHE: dict[str, tuple[float, float, dict[int, dict]]] = {}
+_TAGS_TTL = 300.0      # giây — bản lấy được từ public API
+_TAGS_DB_TTL = 60.0    # giây — bản đọc tạm từ kho (API đang hỏng)
 
 
-async def list_tags(page_id: str) -> dict[int, dict]:
-    """Định nghĩa thẻ của 1 page qua public API: {tag_id: {'text', 'color'}}.
+def _luu_the_vao_kho(page_id: str, tags: dict[int, dict]) -> None:
+    """Ghi định nghĩa thẻ xuống kho. Best-effort: DB hỏng KHÔNG được làm hỏng UI."""
+    try:
+        from app.db.repositories import tag_store
 
-    Tự lấy (hoặc tự sinh) page_access_token; không có thì trả {}.
-    Lỗi mạng/token sai cũng trả {} (để màn Tin nhắn tự lùi về 'Thẻ #id').
-    """
-    pid = str(page_id)
+        tag_store.upsert_tags(page_id, tags)
+    except Exception:  # noqa: BLE001 — chạy backend supabase/DB chưa lên cũng bỏ qua
+        pass
 
-    now = time.monotonic()
-    cached = _TAGS_CACHE.get(pid)
-    if cached and now - cached[0] < _TAGS_TTL:
-        return cached[1]
 
-    token = await ensure_page_token(pid)
+def _doc_the_tu_kho(page_id: str) -> dict[int, dict]:
+    """Đọc định nghĩa thẻ đã lưu. Best-effort: lỗi -> {} (UI lùi về 'Thẻ #id')."""
+    try:
+        from app.db.repositories import tag_store
+
+        return tag_store.load_tags(page_id)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+async def _goi_api_the(page_id: str) -> dict[int, dict]:
+    """Hỏi public API định nghĩa thẻ của 1 page. Thiếu token/lỗi/sai shape -> {}."""
+    token = await ensure_page_token(page_id)
     if not token:
         return {}
 
-    url = f"{settings.pancake_public_base_url.rstrip('/')}/pages/{pid}/tags"
+    url = f"{settings.pancake_public_base_url.rstrip('/')}/pages/{page_id}/tags"
     try:
         resp = await http().get(
             url, params={"page_access_token": token},
@@ -337,8 +380,54 @@ async def list_tags(page_id: str) -> dict[int, dict]:
             "text": t.get("text") or t.get("name") or f"Thẻ #{tid}",
             "color": t.get("color") or t.get("lighten_color") or "",
         }
-    _TAGS_CACHE[pid] = (now, tags)
     return tags
+
+
+async def list_tags(page_id: str) -> dict[int, dict]:
+    """Định nghĩa thẻ của 1 page: {tag_id: {'text', 'color'}}. Ba tầng như trên.
+
+    Không bao giờ ném lỗi: hỏng cả ba tầng thì trả {} và màn Tin nhắn tự lùi về
+    'Thẻ #id'. KHÔNG cache kết quả rỗng — có vậy page vừa được cấp quyền Admin
+    mới hiện thẻ ngay lần render kế tiếp, không phải chờ hết TTL.
+    """
+    pid = str(page_id)
+
+    now = time.monotonic()
+    cached = _TAGS_CACHE.get(pid)
+    if cached and now - cached[0] < cached[1]:
+        return cached[2]
+
+    tags = await _goi_api_the(pid)
+    if tags:
+        await asyncio.to_thread(_luu_the_vao_kho, pid, tags)
+        _TAGS_CACHE[pid] = (now, _TAGS_TTL, tags)
+        return tags
+
+    # API không cho (thiếu quyền/mạng lỗi/429) -> dùng bản đã lưu.
+    tags = await asyncio.to_thread(_doc_the_tu_kho, pid)
+    if tags:
+        _TAGS_CACHE[pid] = (now, _TAGS_DB_TTL, tags)
+    return tags
+
+
+async def refresh_tags_all_pages() -> dict[str, int]:
+    """Làm tươi thẻ của mọi page CÓ THỂ lấy được -> {page_id: số thẻ}.
+
+    Worker nền gọi định kỳ. Không có bước này thì kho thẻ chỉ được ghi khi có
+    người mở màn Tin nhắn của ĐÚNG page đó — ai chỉ dùng hộp thư GỘP sẽ không
+    bao giờ thấy tên thẻ, vì chế độ gộp chỉ đọc kho.
+
+    Chỉ đụng tới page đã có page_access_token sẵn hoặc được phép tự sinh
+    (`PANCAKE_TAG_PAGE_IDS`) — page khác gọi cũng chỉ tốn lời gọi vô ích.
+    """
+    pids = sorted(_tag_page_ids() | set(_page_tokens()))
+    out: dict[str, int] = {}
+    for pid in pids:
+        _TAGS_CACHE.pop(pid, None)      # ép đi đường API, không lấy bản trong RAM
+        tags = await list_tags(pid)
+        if tags:
+            out[pid] = len(tags)
+    return out
 
 
 def _tag_ids(conv: dict) -> list[int]:
