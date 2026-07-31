@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # --- Worker nền: kéo hội thoại + quét cảm xúc (app/workers/) ---
     # Chạy suốt vòng đời server, KHÔNG phụ thuộc có ai mở trang hay không.
     inbox_poll_enabled: bool = True      # tắt = không kéo, màn Tin nhắn tự quay về gọi Pancake trực tiếp
+    # B2: poller đổ THÊM mỗi hội thoại vào crm.* (khách + định danh + hội thoại
+    # + lead tự động — FR-011). Mặc định TẮT: bật lên là CRM bắt đầu sinh
+    # khách/lead từ dữ liệu Pancake thật. Backfill kho cũ: scripts/backfill_crm_tu_watcher.py
+    crm_sync_enabled: bool = False
     # NHỊP THÍCH ỨNG theo từng page: page vừa có tin mới -> hỏi lại sau
     # `inbox_poll_interval` giây; im lặng thì giãn GẤP ĐÔI mỗi lượt cho tới trần
     # `inbox_poll_max_interval`. Nhờ vậy page bận vẫn nhanh mà page ế không đốt
@@ -89,6 +93,19 @@ class Settings(BaseSettings):
     # Thiếu 1 trong 2 = TẮT hẳn (không gửi gì, cũng không báo lỗi).
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
+
+    # --- Đăng nhập / JWT (A2 — docs/A2-DANG-NHAP.md) ---
+    # BẮT BUỘC có trong .env khi bật đăng nhập. Đổi secret = mọi phiên cũ mất
+    # hiệu lực ngay (access token cũ không giải mã được nữa).
+    jwt_secret: str = ""
+    access_token_ttl_minutes: int = 30   # JWT sống ngắn; hết hạn tự lấy lại bằng refresh
+    refresh_token_ttl_days: int = 14     # = thời hạn "Ghi nhớ đăng nhập"
+    login_max_failed: int = 5            # FR-001: sai liên tiếp ngần này lần thì khoá tạm
+    login_lock_minutes: int = 15
+    cookie_secure: bool = False          # bật True khi chạy sau HTTPS (tunnel/domain)
+    # Chỉ scripts/seed_auth.py đọc 2 biến này để tạo tài khoản admin đầu tiên.
+    admin_bootstrap_password: str = ""
+    admin_bootstrap_email: str = "admin@pancakebot.local"
 
     # --- Chọn nơi lưu dữ liệu ---
     # postgres = Postgres + pgvector cài trên máy này (mặc định).

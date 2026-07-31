@@ -8,16 +8,23 @@ router tương ứng vào đây.)
 
 import asyncio
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 
-from app.web.routes.sentiment import router as cam_xuc_router
+from app.api.v1.auth import router as auth_api_router
 from app.core.config import settings
-from app.web.routes.data import router as data_router
+from app.core.request_context import current_user
+from app.core.security import decode_access_token
 from app.integrations.pancake.client import close_http
-from app.web.routes.pancake import router as pancake_router
+from app.web.routes.auth import dat_cookie_dang_nhap
+from app.web.routes.auth import router as web_auth_router
+from app.web.routes.data import router as data_router
 from app.web.routes.main import router as ui_router
+from app.web.routes.pancake import router as pancake_router
+from app.web.routes.sentiment import router as cam_xuc_router
 
 
 @asynccontextmanager
@@ -57,8 +64,156 @@ async def lifespan(_app: FastAPI):
     await close_http()
 
 
-# Khởi tạo ứng dụng FastAPI. `title` hiển thị ở trang tài liệu tự sinh /docs.
-app = FastAPI(title="FB Sales Bot", lifespan=lifespan)
+# Khởi tạo ứng dụng FastAPI. /docs /redoc TẮT từ A2: bản đồ endpoint là thông
+# tin nội bộ, không bày cho người chưa đăng nhập (khớp "việc lẻ" TIEN-DO.md).
+app = FastAPI(title="FB Sales Bot", lifespan=lifespan, docs_url=None, redoc_url=None)
+
+
+# ---------------------------------------------------------------------------
+# EXCEPTION HANDLER CHUNG (A3): mọi ApiError (kể cả AuthError của A2) từ bất kỳ
+# tầng nào đều thành JSON envelope đúng khuôn — route không phải try/except.
+# Lỗi validate body của Pydantic cũng quy về VALIDATION_ERROR cho API.
+# ---------------------------------------------------------------------------
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+
+from app.core.errors import ApiError  # noqa: E402
+from app.core.response import err_response  # noqa: E402
+
+
+@app.exception_handler(ApiError)
+async def api_error_handler(request: Request, err: ApiError):
+    # Web form (không phải /api/) dính ApiError -> để route web tự xử đẹp hơn;
+    # rơi tới đây nghĩa là chưa xử -> vẫn trả envelope cho khỏi lộ traceback.
+    return err_response(err.code, err.message, err.errors)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_handler(request: Request, err: RequestValidationError):
+    if not request.url.path.startswith("/api/"):
+        # giữ hành vi mặc định dạng 422 đơn giản cho form web
+        return err_response("VALIDATION_ERROR", "Dữ liệu không hợp lệ")
+    loi: dict[str, str] = {}
+    for e in err.errors():
+        truong = ".".join(str(p) for p in e.get("loc", []) if p != "body") or "body"
+        loi.setdefault(truong, e.get("msg", "không hợp lệ"))
+    return err_response("VALIDATION_ERROR", "Dữ liệu không hợp lệ", loi)
+
+
+# ---------------------------------------------------------------------------
+# CỔNG ĐĂNG NHẬP (A2 — docs/A2-DANG-NHAP.md mục 3.1)
+# MỘT middleware khoá tất cả: web chưa đăng nhập -> 302 về /dang-nhap;
+# API không token -> 401 JSON. Không phải sửa từng route.
+# ---------------------------------------------------------------------------
+
+# Miễn kiểm tra: đường vào cửa + kiểm tra sống. /forgot-password cũng miễn vì
+# người quên mật khẩu thì đương nhiên chưa đăng nhập được.
+_MIEN_DANG_NHAP: frozenset[str] = frozenset({
+    "/dang-nhap",
+    "/api/v1/auth/login",
+    "/api/v1/auth/refresh",
+    "/api/v1/auth/forgot-password",
+    "/health",
+    "/favicon.ico",
+})
+
+
+@app.middleware("http")
+async def auth_gate(request: Request, call_next):
+    """Chặn từ ngoài cửa + tự làm mới access token cho web.
+
+    Access token (30') hết hạn nhưng cookie refresh còn sống -> lặng lẽ phát
+    access mới và gắn lại vào cookie của response, người dùng không bị đá ra
+    giữa chừng. Payload token đặt vào request.state.user + contextvar để
+    route/dependency/shell cùng đọc.
+    """
+    if request.url.path in _MIEN_DANG_NHAP:
+        return await call_next(request)
+
+    # 1) Access token: header Bearer (API) trước, cookie (web) sau
+    auth_header = request.headers.get("authorization", "")
+    token = (
+        auth_header[7:].strip()
+        if auth_header.lower().startswith("bearer ")
+        else request.cookies.get("access_token", "")
+    )
+    user = decode_access_token(token)
+
+    # 2) Web: access hết hạn nhưng còn refresh -> làm mới ngầm
+    lam_moi: dict | None = None
+    if not user and request.cookies.get("refresh_token"):
+        from app.services import auth_service
+        from app.services.auth_service import AuthError
+
+        try:
+            lam_moi = auth_service.refresh(
+                request.cookies["refresh_token"],
+                ip=request.client.host if request.client else None,
+                user_agent=request.headers.get("user-agent", "")[:300],
+            )
+            user = decode_access_token(lam_moi["access_token"])
+        except AuthError:
+            lam_moi = None
+
+    if not user:
+        if request.url.path.startswith("/api/"):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "success": False,
+                    "error_code": "UNAUTHORIZED",
+                    "message": "Chưa đăng nhập hoặc phiên đã hết hạn",
+                    "errors": {},
+                },
+            )
+        duong_cu = request.url.path + (
+            f"?{request.url.query}" if request.url.query else ""
+        )
+        return RedirectResponse(
+            f"/dang-nhap?next={quote(duong_cu, safe='')}", status_code=302
+        )
+
+    request.state.user = user
+    ctx_token = current_user.set(user)   # cho render_shell hiện tên + nút đăng xuất
+    try:
+        response = await call_next(request)
+    finally:
+        current_user.reset(ctx_token)
+    if lam_moi:  # gắn access mới phát vào cookie
+        dat_cookie_dang_nhap(response, lam_moi, remember=False)
+    return response
+
+
+# Đăng nhập/đăng xuất: màn /dang-nhap (web) + 6 API /api/v1/auth/* (A2).
+app.include_router(web_auth_router)
+app.include_router(auth_api_router)
+
+# A4 + A5: API nhân viên / vai trò / nhóm / nhật ký + khu web Quản trị.
+from app.api.v1.audit import router as audit_api_router  # noqa: E402
+from app.api.v1.roles import router as roles_api_router  # noqa: E402
+from app.api.v1.users import router as users_api_router  # noqa: E402
+from app.web.routes.admin import router as web_admin_router  # noqa: E402
+
+app.include_router(users_api_router)
+app.include_router(roles_api_router)
+app.include_router(audit_api_router)
+app.include_router(web_admin_router)
+
+# B3: API lead & pipeline Sale (PIPELINE-001…004, LEAD-001…011) — luật nằm ở
+# services/lead_service.py, route chỉ là lớp mỏng.
+from app.api.v1.leads import router as leads_api_router  # noqa: E402
+
+app.include_router(leads_api_router)
+
+# B1: API khách hàng 360° (CUSTOMER-001…012, IDENTITY-001/002).
+from app.api.v1.customers import router as customers_api_router  # noqa: E402
+
+app.include_router(customers_api_router)
+
+# Bộ màn CRM tạm (khung): /crm/* — cấu trúc theo danh sách màn hình, số liệu
+# thật từ schema crm; lát cắt B1…B11 làm đầy dần (xem app/web/views/crm.py).
+from app.web.routes.crm import router as web_crm_router  # noqa: E402
+
+app.include_router(web_crm_router)
 
 # Giao diện chính (menu trái): / , Bảng điều khiển, Tin nhắn, Khách hàng.
 app.include_router(ui_router)

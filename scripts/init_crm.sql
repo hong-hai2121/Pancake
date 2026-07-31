@@ -1,5 +1,11 @@
 -- ============================================================
--- CRM TIÊU HÓA — 56 bảng, dựng từ DANH-SACH-BANG-VA-QUAN-HE.md
+-- CRM TIÊU HÓA — 60 bảng
+--   56 bảng theo DANH-SACH-BANG-VA-QUAN-HE.md
+--   + handovers     (FR-090/091 · màn 24-25 · API HANDOVER-001…006)
+--   + audit_logs    (FR-180    · màn 77    · API AUDIT-001/002)
+--   + user_sessions (A2 — docs/A2-DANG-NHAP.md mục 2.2)
+--   + ref_codes     (danh mục dùng chung — màn 72 · BRD mục 14)
+-- Bốn bảng cuối không có trong ERD nhưng đặc tả bắt buộc.
 --
 -- Chạy (idempotent, chạy lại nhiều lần không sao):
 --   docker exec -i pancakebot-pg psql -U postgres -d pancakebot < scripts/init_crm.sql
@@ -121,21 +127,58 @@ comment on column teams.department is
     'sale=bán hàng · cskh=chăm sóc khách · marketing · chuyen_mon=chuyên môn/y tế · admin=vận hành';
 
 create table if not exists users (
-    id            bigint generated always as identity primary key,
-    name          text not null,
-    email         text not null unique,
-    phone         text,
-    status        text not null default 'active'
-                  check (status in ('active','inactive','suspended')),
-    team_id       bigint references teams(id) on delete set null,
-    role_id       bigint references roles(id) on delete set null,
-    password_hash text,
-    last_login_at timestamptz,
-    created_at    timestamptz not null default now(),
-    updated_at    timestamptz not null default now()
+    id                 bigint generated always as identity primary key,
+    name               text not null,
+    email              text not null unique,
+    username           text unique,
+    phone              text,
+    status             text not null default 'active'
+                       check (status in ('active','inactive','suspended')),
+    team_id            bigint references teams(id) on delete set null,
+    role_id            bigint references roles(id) on delete set null,
+    password_hash      text,
+    failed_login_count int not null default 0,
+    locked_until       timestamptz,
+    last_login_at      timestamptz,
+    created_at         timestamptz not null default now(),
+    updated_at         timestamptz not null default now()
 );
+-- DB đã tạo từ bản cũ: bổ sung cột TRƯỚC khi comment (bảng mới thì 3 lệnh bỏ qua).
+alter table users add column if not exists username           text unique;
+alter table users add column if not exists failed_login_count int not null default 0;
+alter table users add column if not exists locked_until       timestamptz;
+
 comment on column users.password_hash is
     'Thêm ngoài ERD: để trống nếu đăng nhập bằng SSO';
+comment on column users.username is
+    'A2: tên đăng nhập ngắn (vd sale01) — AUTH-001. Đăng nhập được bằng username HOẶC email';
+comment on column users.failed_login_count is
+    'A2: số lần sai liên tiếp; đăng nhập đúng thì về 0 (FR-001 khoá tạm)';
+comment on column users.locked_until is
+    'A2: sai quá số lần → khoá tới thời điểm này; hết giờ tự mở, không cần cron';
+
+-- ------------------------------------------------------------
+-- user_sessions — phiên đăng nhập (A2, docs/A2-DANG-NHAP.md mục 2.2)
+-- Thêm ngoài ERD: vừa là chỗ thu hồi refresh token khi logout, vừa là
+-- "lịch sử đăng nhập + thiết bị" mà màn 1 yêu cầu.
+-- Chỉ ghi thêm/thu hồi, không sửa nội dung → không có updated_at.
+-- ------------------------------------------------------------
+create table if not exists user_sessions (
+    id                 bigint generated always as identity primary key,
+    user_id            bigint not null references users(id) on delete cascade,
+    refresh_token_hash text not null unique,
+    ip_address         inet,
+    user_agent         text,
+    expires_at         timestamptz not null,
+    revoked_at         timestamptz,
+    last_used_at       timestamptz,
+    created_at         timestamptz not null default now()
+);
+create index if not exists idx_user_sessions_user on user_sessions(user_id);
+comment on column user_sessions.refresh_token_hash is
+    'SHA-256 của refresh token — DB không giữ token thật, lộ DB cũng không dùng lại được';
+comment on column user_sessions.revoked_at is
+    'NULL = còn hiệu lực; logout/đổi mật khẩu thì đặt giá trị';
 
 do $$
 begin
@@ -158,24 +201,42 @@ create index if not exists idx_teams_manager on teams (manager_id);
 -- ============================================================
 
 create table if not exists customers (
-    id            bigint generated always as identity primary key,
-    customer_code text unique,
-    full_name     text not null,
-    primary_phone text,
-    gender        text check (gender in ('male','female','other')),
-    birth_date    date,
-    province      text,
-    status        text not null default 'new'
-                  check (status in ('new','consulting','customer','treating',
-                                    'completed','churned','blocked')),
-    created_at    timestamptz not null default now(),
-    updated_at    timestamptz not null default now()
+    id             bigint generated always as identity primary key,
+    customer_code  text unique,
+    full_name      text not null,
+    primary_phone  text,
+    gender         text check (gender in ('male','female','other')),
+    birth_date     date,
+    province       text,
+    source         text,
+    status         text not null default 'new',
+    merged_into_id bigint references customers(id) on delete set null,
+    deleted_at     timestamptz,
+    created_at     timestamptz not null default now(),
+    updated_at     timestamptz not null default now()
 );
+-- DB tạo từ bản cũ: bổ sung cột + nới CHECK (B1)
+alter table customers add column if not exists source         text;
+alter table customers add column if not exists merged_into_id bigint references customers(id) on delete set null;
+alter table customers add column if not exists deleted_at     timestamptz;
+alter table customers drop constraint if exists customers_status_check;
+alter table customers drop constraint if exists ck_customers_status;
+alter table customers add constraint ck_customers_status
+    check (status in ('new','consulting','customer','treating',
+                      'completed','churned','blocked','merged'));
+
 comment on column customers.primary_phone is
-    'CỐ Ý không đặt UNIQUE: người nhà dùng chung số. Chỉ đánh index để tra cứu';
+    'CỐ Ý không đặt UNIQUE: người nhà dùng chung số. LUÔN lưu dạng đã chuẩn hoá '
+    '(0xxxxxxxxx — app/services/phone.py); chỉ đánh index để tra cứu';
+comment on column customers.source is 'B1/FR-020: nguồn khách (pancake/facebook/zalo/tay...)';
+comment on column customers.merged_into_id is
+    'B1/FR-022: hồ sơ phụ sau gộp trỏ về hồ sơ chính, status = merged, KHÔNG xoá';
+comment on column customers.deleted_at is 'B1/CUSTOMER-005: xoá mềm — đặc tả cấm xoá cứng';
 
 create index if not exists idx_customers_phone  on customers (primary_phone);
 create index if not exists idx_customers_status on customers (status);
+create index if not exists idx_customers_song
+    on customers (created_at desc) where deleted_at is null and status <> 'merged';
 
 create table if not exists customer_identities (
     id                   bigint generated always as identity primary key,
@@ -194,6 +255,10 @@ comment on column customer_identities.platform is 'Dùng chung danh mục với 
 
 create unique index if not exists uq_customer_identities_page_psid
     on customer_identities (page_id, psid) where psid is not null;
+-- B1/FR-022: "External ID không được trùng sau hợp nhất" — chặn từ gốc luôn
+create unique index if not exists uq_customer_identities_external
+    on customer_identities (platform, external_customer_id)
+    where external_customer_id is not null;
 create index if not exists idx_customer_identities_customer
     on customer_identities (customer_id);
 
@@ -355,31 +420,60 @@ comment on column lead_reasons.category is
     'price=giá · trust=niềm tin · timing=thời điểm · competitor=đối thủ · health=sức khỏe · other=khác';
 
 create table if not exists leads (
-    id             bigint generated always as identity primary key,
-    customer_id    bigint not null references customers(id) on delete cascade,
-    pipeline_id    bigint not null references pipelines(id),
-    stage_id       bigint not null references pipeline_stages(id),
-    owner_id       bigint references users(id) on delete set null,
-    source         text,
-    priority       text not null default 'normal'
-                   check (priority in ('low','normal','high','urgent')),
-    next_action_at timestamptz,
-    created_at     timestamptz not null default now(),
-    updated_at     timestamptz not null default now()
+    id               bigint generated always as identity primary key,
+    customer_id      bigint not null references customers(id) on delete cascade,
+    pipeline_id      bigint not null references pipelines(id),
+    stage_id         bigint not null references pipeline_stages(id),
+    owner_id         bigint references users(id) on delete set null,
+    source           text,
+    priority         text not null default 'normal'
+                     check (priority in ('low','normal','high','urgent')),
+    temperature      text,
+    next_action_at   timestamptz,
+    stage_entered_at timestamptz not null default now(),
+    first_contact_at timestamptz,
+    sla_due_at       timestamptz,
+    closed_at        timestamptz,
+    created_at       timestamptz not null default now(),
+    updated_at       timestamptz not null default now(),
+    constraint ck_leads_temperature check (temperature is null or temperature in
+        ('nong','am','lanh'))
 );
+-- DB tạo từ bản cũ: bổ sung cột (bảng mới thì các lệnh dưới bỏ qua) — B3
+alter table leads add column if not exists temperature      text;
+alter table leads add column if not exists stage_entered_at timestamptz not null default now();
+alter table leads add column if not exists first_contact_at timestamptz;
+alter table leads add column if not exists sla_due_at       timestamptz;
+alter table leads add column if not exists closed_at        timestamptz;
+
+comment on column leads.temperature is
+    'B3: lead score nóng/ấm/lạnh (BRD mục 7) — lọc màn 8/12, API LEAD-009 /leads/hot';
+comment on column leads.stage_entered_at is
+    'B3: thời điểm vào giai đoạn hiện tại — Kanban hiển thị "số ngày ở trạng thái"';
+comment on column leads.first_contact_at is
+    'B3: tương tác đầu tiên (FR-042 — SLA 15 phút); rỗng + quá sla_due_at = lead quá hạn';
+comment on column leads.sla_due_at is
+    'B3: hạn phải nhận/phản hồi (FR-030 "tạo thời hạn phản hồi", FR-042 SLA 5 phút)';
+comment on column leads.closed_at is 'B3: thời điểm vào giai đoạn kết thúc (is_closed)';
 
 create index if not exists idx_leads_customer    on leads (customer_id);
 create index if not exists idx_leads_owner       on leads (owner_id);
 create index if not exists idx_leads_stage       on leads (stage_id);
 create index if not exists idx_leads_next_action on leads (next_action_at);
+create index if not exists idx_leads_sla         on leads (sla_due_at)
+    where closed_at is null and first_contact_at is null;
+create index if not exists idx_leads_queue       on leads (created_at)
+    where owner_id is null and closed_at is null;
 
 -- stage_id phải thuộc đúng pipeline_id — FK thường không làm được, dùng trigger
+-- Ghi rõ crm.pipeline_stages: hàm trigger chạy theo search_path của CONNECTION
+-- gọi nó — app nối bằng search_path mặc định (public) là không thấy bảng.
 create or replace function crm.check_lead_stage_pipeline()
 returns trigger as $$
 declare
     v_pipeline_id bigint;
 begin
-    select pipeline_id into v_pipeline_id from pipeline_stages where id = new.stage_id;
+    select pipeline_id into v_pipeline_id from crm.pipeline_stages where id = new.stage_id;
     if v_pipeline_id is distinct from new.pipeline_id then
         raise exception 'stage_id % không thuộc pipeline_id %', new.stage_id, new.pipeline_id;
     end if;
@@ -400,9 +494,12 @@ create table if not exists lead_stage_history (
     changed_by    bigint references users(id) on delete set null,
     changed_at    timestamptz not null default now(),
     reason        text,
+    note          text,
     created_at    timestamptz not null default now()
 );
+alter table lead_stage_history add column if not exists note text;  -- B3, FR-041
 comment on column lead_stage_history.from_stage_id is 'Rỗng khi lead mới tạo';
+comment on column lead_stage_history.note is 'FR-041: ghi chú thêm, tách khỏi lý do';
 
 create index if not exists idx_lead_stage_history_lead on lead_stage_history (lead_id, changed_at desc);
 
@@ -677,6 +774,57 @@ create index if not exists idx_customer_treatment_items_parent
     on customer_treatment_items (customer_treatment_id);
 
 
+-- ------------------------------------------------------------
+-- handovers — phiếu bàn giao Sale sang CSKH
+-- KHÔNG có trong ERD 56 bảng, thêm theo FR-090/091, màn 24-25 và
+-- nhóm API HANDOVER-001…006 (thuộc MVP).
+-- ------------------------------------------------------------
+create table if not exists handovers (
+    id                    bigint generated always as identity primary key,
+    customer_id           bigint not null references customers(id) on delete cascade,
+    order_id              bigint references orders(id) on delete set null,
+    customer_treatment_id bigint references customer_treatments(id) on delete set null,
+    care_plan_id          bigint references care_plans(id) on delete set null,
+    sale_user_id          bigint references users(id) on delete set null,
+    cskh_user_id          bigint references users(id) on delete set null,
+    status                text not null default 'pending'
+                          check (status in ('pending','assigned','accepted','returned','completed')),
+    -- FR-091: hồ sơ thiếu thì đánh dấu chưa hoàn tất, CSKH trả lại Sale bổ sung
+    is_complete           boolean not null default false,
+    missing_fields        jsonb not null default '[]'::jsonb,
+    returned_reason       text,
+    -- Nội dung phiếu bàn giao (màn 25)
+    customer_condition    text,   -- Tình trạng khách
+    main_symptoms         text,   -- Triệu chứng chính
+    treatment_summary     text,   -- Liệu trình
+    dose_text             text,   -- Cách dùng
+    current_medications   text,   -- Thuốc đang dùng
+    comorbidities         text,   -- Bệnh nền
+    notes                 text,   -- Lưu ý
+    concerns              text,   -- Băn khoăn
+    sale_discussed        text,   -- Điều Sale đã trao đổi
+    promises_made         text,   -- Cam kết đã nói
+    cskh_watch_points     text,   -- Vấn đề CSKH cần theo dõi
+    expected_start_date   date,   -- Ngày dự kiến bắt đầu
+    accepted_at           timestamptz,
+    returned_at           timestamptz,
+    created_at            timestamptz not null default now(),
+    updated_at            timestamptz not null default now()
+);
+comment on table handovers is
+    'Sinh tự động khi đơn giao thành công (FR-090). Ngày giao thành công KHÔNG lưu ở đây, '
+    'lấy từ orders.delivered_at để tránh lệch số liệu';
+comment on column handovers.promises_made is
+    'Cam kết Sale đã nói với khách — đối chiếu với product_versions.prohibited_claims khi rà tuân thủ';
+
+-- Một đơn chỉ sinh một phiếu bàn giao: chặn automation chạy hai lần tạo trùng
+create unique index if not exists uq_handovers_order
+    on handovers (order_id) where order_id is not null;
+create index if not exists idx_handovers_customer on handovers (customer_id);
+create index if not exists idx_handovers_cskh     on handovers (cskh_user_id, status);
+create index if not exists idx_handovers_pending  on handovers (status) where status = 'pending';
+
+
 -- ============================================================
 -- MODULE 5 — CSKH, CÔNG VIỆC & MUA LẠI
 -- ============================================================
@@ -710,18 +858,23 @@ create table if not exists care_plan_steps (
     created_at   timestamptz not null default now(),
     updated_at   timestamptz not null default now(),
     constraint ck_care_plan_steps_step_code check (step_code is null or step_code in
-        ('D0_xac_nhan_don',   -- chốt đơn, hẹn giao
-         'D1_giao_hang',      -- xác nhận đã nhận hàng (mốc = orders.delivered_at)
-         'D3_kiem_tra',       -- kiểm tra đã dùng đúng cách chưa
-         'D7_danh_gia',       -- đánh giá chuyển biến lần 1
-         'D14_theo_doi',
-         'D30_tong_ket',      -- tổng kết tháng 1
-         'D60_ket_lieu_trinh',-- kết thúc liệu trình
-         'D_mua_lai',         -- chào mua lại / nâng liệu trình
-         'khac'))             -- lối thoát cho mốc phát sinh
+        ('CS01',   -- Xác nhận đơn          — ngay khi Sale lên đơn
+         'CS02',   -- Nhận hàng & onboarding — sau 3-5 ngày gửi / giao thành công
+         'CS03',   -- Xác nhận bắt đầu dùng  — sau 2 ngày từ khi nhận (lấy actual_start_date)
+         'CS04',   -- Đánh giá sớm           — NGÀY 4 dùng
+         'CS05',   -- Kiểm tra tuân thủ      — NGÀY 10 dùng
+         'CS06',   -- Đánh giá đáp ứng       — NGÀY 15 dùng (so điểm trước/sau)
+         'CS07',   -- Chuẩn bị mua lại       — NGÀY 20 dùng (tạo cơ hội mua lại)
+         'CS08',   -- Chốt liệu trình tiếp   — NGÀY 25 dùng
+         'CS09',   -- Cứu cơ hội             — NGÀY 28 nếu chưa mua
+         'CS10',   -- Chăm LT2               — sau giao liệu trình 2
+         'CS11',   -- Chăm LT3 & duy trì     — sau giao liệu trình 3
+         'khac'))  -- lối thoát cho mốc phát sinh
 );
 comment on column care_plan_steps.step_code is
-    'Bộ mốc chuẩn D0/D1/D3/D7/D14/D30/D60 + D_mua_lai. Số ngày tính từ orders.delivered_at. '
+    'Quy trình chuẩn 11 bước CS01-CS11 theo BRD mục 14.3. Mốc ngày 4/10/15/20/25/28 tính từ '
+    'ngày BẮT ĐẦU DÙNG THẬT (actual_start_date lấy ở CS03), KHÔNG phải ngày giao hàng. '
+    'Tên + kích hoạt + dữ liệu bắt buộc từng bước: xem crm.ref_codes nhóm care_step. '
     'Dùng ''khac'' cho mốc phát sinh thay vì phá CHECK';
 
 create index if not exists idx_care_plan_steps_plan   on care_plan_steps (care_plan_id);
@@ -844,36 +997,61 @@ create index if not exists idx_reactivation_members_customer on reactivation_mem
 -- ============================================================
 
 create table if not exists knowledge_documents (
-    id             bigint generated always as identity primary key,
-    title          text not null,
-    category       text,
-    status         text not null default 'draft',
-    ai_permission  text not null default 'internal',
-    approved_by    bigint references users(id) on delete set null,
-    effective_from timestamptz,
-    effective_to   timestamptz,
-    created_at     timestamptz not null default now(),
-    updated_at     timestamptz not null default now(),
+    id                bigint generated always as identity primary key,
+    title             text not null,
+    category          text,
+    topic             text,
+    source            text,
+    keywords          text[] not null default '{}',
+    applicable_to     text,
+    contraindication  text,
+    risk_level        text,
+    status            text not null default 'draft',
+    ai_permission     text not null default 'internal',
+    approved_by       bigint references users(id) on delete set null,
+    effective_from    timestamptz,
+    effective_to      timestamptz,
+    created_at        timestamptz not null default now(),
+    updated_at        timestamptz not null default now(),
     constraint ck_knowledge_documents_status check (status in
         ('draft','pending','approved','archived')),
     constraint ck_knowledge_documents_ai_permission check (ai_permission in
-        ('none','internal','send_customer'))
+        ('none','internal','send_customer')),
+    constraint ck_knowledge_documents_risk check (risk_level is null or risk_level in
+        ('low','medium','high','critical'))
 );
+comment on column knowledge_documents.topic is 'Chủ đề — cột của màn 47';
+comment on column knowledge_documents.source is 'Nguồn trích dẫn — FR-140, màn 48';
+comment on column knowledge_documents.keywords is
+    'Từ khóa (màn 48). Mảng text, tra bằng toán tử @> với index GIN bên dưới';
+comment on column knowledge_documents.applicable_to is 'Đối tượng áp dụng — màn 48';
+comment on column knowledge_documents.contraindication is 'Trường hợp không dùng — màn 48';
+comment on column knowledge_documents.risk_level is 'Mức rủi ro — màn 48';
+
+create index if not exists idx_knowledge_documents_keywords
+    on knowledge_documents using gin (keywords);
+create index if not exists idx_knowledge_documents_effective
+    on knowledge_documents (status, effective_from desc);
 comment on column knowledge_documents.ai_permission is
     'Cột "Quyền AI" — chốt theo FR-140 (danh sách dữ liệu) và màn 47 (cột cuối bảng). '
     'none=AI không được dùng · internal=AI dùng để soạn cho nhân viên, không gửi thẳng khách · '
     'send_customer=được phép gửi cho khách. Ăn khớp FR-142 (nhân viên duyệt trước khi gửi).';
 
 create table if not exists knowledge_versions (
-    id          bigint generated always as identity primary key,
-    document_id bigint not null references knowledge_documents(id) on delete cascade,
-    version_no  integer not null,
-    content     text,
-    created_by  bigint references users(id) on delete set null,
-    approved_at timestamptz,
-    created_at  timestamptz not null default now(),
+    id                   bigint generated always as identity primary key,
+    document_id          bigint not null references knowledge_documents(id) on delete cascade,
+    version_no           integer not null,
+    content              text,
+    content_for_customer text,
+    created_by           bigint references users(id) on delete set null,
+    approved_at          timestamptz,
+    created_at           timestamptz not null default now(),
     unique (document_id, version_no)
 );
+comment on column knowledge_versions.content is 'Nội dung NỘI BỘ — màn 48';
+comment on column knowledge_versions.content_for_customer is
+    'Nội dung ĐƯỢC PHÉP GỬI KHÁCH — màn 48. Chỉ dùng khi '
+    'knowledge_documents.ai_permission = ''send_customer''';
 
 create table if not exists consultation_scenarios (
     id            bigint generated always as identity primary key,
@@ -1032,6 +1210,76 @@ comment on column ai_recommendations.accepted_by is
 
 create index if not exists idx_ai_recommendations_customer on ai_recommendations (customer_id, created_at desc);
 create index if not exists idx_ai_recommendations_session  on ai_recommendations (session_id);
+
+
+-- ============================================================
+-- MODULE 7 — NHẬT KÝ (ngoài ERD 56 bảng)
+-- ============================================================
+
+-- ------------------------------------------------------------
+-- audit_logs — FR-180, màn 77, API AUDIT-001/002 (thuộc MVP)
+-- Chỉ GHI THÊM, không sửa không xoá → cố ý KHÔNG có updated_at và không có trigger.
+-- ------------------------------------------------------------
+create table if not exists audit_logs (
+    id          bigint generated always as identity primary key,
+    user_id     bigint references users(id) on delete set null,
+    action      text not null,
+    object_type text not null,
+    object_id   bigint,
+    old_value   jsonb,
+    new_value   jsonb,
+    reason      text,
+    ip_address  inet,
+    user_agent  text,
+    created_at  timestamptz not null default now()
+);
+comment on table audit_logs is
+    'Bảng chỉ ghi thêm. Mọi API có ghi dữ liệu đều phải chèn 1 dòng (yêu cầu kỹ thuật, API mục XXXVI). '
+    'Phình nhanh — ứng viên partition theo tháng cùng nhóm với messages/funnel_events';
+comment on column audit_logs.user_id is 'Rỗng = hành động của hệ thống (worker, automation)';
+comment on column audit_logs.object_type is 'Tên bảng hoặc loại đối tượng bị tác động';
+comment on column audit_logs.object_id is 'QUAN HỆ ĐA HÌNH theo object_type — không đặt được FK';
+comment on column audit_logs.user_agent is 'Phần "thiết bị" của màn 77, đi kèm ip_address';
+
+create index if not exists idx_audit_logs_object
+    on audit_logs (object_type, object_id, created_at desc);
+create index if not exists idx_audit_logs_user
+    on audit_logs (user_id, created_at desc);
+create index if not exists idx_audit_logs_created
+    on audit_logs (created_at desc);
+
+
+-- ------------------------------------------------------------
+-- ref_codes — danh mục dùng chung (màn 72), thêm ngoài ERD gốc.
+-- Chứa các bộ mã BRD định nghĩa nhưng không có bảng riêng:
+--   cskh_state  C01-C09  · care_step CS01-CS11 · care_result RS01-RS12
+--   automation  AU01-AU13 (tham chiếu, chưa phải máy luật)
+--   adherence_level / diet_compliance / adverse_event / bowel_status /
+--   repurchase_readiness / contact_result / next_action  (BRD bảng 19)
+-- Nạp dữ liệu bằng scripts/seed_danh_muc.py (idempotent).
+-- ------------------------------------------------------------
+create table if not exists ref_codes (
+    id          bigint generated always as identity primary key,
+    group_code  text not null,
+    code        text not null,
+    name        text not null,
+    description text,
+    extra       jsonb not null default '{}'::jsonb,
+    sort_order  integer not null default 0,
+    status      text not null default 'active'
+                check (status in ('active','inactive')),
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now(),
+    unique (group_code, code)
+);
+comment on table ref_codes is
+    'Danh mục dùng chung (màn 72). Cột nghiệp vụ kiểu text (vd care_plan_steps.result_code) '
+    'tra giá trị hợp lệ ở đây thay vì khoá cứng bằng CHECK — sửa danh mục không phải ALTER';
+comment on column ref_codes.extra is
+    'Chi tiết theo nhóm: care_step giữ {kich_hoat, muc_tieu, kenh, du_lieu_bat_buoc, ngoai_le}; '
+    'automation giữ {khi, thi, uu_tien}; cskh_state giữ {dieu_kien_vao, dieu_kien_ra}';
+
+create index if not exists idx_ref_codes_group on ref_codes (group_code, sort_order);
 
 
 -- ============================================================

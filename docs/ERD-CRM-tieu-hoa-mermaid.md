@@ -1,7 +1,7 @@
 # ERD CRM quản trị khách hàng tiêu hóa
 
 Sơ đồ này **sinh tự động từ schema `crm`** trong Postgres (`scripts/init_crm.sql`),
-nên luôn khớp với database thật: **56 bảng · 92 khóa ngoại**.
+nên luôn khớp với database thật: **60 bảng · 100 khóa ngoại**.
 
 > Sơ đồ chỉ vẽ **quan hệ**, không vẽ cột. Muốn xem cột thì mở
 > [DANH-SACH-BANG-VA-QUAN-HE.md](DANH-SACH-BANG-VA-QUAN-HE.md) hoặc chạy
@@ -16,6 +16,11 @@ Khác với bản vẽ tay trước đó:
 - Bổ sung các đường trỏ về `USERS` mà bản cũ lược bớt cho đỡ rối (17 bảng trỏ về).
 - `ORDERS --> CUSTOMER_TREATMENTS` là đường **thêm ngoài ERD gốc**, để truy được
   đơn hàng nào sinh ra liệu trình. Xem ghi chú trong `scripts/init_crm.sql`.
+- Thêm 4 bảng **ngoài ERD gốc** vì đặc tả bắt buộc:
+  `HANDOVERS` (FR-090/091 · màn 24-25) · `AUDIT_LOGS` (FR-180 · màn 77) ·
+  `USER_SESSIONS` (A2 — phiên đăng nhập + lịch sử thiết bị, màn 1) ·
+  `REF_CODES` (danh mục dùng chung màn 72: C01-C09, CS01-CS11, RS01-RS12,
+  AU01-AU13 và 7 bộ giá trị phiếu chăm của BRD mục 14).
 
 ```mermaid
 erDiagram
@@ -55,10 +60,14 @@ erDiagram
     SYMPTOMS ||--o{ CUSTOMER_SYMPTOMS : classifies
 
     %% ===== MODULE 4 — Sản phẩm, liệu trình & đơn hàng =====
+    CARE_PLANS ||--o{ HANDOVERS : care_plan
     CUSTOMERS ||--o{ CUSTOMER_TREATMENTS : receives
+    CUSTOMERS ||--o{ HANDOVERS : customer
     CUSTOMERS ||--o{ ORDERS : places
     CUSTOMER_TREATMENTS ||--o{ CUSTOMER_TREATMENT_ITEMS : contains
+    CUSTOMER_TREATMENTS ||--o{ HANDOVERS : customer_treatment
     ORDERS ||--o{ CUSTOMER_TREATMENTS : order
+    ORDERS ||--o{ HANDOVERS : order
     ORDERS ||--o{ ORDER_ITEMS : contains
     ORDERS ||--o{ ORDER_STATUS_HISTORY : changes
     PRODUCTS ||--o{ CUSTOMER_TREATMENT_ITEMS : used
@@ -106,6 +115,7 @@ erDiagram
     %% ===== Đường trỏ về USERS / TEAMS (17 bảng) =====
     TEAMS ||--o{ USERS : contains
     USERS ||--o{ TEAMS : manager
+    USERS ||--o{ USER_SESSIONS : sessions
     USERS ||--o{ CALLS : handles
     USERS ||--o{ CUSTOMER_ASSIGNMENTS : owns
     USERS ||--o{ MESSAGES : sender_user
@@ -113,6 +123,8 @@ erDiagram
     USERS ||--o{ LEADS : owner
     USERS ||--o{ LEAD_STAGE_HISTORY : changed_by
     USERS ||--o{ CUSTOMER_TREATMENTS : approved_by
+    USERS ||--o{ HANDOVERS : cskh_user
+    USERS ||--o{ HANDOVERS : sale_user
     USERS ||--o{ ORDERS : cskh_owner
     USERS ||--o{ ORDERS : sale_owner
     USERS ||--o{ ORDER_STATUS_HISTORY : changed_by
@@ -124,4 +136,9 @@ erDiagram
     USERS ||--o{ AI_RECOMMENDATIONS : accepted_by
     USERS ||--o{ KNOWLEDGE_DOCUMENTS : approved_by
     USERS ||--o{ KNOWLEDGE_VERSIONS : created_by
+    USERS ||--o{ AUDIT_LOGS : user
+
+    %% ===== Bảng độc lập (không khóa ngoại) =====
+    REF_CODES {
+    }
 ```

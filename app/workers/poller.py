@@ -162,6 +162,16 @@ async def poll_once() -> dict:
                     page["id"], page.get("name") or "", moi,
                 )
                 st.moc = max([c.get("updated_at") or "" for c in moi] + [st.moc])
+                # B2: đổ thêm vào CRM (khách + định danh + hội thoại + lead —
+                # FR-011). Công tắc CRM_SYNC_ENABLED, mặc định TẮT. sync_batch
+                # tự nuốt lỗi từng dòng — CRM hỏng không được vỡ luồng bot.
+                if settings.crm_sync_enabled:
+                    from app.integrations.pancake import crm_sync
+
+                    await asyncio.to_thread(
+                        crm_sync.sync_batch,
+                        str(page["id"]), page.get("name") or "", moi,
+                    )
             else:
                 them = []
             st.loi_lien_tiep, st.loi_cuoi = 0, ""

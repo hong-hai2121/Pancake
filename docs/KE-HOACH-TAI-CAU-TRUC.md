@@ -8,8 +8,11 @@ Tài liệu này ghi lại **vì sao** dự án được sắp xếp như hiện
 | [dac-ta-chuc-nang-CRM.pdf](dac-ta-chuc-nang-CRM.pdf) | 60 chức năng FR-001 → FR-182 |
 | [danh-sach-man-hinh-CRM.pdf](danh-sach-man-hinh-CRM.pdf) | 80 màn hình, có đánh dấu 18 màn MVP |
 | [danh-sach-api-CRM.pdf](danh-sach-api-CRM.pdf) | ~250 endpoint, có đánh dấu 17 nhóm MVP |
-| [DANH-SACH-BANG-VA-QUAN-HE.md](DANH-SACH-BANG-VA-QUAN-HE.md) | 56 bảng, 6 module — đã dựng thành [scripts/init_crm.sql](../scripts/init_crm.sql) |
-| [THU-TU-TRIEN-KHAI-CRM.docx](THU-TU-TRIEN-KHAI-CRM.docx) | Thứ tự thi công: Phần A nền tảng → 11 lát cắt nghiệp vụ → giai đoạn sau. Ghép 3 danh sách MVP (17 nhóm API ↔ 18 màn hình ↔ mã FR) thành một lộ trình, kèm 11 bảng ERD còn thiếu |
+| [DANH-SACH-BANG-VA-QUAN-HE.md](DANH-SACH-BANG-VA-QUAN-HE.md) | 56 bảng, 6 module — đã dựng thành [scripts/init_crm.sql](../scripts/init_crm.sql) (nay 59 bảng: thêm `handovers` + `audit_logs`, A2 thêm `user_sessions`) |
+| [BRD-CRM-Quan-tri-khach-hang-tieu-hoa-chi-tiet.docx](BRD-CRM-Quan-tri-khach-hang-tieu-hoa-chi-tiet.docx) | BRD tổng thể 26 mục: pipeline CSKH C01-C09, quy trình chăm 11 bước CS01-CS11, kết quả chuẩn RS01-RS12, automation AU01-AU13, lộ trình MVP 1-5 |
+| [ERD-CRM-tieu-hoa-mermaid.md](ERD-CRM-tieu-hoa-mermaid.md) | Sơ đồ quan hệ sinh từ schema `crm` thật: 58 bảng · 99 khóa ngoại |
+| [THU-TU-TRIEN-KHAI-CRM.md](THU-TU-TRIEN-KHAI-CRM.md) | Thứ tự thi công: Phần A nền tảng → 11 lát cắt nghiệp vụ → giai đoạn sau. Ghép 3 danh sách MVP (17 nhóm API ↔ 18 màn hình ↔ mã FR) thành một lộ trình, kèm danh sách bảng ERD còn thiếu |
+| [TIEN-DO.md](TIEN-DO.md) | Bảng tiến độ nhìn nhanh: bước nào ✅/🔨/⬜, đang làm tới đâu, kèm nhật ký |
 
 ---
 

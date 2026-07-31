@@ -18,6 +18,8 @@ Bố cục tự co theo bề rộng: dưới 900px sidebar chuyển thành thanh
 
 from html import escape
 
+from app.core.request_context import current_user
+
 # --- Icon dạng SVG inline (dùng currentColor nên tự đổi màu theo trạng thái) ---
 _ICONS = {
     "dashboard": '<rect x="3" y="3" width="7" height="9" rx="1"/>'
@@ -32,18 +34,56 @@ _ICONS = {
                  '<path d="M16 3.1a4 4 0 0 1 0 7.8"/>',
     "sentiment": '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9'
                  'a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    "pipeline": '<rect x="3" y="3" width="5" height="18" rx="1"/>'
+                '<rect x="10" y="3" width="5" height="12" rx="1"/>'
+                '<rect x="17" y="3" width="5" height="8" rx="1"/>',
+    "tasks": '<rect x="3" y="3" width="18" height="18" rx="2"/>'
+             '<path d="m8 12 3 3 5-6"/>',
+    "orders": '<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/>'
+              '<path d="M2 3h3l2.6 12.6a1.5 1.5 0 0 0 1.5 1.2h8.6a1.5 1.5 0 0 0 1.5-1.2L21 8H6"/>',
+    "care": '<path d="M12 21C7 16.5 3 13 3 8.8A4.8 4.8 0 0 1 7.8 4c1.7 0 3.2.8 4.2 2.1'
+            'A5.3 5.3 0 0 1 16.2 4 4.8 4.8 0 0 1 21 8.8c0 4.2-4 7.7-9 12.2z"/>',
+    "repurchase": '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
+    "products": '<path d="M21 8.5 12 3 3 8.5v7L12 21l9-5.5v-7z"/>'
+                '<path d="M3 8.5 12 14l9-5.5"/><path d="M12 21V14"/>',
+    "admin": '<circle cx="12" cy="12" r="3"/>'
+             '<path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83'
+             'l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0'
+             'v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06'
+             'a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3'
+             'a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.65 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06'
+             'a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h0A1.7 1.7 0 0 0 10.04 3V3'
+             'a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56h0a1.7 1.7 0 0 0 1.87-.34l.06-.06'
+             'a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v0'
+             'a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/>',
     "data": '<path d="M12 2a3 3 0 0 0-3 3v.4A3.2 3.2 0 0 0 7 11a3 3 0 0 0 2 5.6V18'
             'a3 3 0 0 0 6 0v-1.4A3 3 0 0 0 17 11a3.2 3.2 0 0 0-2-5.6V5a3 3 0 0 0-3-3z"/>'
             '<path d="M12 2v20"/>',
 }
 
-# Menu bên trái: (đường dẫn, nhãn, khoá `active`, tên icon)
-MENU: list[tuple[str, str, str, str]] = [
-    ("/bang-dieu-khien", "Bảng điều khiển", "dashboard", "dashboard"),
-    ("/tin-nhan", "Tin nhắn", "messages", "messages"),
-    ("/khach-hang", "Khách hàng", "customers", "customers"),
-    ("/cam-xuc", "Cảm xúc", "sentiment", "sentiment"),
-    ("/data/kich-ban", "Dữ liệu bot", "data", "data"),
+# Menu bên trái, chia NHÓM. Mỗi mục: (đường dẫn, nhãn, khoá `active`, icon,
+# quyền cần có). Quyền "" = ai đăng nhập cũng thấy; có mã -> chỉ hiện khi token
+# mang quyền đó (A5). Đây chỉ là ẨN MỤC MENU cho gọn — chặn thật nằm ở route.
+# Nhóm CRM là các màn khung (xem app/web/views/crm.py) — lát cắt B1…B11 làm đầy.
+MENU_GROUPS: list[tuple[str, list[tuple[str, str, str, str, str]]]] = [
+    ("CRM", [
+        ("/crm/tong-quan", "Tổng quan", "crm-overview", "dashboard", ""),
+        ("/crm/khach-hang", "Khách hàng", "crm-customers", "customers", ""),
+        ("/crm/pipeline", "Pipeline Sale", "crm-pipeline", "pipeline", ""),
+        ("/crm/cong-viec", "Công việc", "crm-tasks", "tasks", ""),
+        ("/crm/don-hang", "Đơn hàng", "crm-orders", "orders", ""),
+        ("/crm/cham-soc", "Chăm sóc", "crm-care", "care", ""),
+        ("/crm/mua-lai", "Mua lại", "crm-repurchase", "repurchase", ""),
+        ("/crm/san-pham", "Sản phẩm", "crm-products", "products", ""),
+        ("/quan-tri/nhan-vien", "Quản trị", "admin", "admin", "user.manage"),
+    ]),
+    ("Bot Pancake", [
+        ("/bang-dieu-khien", "Bảng điều khiển", "dashboard", "dashboard", ""),
+        ("/tin-nhan", "Tin nhắn", "messages", "messages", ""),
+        ("/khach-hang", "KH Pancake", "customers", "customers", ""),
+        ("/cam-xuc", "Cảm xúc", "sentiment", "sentiment", ""),
+        ("/data/kich-ban", "Dữ liệu bot", "data", "data", ""),
+    ]),
 ]
 
 
@@ -57,18 +97,49 @@ def _icon(name: str) -> str:
 
 
 def _sidebar(active: str) -> str:
-    """Menu trái: logo + các mục; mục đang xem được tô đậm."""
+    """Menu trái: logo + các nhóm mục; mục đang xem được tô đậm. Mục gắn quyền
+    chỉ hiện khi người đăng nhập có quyền đó (đọc từ contextvar middleware đặt)."""
+    user = current_user.get()
+    perms = (user or {}).get("perms") or []
     items = ""
-    for href, label, key, icon in MENU:
-        cls = "nav-item on" if key == active else "nav-item"
-        items += f'<a class="{cls}" href="{href}">{_icon(icon)}<span>{label}</span></a>'
+    for ten_nhom, muc in MENU_GROUPS:
+        items += f'<div class="nav-group">{escape(ten_nhom)}</div>'
+        for href, label, key, icon, quyen in muc:
+            if quyen and quyen not in perms:
+                continue
+            cls = "nav-item on" if key == active else "nav-item"
+            items += (
+                f'<a class="{cls}" href="{href}">{_icon(icon)}<span>{label}</span></a>'
+            )
     return (
         '<aside class="side">'
         '<a class="brand" href="/bang-dieu-khien">'
         '<span class="logo">FB</span><span class="bname">Sales Bot</span></a>'
         f'<nav class="nav">{items}</nav>'
-        '<div class="side-foot">Pancake + RAG · nội bộ</div>'
-        "</aside>"
+        + _user_box()
+        + "</aside>"
+    )
+
+
+def _user_box() -> str:
+    """Chân sidebar: tên + vai trò người đăng nhập và nút Đăng xuất (A2).
+
+    Đọc từ contextvar do middleware auth trong app/main.py đặt — không phải sửa
+    chữ ký render_shell của 37 route. Không có user (lý thuyết không xảy ra vì
+    web đã khoá) thì rơi về dòng chữ cũ.
+    """
+    user = current_user.get()
+    if not user:
+        return '<div class="side-foot">Pancake + RAG · nội bộ</div>'
+    ten = escape(user.get("name") or user.get("username") or "?")
+    vai_tro = escape(user.get("role") or "")
+    return (
+        '<div class="side-user">'
+        f'<div class="su-info"><div class="su-name" title="{ten}">{ten}</div>'
+        f'<div class="su-role">{vai_tro}</div></div>'
+        '<form method="post" action="/dang-xuat" class="su-form">'
+        '<button class="su-out" title="Đăng xuất">Đăng xuất</button></form>'
+        "</div>"
     )
 
 
@@ -233,6 +304,31 @@ a{color:var(--accent)}
   box-shadow:0 3px 10px rgba(80,50,100,.18)}
 .ico{width:19px;height:19px;flex:0 0 auto}
 .side-foot{margin-top:auto;font-size:11px;color:var(--side-tx);opacity:.6;padding:8px}
+/* tên nhóm menu (CRM / Bot Pancake) */
+.nav-group{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--side-tx);opacity:.55;padding:12px 10px 4px}
+/* Kanban khung (màn CRM tạm): cột giai đoạn + thẻ lead */
+.kanban{display:flex;gap:10px;overflow-x:auto;padding:4px 0}
+.kcol{min-width:150px;flex:1;background:var(--soft);border:1px solid var(--border);
+  border-radius:10px;padding:9px}
+.kcol.closed{opacity:.65}
+.kcol h4{font-size:12px;color:var(--sub);display:flex;justify-content:space-between;
+  gap:6px;margin-bottom:6px}
+.kcount{background:var(--card);border:1px solid var(--border);border-radius:99px;
+  padding:0 7px;font-size:11px;color:var(--text)}
+.kcard{background:var(--card);border:1px solid var(--border);border-radius:8px;
+  padding:6px 8px;font-size:12.5px;margin-top:6px;box-shadow:var(--shadow)}
+/* khối người đăng nhập + nút đăng xuất (A2) */
+.side-user{margin-top:auto;padding:10px 8px 4px;border-top:1px solid var(--side-on);
+  display:flex;align-items:center;gap:8px}
+.su-info{min-width:0;flex:1}
+.su-name{color:#fff;font-size:12.5px;font-weight:600;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+.su-role{color:var(--side-tx);font-size:11px;opacity:.8}
+.su-form{margin:0}
+.su-out{border:1px solid var(--side-on);background:transparent;color:var(--side-tx);
+  font-size:11px;padding:4px 8px;border-radius:8px;cursor:pointer;white-space:nowrap}
+.su-out:hover{background:var(--side-on);color:#fff}
 
 /* ---------- khung phải ---------- */
 .main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh}
@@ -601,6 +697,9 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
     flex-direction:row;align-items:center;gap:12px}
   .brand{padding:0}
   .side-foot{display:none}
+  /* màn hẹp: giấu tên, giữ nút Đăng xuất */
+  .side-user{margin:0;padding:0;border:0}
+  .su-info{display:none}
   .nav{flex-direction:row;overflow-x:auto;gap:4px;margin-left:auto}
   .nav-item span{display:none}
   .nav-item{padding:9px 12px}
