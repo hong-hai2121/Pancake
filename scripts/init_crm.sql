@@ -784,7 +784,8 @@ create table if not exists handovers (
     customer_id           bigint not null references customers(id) on delete cascade,
     order_id              bigint references orders(id) on delete set null,
     customer_treatment_id bigint references customer_treatments(id) on delete set null,
-    care_plan_id          bigint references care_plans(id) on delete set null,
+    -- FK gắn sau khi care_plans được tạo (Module 5) — xem fk_handovers_care_plan
+    care_plan_id          bigint,
     sale_user_id          bigint references users(id) on delete set null,
     cskh_user_id          bigint references users(id) on delete set null,
     status                text not null default 'pending'
@@ -845,6 +846,19 @@ create table if not exists care_plans (
 create index if not exists idx_care_plans_customer  on care_plans (customer_id);
 create index if not exists idx_care_plans_treatment on care_plans (customer_treatment_id);
 create index if not exists idx_care_plans_owner     on care_plans (owner_id);
+
+-- handovers (Module 4) khai báo trước care_plans nên không gắn FK inline được.
+do $$
+begin
+    if not exists (select 1 from pg_constraint
+                   where conname = 'fk_handovers_care_plan'
+                     and connamespace = 'crm'::regnamespace) then
+        alter table crm.handovers
+            add constraint fk_handovers_care_plan
+            foreign key (care_plan_id) references crm.care_plans(id) on delete set null;
+    end if;
+end $$;
+create index if not exists idx_handovers_care_plan on handovers (care_plan_id);
 
 create table if not exists care_plan_steps (
     id           bigint generated always as identity primary key,
