@@ -122,7 +122,9 @@ def render_khach_hang(rows: list[dict], total: int, q: str) -> str:
 
 
 # ------------------------------------------------------------ Pipeline (màn 11)
-def render_pipeline(stages: list[dict]) -> str:
+def render_pipeline(stages: list[dict], st: int = 0) -> str:
+    """`st` — id giai đoạn cần tô sáng (bấm 'cột trên bảng' từ khối Sale
+    ở menu trái); 0 = không tô gì."""
     cot = ""
     for s in stages:
         the = "".join(
@@ -132,36 +134,56 @@ def render_pipeline(stages: list[dict]) -> str:
             "</div>"
             for l in s["leads"]
         )
+        hl = " hl" if s["id"] == st else ""
         cot += (
-            f'<div class="kcol{" closed" if s["is_closed"] else ""}">'
+            f'<div class="kcol{" closed" if s["is_closed"] else ""}{hl}">'
             f"<h4>{escape(s['name'])}<span class='kcount'>{s['so_lead']}</span></h4>"
             f"{the}</div>"
         )
     body = (
         _ghi_chu("B3 (lead & pipeline)", "kéo thả thẻ, luật chặn chuyển trạng thái, "
                  "chia lead tự động, SLA — tầng luật đã xong, chờ nối")
+        + '<style>.kcol.hl{outline:2px solid var(--accent);outline-offset:2px;'
+          "border-radius:10px}</style>"
         + f'<div class="kanban card">{cot}</div>'
     )
+    # cuộn ngang tới cột được tô (kanban 13 cột tràn màn hình)
+    js = ("var c=document.querySelector('.kcol.hl');"
+          "if(c)c.scrollIntoView({block:'nearest',inline:'center'});") if st else ""
     return render_shell("Pipeline Sale", "crm-pipeline", body,
                         heading="Pipeline Sale",
-                        sub="Màn 11 — Kanban 13 giai đoạn (đã seed từ BRD)")
+                        sub="Màn 11 — Kanban 13 giai đoạn (đã seed từ BRD)",
+                        script=js)
 
 
 # ------------------------------------------------------------ Công việc (màn 12/26)
-def render_cong_viec(nhom: dict) -> str:
+def render_cong_viec(nhom: dict, *, pham_vi: str = "minh") -> str:
+    from app.services.task_service import LOAI_VIEC  # nhãn tiếng Việt 8 loại việc
+
     def _rows(items):
         return "".join(
-            f"<tr><td>{_e(t['task_type'])}</td><td>{_e(t['khach'])}</td>"
+            f"<tr><td>{_e(LOAI_VIEC.get(t['task_type'], t['task_type']))}"
+            + (f"<div class='note' style='margin:2px 0 0'>{_e(t['title'])}</div>"
+               if t.get("title") else "")
+            + f"</td><td>{_e(t['khach'])}</td>"
             f"<td>{_e(t['nguoi_lam'])}</td><td>{_dt(t['due_at'])}</td>"
             f"<td><span class='pill'>{_e(t['priority'])}</span></td>"
             f"<td>{_e(t['status'])}</td></tr>"
             for t in items
         )
 
+    # Chuyển phạm vi: việc của tôi (mặc định) <-> cả đội
+    nut = (
+        '<a class="btn sm" href="/crm/cong-viec?pham_vi=tatca">Xem cả đội</a>'
+        if pham_vi != "tatca"
+        else '<a class="btn sm" href="/crm/cong-viec">Chỉ việc của tôi</a>'
+    )
     cols = ["Loại việc", "Khách", "Người làm", "Hạn", "Ưu tiên", "Trạng thái"]
     body = (
-        _ghi_chu("B4 (task engine)", "tạo/đóng việc kèm kết quả bắt buộc, dời lịch, "
-                 "chuyển người, cảnh báo leo thang khi quá hạn")
+        f'<div class="card" style="margin-bottom:14px;display:flex;gap:10px;'
+        f'align-items:center"><b>{"Việc của tôi" if pham_vi != "tatca" else "Cả đội"}</b>'
+        f"{nut}<span class='note' style='margin:0'>quá hạn được worker quét 5'/lần, "
+        "đánh dấu + ghi nhật ký báo quản lý (mục 19 BRD)</span></div>"
         + f'<div class="card"><h3>🔴 Quá hạn ({len(nhom["qua_han"])})</h3>'
         + _bang(cols, _rows(nhom["qua_han"]), "Không có việc quá hạn") + "</div>"
         + f'<div class="card" style="margin-top:14px"><h3>Hôm nay ({len(nhom["hom_nay"])})</h3>'
@@ -170,7 +192,7 @@ def render_cong_viec(nhom: dict) -> str:
         + _bang(cols, _rows(nhom["sap_toi"]), "Chưa có việc xếp lịch") + "</div>"
     )
     return render_shell("Công việc", "crm-tasks", body,
-                        heading="Công việc", sub="Màn 12 + 26 — việc của Sale và CSKH")
+                        heading="Công việc", sub="Màn 12 + 26 — việc của Sale và CSKH (B4)")
 
 
 # ------------------------------------------------------------ Đơn hàng (màn 21)

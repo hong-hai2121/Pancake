@@ -167,6 +167,34 @@ for group, values in VALUE_SETS.items():
         REF.append((group, f"{group}_{i:02d}", ten, "", {}))
 
 
+# ============================================================
+# 4. symptoms — danh mục triệu chứng tiêu hoá (B5, FR-050 / SYMPTOM-001)
+#    (code, tên, nhóm). Dấu hiệu BÁO ĐỘNG (nôn máu, phân đen...) KHÔNG nằm
+#    ở đây — chúng thuộc phiếu sàng lọc an toàn (safety_screenings, FR-053).
+# ============================================================
+SYMPTOMS: list[tuple[str, str, str]] = [
+    ("dau_thuong_vi",   "Đau thượng vị",              "dạ dày"),
+    ("o_chua",          "Ợ chua",                     "dạ dày"),
+    ("o_hoi",           "Ợ hơi",                      "dạ dày"),
+    ("o_nong",          "Ợ nóng / nóng rát",          "dạ dày"),
+    ("buon_non",        "Buồn nôn",                   "dạ dày"),
+    ("non",             "Nôn",                        "dạ dày"),
+    ("day_bung",        "Đầy bụng, khó tiêu",         "dạ dày"),
+    ("chan_an",         "Chán ăn",                    "dạ dày"),
+    ("trao_nguoc_dem",  "Trào ngược về đêm",          "trào ngược"),
+    ("nong_rat_hong",   "Nóng rát họng, vướng họng",  "trào ngược"),
+    ("ho_dai_dang",     "Ho dai dẳng sau ăn",         "trào ngược"),
+    ("dau_bung_quan",   "Đau bụng quặn",              "đại tràng"),
+    ("tieu_chay",       "Tiêu chảy",                  "đại tràng"),
+    ("tao_bon",         "Táo bón",                    "đại tràng"),
+    ("phan_song",       "Phân sống",                  "đại tràng"),
+    ("phan_nat",        "Phân nát, không thành khuôn","đại tràng"),
+    ("di_ngoai_nhieu",  "Đi ngoài nhiều lần trong ngày", "đại tràng"),
+    ("mat_ngu",         "Mất ngủ do triệu chứng",     "tiêu hóa chung"),
+    ("met_moi",         "Mệt mỏi kéo dài",            "tiêu hóa chung"),
+]
+
+
 def main() -> None:
     pool = get_pg_pool()
     with pool.connection() as conn:
@@ -211,11 +239,21 @@ def main() -> None:
                 (group, rcode, rten, mo_ta, json.dumps(extra, ensure_ascii=False), i),
             )
 
+        # 4. symptoms -----------------------------------------------------
+        for scode, sten, nhom in SYMPTOMS:
+            conn.execute(
+                "insert into crm.symptoms (code, name, group_name) values (%s, %s, %s) "
+                "on conflict (code) do update "
+                "    set name = excluded.name, group_name = excluded.group_name",
+                (scode, sten, nhom),
+            )
+
         # Báo cáo ---------------------------------------------------------
         for cau, nhan in [
             ("select count(*) as n from crm.pipeline_stages where pipeline_id = %s", "giai đoạn Sale"),
             ("select count(*) as n from crm.lead_reasons", "lý do chưa mua"),
             ("select count(*) as n from crm.ref_codes", "mã ref_codes"),
+            ("select count(*) as n from crm.symptoms", "triệu chứng"),
         ]:
             n = conn.execute(cau, (pid,) if "%s" in cau else None).fetchone()["n"]
             print(f"  {nhan}: {n}")

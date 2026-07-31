@@ -64,6 +64,7 @@ def list_logs(
     user_id: int | None = None,
     action: str = "",
     object_type: str = "",
+    object_id: int | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
@@ -78,6 +79,9 @@ def list_logs(
     if object_type:
         dieu_kien.append("a.object_type = %s")
         tham_so.append(object_type)
+    if object_id is not None:
+        dieu_kien.append("a.object_id = %s")
+        tham_so.append(object_id)
     where = " and ".join(dieu_kien)
 
     pool = get_pg_pool()

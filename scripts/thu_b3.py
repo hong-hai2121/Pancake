@@ -21,6 +21,10 @@ DAU = "__b3test__"
 PASS = 0
 FAIL = 0
 
+# Sale THẬT đang active bị tạm khoá trong lúc test (xem ghi chú trong main) —
+# để module-level cho khối __main__ mở lại được kể cả khi test vỡ giữa chừng.
+_SALE_TAM_KHOA: list[int] = []
+
 
 def ok(ten: str, dieu_kien: bool, them: str = "") -> None:
     global PASS, FAIL
@@ -79,6 +83,19 @@ def main() -> None:
         ly_do = conn.execute(
             "select id from crm.lead_reasons where code = 'gia_cao'"
         ).fetchone()["id"]
+
+        # Vòng tròn theo tải chọn trong TOÀN BỘ Sale active — từ khi seed tài
+        # khoản mẫu (sale01/02, 0 lead, id nhỏ) lead test rơi vào họ chứ không
+        # vào Sale test. Tạm khoá Sale thật trong lúc chạy; __main__ mở lại
+        # trong finally kể cả khi test vỡ giữa chừng.
+        _SALE_TAM_KHOA.extend(r["id"] for r in conn.execute(
+            "update crm.users u set status = 'suspended' "
+            "from crm.roles r "
+            "where r.id = u.role_id and r.name = 'Sale' "
+            "  and u.status = 'active' and u.email not like %s "
+            "returning u.id",
+            (f"{DAU}%",),
+        ).fetchall())
 
     print("== 1. Tạo lead + chia tự động (FR-030) ==")
     l1 = lead_service.create_lead(customer_id=kh1, source=f"{DAU}fb")
@@ -207,4 +224,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        if _SALE_TAM_KHOA:
+            with get_pg_pool().connection() as conn:
+                conn.execute(
+                    "update crm.users set status = 'active' where id = any(%s)",
+                    (_SALE_TAM_KHOA,),
+                )

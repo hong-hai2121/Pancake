@@ -63,7 +63,9 @@ _ICONS = {
 
 # Menu bên trái, chia NHÓM. Mỗi mục: (đường dẫn, nhãn, khoá `active`, icon,
 # quyền cần có). Quyền "" = ai đăng nhập cũng thấy; có mã -> chỉ hiện khi token
-# mang quyền đó (A5). Đây chỉ là ẨN MỤC MENU cho gọn — chặn thật nằm ở route.
+# mang quyền đó; nhiều mã cách nhau "|" = có MỘT trong số đó là hiện (vd mục
+# Quản trị mở cho cả trưởng nhóm). Đây chỉ là ẨN MỤC MENU cho gọn — chặn thật
+# nằm ở route.
 # Nhóm CRM là các màn khung (xem app/web/views/crm.py) — lát cắt B1…B11 làm đầy.
 MENU_GROUPS: list[tuple[str, list[tuple[str, str, str, str, str]]]] = [
     ("CRM", [
@@ -72,17 +74,20 @@ MENU_GROUPS: list[tuple[str, list[tuple[str, str, str, str, str]]]] = [
         ("/crm/pipeline", "Pipeline Sale", "crm-pipeline", "pipeline", ""),
         ("/crm/cong-viec", "Công việc", "crm-tasks", "tasks", ""),
         ("/crm/don-hang", "Đơn hàng", "crm-orders", "orders", ""),
-        ("/crm/cham-soc", "Chăm sóc", "crm-care", "care", ""),
-        ("/crm/mua-lai", "Mua lại", "crm-repurchase", "repurchase", ""),
+        # "Chăm sóc" + "Mua lại" nằm trong mục xổ xuống "Chăm sóc khách hàng"
+        # (_dept_cskh — kiểu Kallet, kèm số đếm), không còn là mục phẳng.
         ("/crm/san-pham", "Sản phẩm", "crm-products", "products", ""),
-        ("/quan-tri/nhan-vien", "Quản trị", "admin", "admin", "user.manage"),
+        ("/quan-tri/nhan-vien", "Quản trị", "admin", "admin",
+         "user.manage|user.manage_team"),
     ]),
+    # Cả nhóm đòi bot.view (chỉ Chủ DN/Admin có) — middleware trong app/main.py
+    # chặn thật theo tiền tố _KHU_BOT, đây chỉ ẩn menu.
     ("Bot Pancake", [
-        ("/bang-dieu-khien", "Bảng điều khiển", "dashboard", "dashboard", ""),
-        ("/tin-nhan", "Tin nhắn", "messages", "messages", ""),
-        ("/khach-hang", "KH Pancake", "customers", "customers", ""),
-        ("/cam-xuc", "Cảm xúc", "sentiment", "sentiment", ""),
-        ("/data/kich-ban", "Dữ liệu bot", "data", "data", ""),
+        ("/bang-dieu-khien", "Bảng điều khiển", "dashboard", "dashboard", "bot.view"),
+        ("/tin-nhan", "Tin nhắn", "messages", "messages", "bot.view"),
+        ("/khach-hang", "KH Pancake", "customers", "customers", "bot.view"),
+        ("/cam-xuc", "Cảm xúc", "sentiment", "sentiment", "bot.view"),
+        ("/data/kich-ban", "Dữ liệu bot", "data", "data", "bot.view"),
     ]),
 ]
 
@@ -96,6 +101,101 @@ def _icon(name: str) -> str:
     )
 
 
+# Chấm màu 13 giai đoạn pipeline ở khối Sale (bảng `pipeline_stages` không có
+# cột màu — tô cố định theo thứ tự sort_order, đủ phân biệt bằng mắt).
+_STAGE_MAU = ["#7a4f9c", "#3b62d9", "#e0a417", "#78909c", "#00897b", "#e5484d",
+              "#2e7d32", "#b0413e", "#5c6bc0", "#8d6e63", "#26a69a", "#ec407a",
+              "#7cb342"]
+
+
+def _sale_dept(active: str, perms: list) -> str:
+    """Mục XỔ XUỐNG 'Sale' (kiểu Kallet — thế chỗ mục Pipeline Sale phẳng):
+    Nhiệm vụ (Bảng chăm sóc) → Cột trên bảng (13 giai đoạn, chấm màu + số lead
+    đang mở — bấm là mở Kanban tô sáng đúng cột) → Công cụ.
+
+    Cùng bộ class nd-* với _dept_cskh cho đồng bộ. <details> thuần nên không
+    cần JS (PJAX chỉ bắt thẻ <a>, bấm tiêu đề xổ/thu không bị chặn); DB lỗi
+    thì lùi về link phẳng như cũ."""
+    on = " on" if active == "crm-pipeline" else ""
+    try:
+        from app.db.repositories.crm_screens_repo import sale_menu
+
+        stages = sale_menu()
+    except Exception:  # noqa: BLE001 — DB chưa lên vẫn phải có menu dùng được
+        return (f'<a class="nav-item{on}" href="/crm/pipeline">'
+                f'{_icon("pipeline")}<span>Pipeline Sale</span></a>')
+
+    cot = "".join(
+        f'<a class="nd-link" href="/crm/pipeline?st={s["id"]}">'
+        f'<span class="nd-dot" style="background:{_STAGE_MAU[i % len(_STAGE_MAU)]}"></span>'
+        f'<span>{escape(s["name"])}</span>'
+        f'<span class="nd-count">{s["so_lead"]}</span></a>'
+        for i, s in enumerate(stages)
+    )
+    cong_cu = ""
+    if "bot.view" in perms:
+        cong_cu += ('<a class="nd-link" href="/data/kich-ban">'
+                    "<span>📖 Thư viện kịch bản</span></a>")
+    cong_cu += ('<a class="nd-link" href="/crm/san-pham">'
+                "<span>🏷️ Bảng giá &amp; liệu trình</span></a>")
+
+    return (
+        f'<details class="nav-dept"{" open" if on else ""}>'
+        f'<summary>{_icon("pipeline")}<span>Sale</span>'
+        '<span class="nd-chev">▾</span></summary>'
+        '<div class="nd-group">Nhiệm vụ</div>'
+        f'<a class="nd-link{on}" href="/crm/pipeline"><span>🎯 Bảng chăm sóc</span></a>'
+        '<div class="nd-group">Cột trên bảng</div>'
+        f"{cot}"
+        '<div class="nd-group">Công cụ</div>'
+        f"{cong_cu}"
+        "</details>"
+    )
+
+
+def _dept_cskh(active: str) -> str:
+    """Khối 'Chăm sóc khách hàng' xổ/thu trong menu trái — CÙNG NẾP `_sale_dept`
+    (class dept/sm-group/sm-link/sm-child/chev, kiểu Kallet): Nhiệm vụ chăm sóc
+    (số đếm thật từ tasks B4, theo người đăng nhập) → Chăm & mua lại.
+
+    DB lỗi thì vẫn hiện khối, chỉ thiếu số. Màn hẹp (<900px) khối xổ bị ẩn —
+    hiện 2 link phẳng mobile-only thay (Chăm sóc/Mua lại không còn mục phẳng)."""
+    on = " on" if active in ("crm-care", "crm-repurchase") else ""
+    flat = (
+        f'<a class="nav-item{" on" if active == "crm-care" else ""} mobile-only" '
+        f'href="/crm/cham-soc">{_icon("care")}<span>Chăm sóc</span></a>'
+        f'<a class="nav-item{" on" if active == "crm-repurchase" else ""} mobile-only" '
+        f'href="/crm/mua-lai">{_icon("repurchase")}<span>Mua lại</span></a>'
+    )
+    try:
+        from app.db.repositories.crm_screens_repo import menu_cskh_counts
+
+        user = current_user.get() or {}
+        so = menu_cskh_counts(int(user.get("sub", 0)) or None)
+    except Exception:  # noqa: BLE001 — menu không được chết vì số đếm
+        so = None
+
+    def n(khoa: str) -> str:
+        return f" ({so[khoa]})" if so is not None else ""
+
+    return flat + (
+        f'<details class="dept"{" open" if on else ""}>'
+        f'<summary class="nav-item{on}">{_icon("care")}'
+        '<span>Chăm sóc khách hàng</span><span class="chev">▸</span></summary>'
+        '<div class="nav-kids">'
+        '<div class="sm-group">Nhiệm vụ chăm sóc</div>'
+        f'<a class="sm-link" href="/crm/cong-viec">🗓️ Cần làm hôm nay{n("hom_nay")}</a>'
+        f'<a class="sm-child" href="/crm/cong-viec">'
+        f'<span class="dot" style="background:#c62828"></span>Quá hạn{n("qua_han")}</a>'
+        f'<a class="sm-child" href="/crm/cong-viec">'
+        f'<span class="dot" style="background:#1565c0"></span>Sắp tới{n("sap_toi")}</a>'
+        '<div class="sm-group">Chăm &amp; mua lại</div>'
+        f'<a class="sm-link" href="/crm/cham-soc">💚 Chăm sóc C01-C09{n("cham_soc")}</a>'
+        f'<a class="sm-link" href="/crm/mua-lai">🔄 Cơ hội mua lại{n("mua_lai")}</a>'
+        "</div></details>"
+    )
+
+
 def _sidebar(active: str) -> str:
     """Menu trái: logo + các nhóm mục; mục đang xem được tô đậm. Mục gắn quyền
     chỉ hiện khi người đăng nhập có quyền đó (đọc từ contextvar middleware đặt)."""
@@ -103,41 +203,50 @@ def _sidebar(active: str) -> str:
     perms = (user or {}).get("perms") or []
     items = ""
     for ten_nhom, muc in MENU_GROUPS:
-        items += f'<div class="nav-group">{escape(ten_nhom)}</div>'
+        muc_hien = ""
         for href, label, key, icon, quyen in muc:
-            if quyen and quyen not in perms:
+            if quyen and not any(m in perms for m in quyen.split("|")):
+                continue
+            if key == "crm-pipeline":
+                # mục Pipeline được nâng thành khối Sale xổ/thu (kiểu Pancake)
+                muc_hien += _sale_dept(active, perms)
                 continue
             cls = "nav-item on" if key == active else "nav-item"
-            items += (
+            muc_hien += (
                 f'<a class="{cls}" href="{href}">{_icon(icon)}<span>{label}</span></a>'
             )
+        # Mục xổ xuống CSKH đứng cuối nhóm CRM (trên nhóm Bot Pancake)
+        if ten_nhom == "CRM" and muc_hien:
+            muc_hien += _dept_cskh(active)
+        # cả nhóm bị ẩn theo quyền -> khỏi in tên nhóm trơ trọi
+        if muc_hien:
+            items += f'<div class="nav-group">{escape(ten_nhom)}</div>' + muc_hien
     return (
         '<aside class="side">'
         '<a class="brand" href="/bang-dieu-khien">'
         '<span class="logo">FB</span><span class="bname">Sales Bot</span></a>'
         f'<nav class="nav">{items}</nav>'
-        + _user_box()
-        + "</aside>"
+        "</aside>"
     )
 
 
 def _user_box() -> str:
-    """Chân sidebar: tên + vai trò người đăng nhập và nút Đăng xuất (A2).
+    """Góc phải topbar: tên + vai trò người đăng nhập và nút Đăng xuất (A2).
 
     Đọc từ contextvar do middleware auth trong app/main.py đặt — không phải sửa
     chữ ký render_shell của 37 route. Không có user (lý thuyết không xảy ra vì
-    web đã khoá) thì rơi về dòng chữ cũ.
+    web đã khoá) thì khỏi hiện gì.
     """
     user = current_user.get()
     if not user:
-        return '<div class="side-foot">Pancake + RAG · nội bộ</div>'
+        return ""
     ten = escape(user.get("name") or user.get("username") or "?")
     vai_tro = escape(user.get("role") or "")
     return (
-        '<div class="side-user">'
+        '<div class="top-user">'
         f'<div class="su-info"><div class="su-name" title="{ten}">{ten}</div>'
         f'<div class="su-role">{vai_tro}</div></div>'
-        '<form method="post" action="/dang-xuat" class="su-form">'
+        '<form method="post" action="/dang-xuat" class="su-form" data-native>'
         '<button class="su-out" title="Đăng xuất">Đăng xuất</button></form>'
         "</div>"
     )
@@ -221,7 +330,8 @@ def render_shell(
         + f'<main class="{main_cls}"><header class="topbar">'
         '<div class="page-head">'
         f'<h1>{escape(heading)}</h1>{sub_html}</div>{actions_html}'
-        f"</header>{tabs}"
+        + _user_box()
+        + f"</header>{tabs}"
         f'<div class="{content_cls}">{body}</div>'
         "</main>"
         + script_html
@@ -303,10 +413,58 @@ a{color:var(--accent)}
 .nav-item.on{background:#fff;color:var(--accent);font-weight:650;
   box-shadow:0 3px 10px rgba(80,50,100,.18)}
 .ico{width:19px;height:19px;flex:0 0 auto}
-.side-foot{margin-top:auto;font-size:11px;color:var(--side-tx);opacity:.6;padding:8px}
 /* tên nhóm menu (CRM / Bot Pancake) */
 .nav-group{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
   color:var(--side-tx);opacity:.55;padding:12px 10px 4px}
+/* ---------- khối bộ phận xổ/thu trong menu trái (Sale, CSKH — kiểu Kallet) ---------- */
+.mobile-only{display:none}          /* link phẳng dự phòng — chỉ hiện màn hẹp */
+.dept>summary{list-style:none;cursor:pointer;user-select:none}
+.dept>summary::-webkit-details-marker{display:none}
+.dept>summary .chev{margin-left:auto;font-size:11px;opacity:.75;
+  transition:transform .15s}
+.dept[open]>summary .chev{transform:rotate(90deg)}
+.nav-kids{padding:2px 0 6px;display:flex;flex-direction:column;gap:1px}
+.sm-group{font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--side-tx);opacity:.5;padding:8px 10px 3px 40px}
+.sm-link,.sm-child{display:flex;align-items:center;gap:8px;
+  padding:6px 10px 6px 40px;border-radius:8px;color:var(--side-tx);
+  text-decoration:none;font-size:13px}
+.sm-child{padding-left:52px}
+.sm-link:hover,.sm-child:hover{background:var(--side-on);color:#fff}
+/* chấm màu trong khối menu: đè .dot toàn cục (chấm live có animation) */
+.sm-link .dot,.sm-child .dot{width:8px;height:8px;border-radius:50%;
+  flex:0 0 auto;box-shadow:none;animation:none}
+.sm-link.star{color:#ffd54f}
+/* mục XỔ XUỐNG trong menu (Sale · Chăm sóc khách hàng — kiểu Kallet):
+   summary trông như nav-item, con thụt vào có chấm màu + số đếm */
+.nav-dept>summary{display:flex;align-items:center;gap:10px;padding:9px 10px;
+  border-radius:10px;color:var(--side-tx);font-size:14px;font-weight:500;
+  cursor:pointer;list-style:none;user-select:none}
+.nav-dept>summary::-webkit-details-marker{display:none}
+.nav-dept>summary:hover{background:var(--side-on);color:#fff}
+/* đang XỔ: cả khối nhận nền tối mờ + viền nhẹ để nổi khỏi phần menu còn lại
+   (phủ cả 2 khối: Sale = .nav-dept, CSKH = .dept; :not(.on) để summary đang
+   active giữ nền trắng chữ tím của .nav-item.on, không bị chữ trắng đè) */
+.nav-dept[open],.dept[open]{background:rgba(0,0,0,.16);
+  border:1px solid rgba(255,255,255,.08);border-radius:12px;
+  padding:2px 4px 8px;margin:2px 0}
+.nav-dept[open]>summary:not(.on),.dept[open]>summary:not(.on){
+  color:#fff;font-weight:650}
+.nav-dept[open]>summary:hover,.dept[open]>summary:hover{background:var(--side-on)}
+.nd-chev{margin-left:auto;font-size:10px;opacity:.7;transition:transform .18s}
+.nav-dept:not([open]) .nd-chev{transform:rotate(-90deg)}
+.nd-group{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--side-tx);opacity:.5;padding:8px 10px 3px 24px}
+.nd-link{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 24px;
+  border-radius:8px;color:var(--side-tx);text-decoration:none;font-size:13px}
+.nd-link:hover{background:var(--side-on);color:#fff}
+.nd-link.on{background:#fff;color:var(--accent);font-weight:650}
+.nd-link>span:not(.nd-dot):not(.nd-count){overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.nd-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.nd-count{margin-left:auto;font-size:11px;background:var(--side-on);
+  border-radius:12px;padding:1px 8px;min-width:22px;text-align:center;flex:none}
+.nd-link.on .nd-count{background:color-mix(in srgb,var(--accent) 14%,transparent)}
 /* Kanban khung (màn CRM tạm): cột giai đoạn + thẻ lead */
 .kanban{display:flex;gap:10px;overflow-x:auto;padding:4px 0}
 .kcol{min-width:150px;flex:1;background:var(--soft);border:1px solid var(--border);
@@ -318,17 +476,19 @@ a{color:var(--accent)}
   padding:0 7px;font-size:11px;color:var(--text)}
 .kcard{background:var(--card);border:1px solid var(--border);border-radius:8px;
   padding:6px 8px;font-size:12.5px;margin-top:6px;box-shadow:var(--shadow)}
-/* khối người đăng nhập + nút đăng xuất (A2) */
-.side-user{margin-top:auto;padding:10px 8px 4px;border-top:1px solid var(--side-on);
-  display:flex;align-items:center;gap:8px}
-.su-info{min-width:0;flex:1}
-.su-name{color:#fff;font-size:12.5px;font-weight:600;white-space:nowrap;
+/* khối người đăng nhập + nút đăng xuất (A2) — góc phải topbar.
+   .page-actions đã mang margin-left:auto (đẩy cả cụm về mép phải); trang nào
+   không có actions thì .top-user tự đẩy mình bằng auto margin của chính nó. */
+.top-user{margin-left:auto;display:flex;align-items:center;gap:10px;min-width:0}
+.page-actions+.top-user{margin-left:0}
+.su-info{min-width:0;max-width:200px;text-align:right}
+.su-name{color:var(--text);font-size:12.5px;font-weight:600;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
-.su-role{color:var(--side-tx);font-size:11px;opacity:.8}
+.su-role{color:var(--sub);font-size:11px}
 .su-form{margin:0}
-.su-out{border:1px solid var(--side-on);background:transparent;color:var(--side-tx);
+.su-out{border:1px solid var(--border);background:transparent;color:var(--sub);
   font-size:11px;padding:4px 8px;border-radius:8px;cursor:pointer;white-space:nowrap}
-.su-out:hover{background:var(--side-on);color:#fff}
+.su-out:hover{border-color:var(--err);color:var(--err);background:var(--err-bg)}
 
 /* ---------- khung phải ---------- */
 .main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh}
@@ -639,6 +799,9 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
   background:var(--bg);font-weight:650}
 .tbl tr:last-child td{border-bottom:0}
 .tbl tr:hover td{background:var(--soft)}
+/* dải tiêu đề nhóm trong bảng nhân viên (màn Quản trị, xếp theo đội) */
+.tbl tr.tgrp td{background:var(--soft);color:var(--accent);font-weight:700;
+  font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;padding:6px 14px}
 .twrap{overflow-x:auto;border-radius:12px}
 
 /* ---------- màn tin nhắn 2 cột ---------- */
@@ -717,14 +880,15 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
   .side{width:100%;flex:none;height:auto;position:static;padding:10px 12px;
     flex-direction:row;align-items:center;gap:12px}
   .brand{padding:0}
-  .side-foot{display:none}
-  /* màn hẹp: giấu tên, giữ nút Đăng xuất */
-  .side-user{margin:0;padding:0;border:0}
+  /* màn hẹp: giấu tên trong topbar, giữ nút Đăng xuất */
   .su-info{display:none}
   .nav{flex-direction:row;overflow-x:auto;gap:4px;margin-left:auto}
   .nav-item span{display:none}
   .nav-item{padding:9px 12px}
   .nav-item.on{box-shadow:inset 0 -3px 0 var(--accent)}
+  /* màn hẹp menu nằm ngang: khối xổ không hợp — ẩn, hiện link phẳng dự phòng */
+  .dept{display:none}
+  .mobile-only{display:flex}
   .topbar,.tabs{padding-left:16px;padding-right:16px}
   .content{padding:16px}
   .inbox{flex-direction:column}
@@ -879,6 +1043,15 @@ _NAV_JS = """
       })
       .then(function(res){
         var doc = new DOMParser().parseFromString(res.html, 'text/html');
+        // Trang NGOÀI shell (màn đăng nhập sau khi bấm Đăng xuất, hoặc bị đá
+        // về /dang-nhap vì phiên hết hạn) không có .side/.main để swap —
+        // trước đây applyDoc lặng lẽ không đổi gì, người dùng tưởng nút hỏng
+        // và phải tự F5. Gặp trang như vậy thì điều hướng THẬT (replace để
+        // không nhét thêm mục history rác).
+        if (!doc.querySelector('.side') || !doc.querySelector('.main')) {
+          location.replace(res.url);
+          return;
+        }
         swap(doc, res.url);
         if (push) history.pushState({pjax: true}, '', res.url);
         here = location.pathname + location.search;
@@ -908,6 +1081,9 @@ _NAV_JS = """
   document.addEventListener('submit', function(e){
     if (e.defaultPrevented) return;
     var f = e.target;
+    // Form gắn data-native (vd Đăng xuất) đi đường trình duyệt THẬT, không
+    // AJAX: submit -> 303 -> nhảy thẳng sang trang đích ngay lập tức.
+    if (f.hasAttribute('data-native')) return;
     // ĐỌC QUA getAttribute, KHÔNG dùng f.method / f.action trực tiếp: form có
     // [LegacyOverrideBuiltIns] nên một ô <input name="method"> (hay "action",
     // "target"...) sẽ CHE property gốc — f.method trả về thẻ <select> chứ không

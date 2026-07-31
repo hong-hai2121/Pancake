@@ -121,10 +121,10 @@ create table if not exists teams (
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     constraint ck_teams_department check (department is null or department in
-        ('sale','cskh','marketing','chuyen_mon','admin'))
+        ('sale','cskh','marketing','chuyen_mon','kho_van','admin'))
 );
 comment on column teams.department is
-    'sale=bán hàng · cskh=chăm sóc khách · marketing · chuyen_mon=chuyên môn/y tế · admin=vận hành';
+    'sale=bán hàng · cskh=chăm sóc khách · marketing · chuyen_mon=chuyên môn/y tế · kho_van=kho vận · admin=vận hành';
 
 create table if not exists users (
     id                 bigint generated always as identity primary key,
@@ -589,6 +589,101 @@ comment on table safety_screenings is
 
 create index if not exists idx_safety_screenings_customer on safety_screenings (customer_id, created_at desc);
 
+-- ------------------------------------------------------------
+-- B5 — Hồ sơ tư vấn + sàng lọc an toàn (FR-050…053)
+-- ------------------------------------------------------------
+
+-- FR-050: phiếu triệu chứng cần thêm thời điểm xuất hiện / liên quan bữa ăn /
+-- ghi chú (ghi chú CHỈ bổ sung, không thay dữ liệu cấu trúc — service chặn)
+alter table customer_symptoms add column if not exists occurs_when   text;
+alter table customer_symptoms add column if not exists meal_relation text
+    check (meal_relation in ('truoc_an','sau_an','khi_doi','khong_lien_quan'));
+alter table customer_symptoms add column if not exists note          text;
+
+-- FR-053: cờ an toàn trên hồ sơ khách — red = cảnh báo đỏ, CHẶN đề xuất liệu
+-- trình (B6 phải gọi consult_service.kiem_duoc_de_xuat trước khi đề xuất)
+alter table customers add column if not exists safety_flag text
+    check (safety_flag in ('red','yellow'));
+
+-- FR-051: kết quả khám khách cung cấp (nội soi, HP, siêu âm...)
+create table if not exists examinations (
+    id          bigint generated always as identity primary key,
+    customer_id bigint not null references customers(id) on delete cascade,
+    exam_type   text not null check (exam_type in ('noi_soi','hp','sieu_am',
+                                                   'xet_nghiem','khac')),
+    exam_date   date,
+    facility    text,
+    conclusion  text,
+    file_url    text,
+    created_by  bigint references users(id) on delete set null,
+    created_at  timestamptz not null default now()
+);
+create index if not exists idx_examinations_customer
+    on examinations (customer_id, exam_date desc);
+
+-- FR-052: thuốc/sản phẩm ĐANG dùng (nhân viên không tự khuyên dừng/đổi thuốc;
+-- có phản ứng bất thường -> service tự mở ca chuyển chuyên môn)
+create table if not exists current_medications (
+    id          bigint generated always as identity primary key,
+    customer_id bigint not null references customers(id) on delete cascade,
+    name        text not null,
+    dosage      text,
+    duration    text,
+    is_active   boolean not null default true,
+    effect      text,
+    reaction    text,
+    created_by  bigint references users(id) on delete set null,
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now()
+);
+create index if not exists idx_current_medications_customer
+    on current_medications (customer_id);
+
+-- FR-052: điều trị/sản phẩm đã dùng TRƯỚC ĐÂY
+create table if not exists previous_treatments (
+    id          bigint generated always as identity primary key,
+    customer_id bigint not null references customers(id) on delete cascade,
+    name        text not null,
+    duration    text,
+    result      text,
+    note        text,
+    created_by  bigint references users(id) on delete set null,
+    created_at  timestamptz not null default now()
+);
+create index if not exists idx_previous_treatments_customer
+    on previous_treatments (customer_id);
+
+-- FR-053 + SAFETY-003…005: ca chuyển chuyên môn (đi kèm 1 task duyet_chuyen_mon
+-- của B4 để nằm trong "việc hôm nay" của người chuyên môn)
+create table if not exists clinical_escalations (
+    id          bigint generated always as identity primary key,
+    customer_id bigint not null references customers(id) on delete cascade,
+    source      text not null default 'manual'
+                check (source in ('safety_check','medication_risk','manual')),
+    reason      text not null,
+    risk_level  text check (risk_level in ('low','medium','high','critical')),
+    status      text not null default 'pending'
+                check (status in ('pending','resolved')),
+    task_id     bigint references tasks(id) on delete set null,
+    created_by  bigint references users(id) on delete set null,
+    assigned_to bigint references users(id) on delete set null,
+    resolution  text,
+    resolved_by bigint references users(id) on delete set null,
+    resolved_at timestamptz,
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now()
+);
+create index if not exists idx_clinical_escalations_status
+    on clinical_escalations (status, created_at desc);
+create index if not exists idx_clinical_escalations_customer
+    on clinical_escalations (customer_id);
+
+-- FR-053: gỡ cảnh báo phải có dấu vết — screening được "xoá" bằng cleared_at
+-- (người chuyên môn resolve), KHÔNG delete dòng
+alter table safety_screenings add column if not exists cleared_at timestamptz;
+alter table safety_screenings add column if not exists cleared_by bigint
+    references users(id) on delete set null;
+
 
 -- ============================================================
 -- MODULE 4 — SẢN PHẨM, LIỆU TRÌNH & ĐƠN HÀNG
@@ -683,6 +778,37 @@ comment on column treatment_rules.priority is 'Số lớn chạy trước';
 
 create index if not exists idx_treatment_rules_template
     on treatment_rules (template_id, priority desc);
+
+-- ------------------------------------------------------------
+-- B6 — versioning giá + phiên bản đề xuất liệu trình (FR-060/062)
+-- ------------------------------------------------------------
+
+-- FR-060 "thay đổi giá tạo phiên bản mới": snapshot giá nằm cùng bảng phiên
+-- bản nội dung — đơn cũ giữ giá cũ vì order_items chốt giá lúc lên đơn
+alter table product_versions add column if not exists price numeric(14,2)
+    check (price is null or price >= 0);
+
+-- FR-062 "lưu phiên bản đề xuất": Sale chọn phương án từ rule engine -> lưu;
+-- có cảnh báo thì phải chuyên môn duyệt (TREATMENT-011) mới tạo được liệu trình
+create table if not exists treatment_recommendations (
+    id             bigint generated always as identity primary key,
+    customer_id    bigint not null references customers(id) on delete cascade,
+    template_id    bigint not null references treatment_templates(id),
+    recommended_by bigint references users(id) on delete set null,
+    status         text not null default 'proposed'
+                   check (status in ('proposed','pending_approval','approved','rejected')),
+    needs_approval boolean not null default false,
+    reasons        jsonb not null default '[]'::jsonb,
+    warnings       jsonb not null default '[]'::jsonb,
+    missing_info   jsonb not null default '[]'::jsonb,
+    note           text,
+    approved_by    bigint references users(id) on delete set null,
+    approved_at    timestamptz,
+    created_at     timestamptz not null default now(),
+    updated_at     timestamptz not null default now()
+);
+create index if not exists idx_treatment_recommendations_customer
+    on treatment_recommendations (customer_id, created_at desc);
 
 create table if not exists orders (
     id               bigint generated always as identity primary key,
@@ -950,6 +1076,17 @@ create table if not exists tasks (
 );
 comment on column tasks.related_id is
     'QUAN HỆ ĐA HÌNH theo related_type — không đặt được FK, phần mềm tự kiểm';
+
+-- B4 (mục 19 BRD): tiêu đề + kết quả bắt buộc khi đóng + ai tạo + dấu leo thang
+alter table tasks add column if not exists title        text;
+alter table tasks add column if not exists result       text;
+alter table tasks add column if not exists created_by   bigint references users(id) on delete set null;
+alter table tasks add column if not exists completed_at timestamptz;
+alter table tasks add column if not exists escalated_at timestamptz;
+comment on column tasks.result is
+    'Mục 19 BRD: KHÔNG đóng việc nếu thiếu kết quả — service chặn, cột này giữ bằng chứng';
+comment on column tasks.escalated_at is
+    'Worker quét việc quá hạn đánh dấu + ghi audit (báo quản lý theo SLA); dời lịch thì xoá dấu';
 
 create index if not exists idx_tasks_assigned on tasks (assigned_to, status, due_at);
 create index if not exists idx_tasks_customer on tasks (customer_id);

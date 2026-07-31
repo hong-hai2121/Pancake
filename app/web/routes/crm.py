@@ -5,7 +5,7 @@ nhập). Khi lát cắt nào làm thật thì thêm kiểm quyền màn đó (vd
 cho /crm/khach-hang) cùng lúc với form thao tác.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from app.db.repositories import crm_screens_repo as repo
@@ -35,15 +35,24 @@ async def khach_hang(q: str = "") -> HTMLResponse:
 
 
 @router.get("/pipeline", response_class=HTMLResponse)
-async def pipeline() -> HTMLResponse:
-    """Màn 11 (khung) — Kanban 13 giai đoạn."""
-    return HTMLResponse(views.render_pipeline(repo.pipeline_board()))
+async def pipeline(st: int = 0) -> HTMLResponse:
+    """Màn 11 (khung) — Kanban 13 giai đoạn. `?st=<stage_id>` tô sáng + cuộn
+    tới cột đó (đường vào từ khối Sale ở menu trái)."""
+    return HTMLResponse(views.render_pipeline(repo.pipeline_board(), st=st))
 
 
 @router.get("/cong-viec", response_class=HTMLResponse)
-async def cong_viec() -> HTMLResponse:
-    """Màn 12 + 26 (khung) — việc quá hạn / hôm nay / sắp tới."""
-    return HTMLResponse(views.render_cong_viec(repo.tasks_groups()))
+async def cong_viec(request: Request, pham_vi: str = "minh") -> HTMLResponse:
+    """Màn 12 + 26 — việc quá hạn / hôm nay / sắp tới (B4 đổ dữ liệu thật).
+
+    Mặc định chỉ việc CỦA NGƯỜI ĐANG ĐĂNG NHẬP (BRD: màn 'việc hôm nay' là
+    của từng người); `?pham_vi=tatca` xem cả đội — trưởng nhóm/giám sát dùng.
+    """
+    user = getattr(request.state, "user", None) or {}
+    cua_ai = None if pham_vi == "tatca" else int(user.get("sub", 0)) or None
+    return HTMLResponse(views.render_cong_viec(
+        repo.tasks_groups(assigned_to=cua_ai), pham_vi=pham_vi,
+    ))
 
 
 @router.get("/don-hang", response_class=HTMLResponse)

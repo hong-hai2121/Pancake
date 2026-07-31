@@ -5,7 +5,34 @@ inbox_store ở tầng route). Khi các lát cắt B1…B11 làm thật, màn n�
 riêng sẽ thay các hàm này bằng service + repo chuyên; phần còn lại giữ nguyên.
 """
 
+import time
+
 from app.db.client import get_pg_pool
+
+# Menu trái vẽ ở MỌI trang nên số lead theo giai đoạn được cache ngắn —
+# lệch tối đa 15 giây, đổi lại không phải query mỗi lần chuyển trang.
+_SALE_MENU_CACHE: tuple[float, list[dict]] | None = None
+
+
+def sale_menu(ttl: float = 15.0) -> list[dict]:
+    """Khối 'Sale' ở sidebar: 13 giai đoạn pipeline + số lead ĐANG MỞ từng cột
+    (khớp với Kanban màn 11 — lead đóng không tính)."""
+    global _SALE_MENU_CACHE
+    if _SALE_MENU_CACHE and time.time() - _SALE_MENU_CACHE[0] < ttl:
+        return _SALE_MENU_CACHE[1]
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """
+            select s.id, s.name, s.is_closed, count(l.id) as so_lead
+              from crm.pipeline_stages s
+              left join crm.leads l on l.stage_id = s.id and l.closed_at is null
+             group by s.id, s.name, s.is_closed
+             order by s.sort_order
+            """
+        ).fetchall()
+    _SALE_MENU_CACHE = (time.time(), rows)
+    return rows
 
 
 def dashboard() -> dict:
@@ -96,21 +123,63 @@ def pipeline_board() -> list[dict]:
     return stages
 
 
-def tasks_groups() -> dict:
-    """Màn Công việc (màn 12/26, khung): quá hạn / hôm nay / sắp tới."""
+# Cache số đếm menu CSKH theo user (menu vẽ ở MỌI trang) — cùng nếp sale_menu
+_CSKH_MENU_CACHE: dict[int | None, tuple[float, dict]] = {}
+
+
+def menu_cskh_counts(user_id: int | None, ttl: float = 15.0) -> dict:
+    """Số đếm nhỏ cho mục menu 'Chăm sóc khách hàng' (sidebar) — 1 câu SQL,
+    cache 15 giây theo người dùng.
+
+    Việc hôm nay/quá hạn/sắp tới đếm THEO NGƯỜI đăng nhập (khớp màn Công việc
+    mặc định 'việc của tôi'); chăm sóc + mua lại đếm toàn hệ thống."""
+    cu = _CSKH_MENU_CACHE.get(user_id)
+    if cu and time.time() - cu[0] < ttl:
+        return cu[1]
+    loc = "and t.assigned_to = %(u)s" if user_id else ""
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        row = conn.execute(
+            f"""
+            select
+              (select count(*) from crm.tasks t
+                where t.status in ('open','in_progress')
+                  and t.due_at::date = current_date and t.due_at >= now() {loc}) as hom_nay,
+              (select count(*) from crm.tasks t
+                where t.status in ('open','in_progress')
+                  and t.due_at < now() {loc}) as qua_han,
+              (select count(*) from crm.tasks t
+                where t.status in ('open','in_progress')
+                  and t.due_at::date > current_date {loc}) as sap_toi,
+              (select count(*) from crm.care_plans) as cham_soc,
+              (select count(*) from crm.repurchase_opportunities
+                where stage not in ('won','lost')) as mua_lai
+            """,
+            {"u": user_id},
+        ).fetchone()
+    _CSKH_MENU_CACHE[user_id] = (time.time(), row)
+    return row
+
+
+def tasks_groups(assigned_to: int | None = None) -> dict:
+    """Màn Công việc (màn 12/26): quá hạn / hôm nay / sắp tới.
+
+    `assigned_to` — B4: màn mặc định lọc theo người đăng nhập, None = cả đội."""
     pool = get_pg_pool()
 
     def _pick(conn, where: str) -> list[dict]:
+        loc_nguoi = "and t.assigned_to = %(ai)s" if assigned_to else ""
         return conn.execute(
             f"""
-            select t.id, t.task_type, t.due_at, t.priority, t.status,
+            select t.id, t.title, t.task_type, t.due_at, t.priority, t.status,
                    c.full_name as khach, u.name as nguoi_lam
               from crm.tasks t
               left join crm.customers c on c.id = t.customer_id
               left join crm.users u on u.id = t.assigned_to
-             where t.status in ('open','in_progress') and {where}
+             where t.status in ('open','in_progress') and {where} {loc_nguoi}
              order by t.due_at limit 30
-            """
+            """,
+            {"ai": assigned_to},
         ).fetchall()
 
     with pool.connection() as conn:

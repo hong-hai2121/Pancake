@@ -30,6 +30,14 @@ def get_role(role_id: int) -> dict | None:
         ).fetchone()
 
 
+def get_role_by_name(name: str) -> dict | None:
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            "select id, name, description from crm.roles where name = %s", (name,)
+        ).fetchone()
+
+
 def create_role(name: str, description: str | None) -> dict:
     pool = get_pg_pool()
     with pool.connection() as conn:
@@ -83,6 +91,15 @@ def list_permissions() -> list[dict]:
 
 
 # ------------------------------------------------------------------ nhóm
+def get_team(team_id: int) -> dict | None:
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            "select id, name, department, manager_id from crm.teams where id = %s",
+            (team_id,),
+        ).fetchone()
+
+
 def list_teams() -> list[dict]:
     pool = get_pg_pool()
     with pool.connection() as conn:
