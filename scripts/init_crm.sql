@@ -36,10 +36,11 @@
 --   thang điểm triệu chứng 0–10 (customer_symptoms + symptom_assessments)
 --   + các cột `status`/`platform` còn bỏ trống, theo đúng quy ước "trạng thái phải có CHECK"
 --
--- NHÓM C — 2 cột ERD đọc không rõ, ĐÃ ĐOÁN VÀ TẠO (đánh dấu "ĐOÁN" ở comment cột):
---   knowledge_documents.access_level  (= "quyền xem tài liệu")
---   scenario_steps.role_level         (= bước này dành cho cấp nào)
---   funnel_events.value               → chốt là TIỀN (VND)
+-- NHÓM C — 2 cột ERD đọc không rõ, nay đã TRA RA từ đặc tả (hết đoán):
+--   knowledge_documents.ai_permission = cột "Quyền AI"     — FR-140 + màn 47
+--   scenario_steps.risk_level         = "Gán mức rủi ro"   — màn 50
+--   scenario_steps.ai_permission      = "Gán quyền AI"     — màn 50 (bổ sung cùng lúc)
+--   funnel_events.value               → chốt là TIỀN (VND) — vẫn là suy đoán
 --
 -- NHÓM D — CHƯA ĐỘNG (partition theo tháng, chính sách lưu ghi âm) — xem cuối file.
 -- ============================================================
@@ -847,7 +848,7 @@ create table if not exists knowledge_documents (
     title          text not null,
     category       text,
     status         text not null default 'draft',
-    access_level   text not null default 'internal',
+    ai_permission  text not null default 'internal',
     approved_by    bigint references users(id) on delete set null,
     effective_from timestamptz,
     effective_to   timestamptz,
@@ -855,13 +856,13 @@ create table if not exists knowledge_documents (
     updated_at     timestamptz not null default now(),
     constraint ck_knowledge_documents_status check (status in
         ('draft','pending','approved','archived')),
-    constraint ck_knowledge_documents_access check (access_level in
-        ('public','internal','restricted'))
+    constraint ck_knowledge_documents_ai_permission check (ai_permission in
+        ('none','internal','send_customer'))
 );
-comment on column knowledge_documents.access_level is
-    'ĐOÁN cột thứ 6 của ERD (ghi là "is_permission / quyền xem"). '
-    'public=gửi được cho khách · internal=nội bộ mọi nhân sự · restricted=chỉ chuyên môn. '
-    'Nếu ERD thật là boolean thì: alter table ... drop column access_level, add column is_permission boolean';
+comment on column knowledge_documents.ai_permission is
+    'Cột "Quyền AI" — chốt theo FR-140 (danh sách dữ liệu) và màn 47 (cột cuối bảng). '
+    'none=AI không được dùng · internal=AI dùng để soạn cho nhân viên, không gửi thẳng khách · '
+    'send_customer=được phép gửi cho khách. Ăn khớp FR-142 (nhân viên duyệt trước khi gửi).';
 
 create table if not exists knowledge_versions (
     id          bigint generated always as identity primary key,
@@ -911,20 +912,26 @@ create table if not exists scenario_steps (
     customer_message text,
     required         boolean not null default false,
     next_step_code   text,
-    role_level       text not null default 'all',
+    risk_level       text,
+    ai_permission    text not null default 'internal',
     created_at       timestamptz not null default now(),
     updated_at       timestamptz not null default now(),
     unique (scenario_id, step_code),
     constraint ck_scenario_steps_type check (step_type is null or step_type in
-        ('question','message','action','branch','end')),
-    constraint ck_scenario_steps_role_level check (role_level in
-        ('all','sale','cskh','chuyen_mon'))
+        ('question','message','action','branch','block','end')),
+    constraint ck_scenario_steps_risk check (risk_level is null or risk_level in
+        ('low','medium','high','critical')),
+    constraint ck_scenario_steps_ai_permission check (ai_permission in
+        ('none','internal','send_customer'))
 );
-comment on column scenario_steps.role_level is
-    'ĐOÁN cột gần cuối của ERD ("bước này dành cho cấp nào"). Dùng chung danh mục với teams.department. '
-    'chuyen_mon = bước đụng nội dung y tế, chỉ người có chuyên môn được nói';
+comment on column scenario_steps.risk_level is
+    'Cột "Gán mức rủi ro" của màn 50 (Trình thiết kế cây kịch bản). Dùng chung thang với '
+    'consultation_sessions / call_evaluations / safety_screenings / ai_recommendations';
+comment on column scenario_steps.ai_permission is
+    'Cột "Gán quyền AI" của màn 50. Cùng danh mục với knowledge_documents.ai_permission';
 comment on column scenario_steps.step_type is
-    'question=hỏi khách · message=đọc mẫu câu · action=thao tác · branch=rẽ nhánh theo scenario_rules · end=kết thúc';
+    'question=hỏi khách · message=đọc mẫu câu · action=thao tác · branch=rẽ nhánh theo scenario_rules · '
+    'block=chặn bước (màn 50 "Chặn bước") · end=kết thúc';
 comment on column scenario_steps.question_text is 'Câu hỏi cho tư vấn viên';
 comment on column scenario_steps.customer_message is 'Mẫu câu nói với khách';
 
