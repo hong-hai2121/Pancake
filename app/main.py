@@ -1,6 +1,6 @@
 """Điểm khởi động ứng dụng: tạo FastAPI app và gắn các route.
 
-Luồng hiện tại dùng POLLING qua Pancake (app/pancake) để nhận/ trả lời tin nhắn,
+Luồng hiện tại dùng POLLING qua Pancake (app/integrations/pancake) để nhận/ trả lời tin nhắn,
 KHÔNG dùng webhook Facebook nữa — nên chỉ đăng ký `pancake_router`.
 (Thư mục app/webhook đã bị bỏ; nếu sau này muốn dùng lại webhook Graph thì thêm
 router tương ứng vào đây.)
@@ -12,12 +12,12 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
-from app.cam_xuc.routes import router as cam_xuc_router
-from app.config import settings
-from app.data.routes import router as data_router
-from app.pancake.client import close_http
-from app.pancake.routes import router as pancake_router
-from app.ui.routes import router as ui_router
+from app.web.routes.sentiment import router as cam_xuc_router
+from app.core.config import settings
+from app.web.routes.data import router as data_router
+from app.integrations.pancake.client import close_http
+from app.web.routes.pancake import router as pancake_router
+from app.web.routes.main import router as ui_router
 
 
 @asynccontextmanager
@@ -29,7 +29,7 @@ async def lifespan(_app: FastAPI):
     bằng `INBOX_POLL_ENABLED` / `SENTIMENT_ENABLED` trong .env.
 
     Client HTTP tới Pancake được dùng CHUNG cho cả vòng đời app (giữ keep-alive,
-    đỡ bắt tay TLS mỗi request — xem app/pancake/client.py) nên phải tự đóng lại
+    đỡ bắt tay TLS mỗi request — xem app/integrations/pancake/client.py) nên phải tự đóng lại
     ở đây, không còn `async with` tự đóng sau mỗi lời gọi nữa.
     """
     tasks: list[asyncio.Task] = []
@@ -64,7 +64,7 @@ app = FastAPI(title="FB Sales Bot", lifespan=lifespan)
 app.include_router(ui_router)
 
 # Gắn toàn bộ route Pancake: webview danh sách page, xem hội thoại, trả lời,
-# auto-refresh fragment, poll... (xem app/pancake/routes.py).
+# auto-refresh fragment, poll... (xem app/web/routes/pancake.py).
 app.include_router(pancake_router)
 
 # Giao diện quản lý dữ liệu bot: thêm/xem/xoá kịch bản & hội thoại mẫu (/data).
@@ -88,7 +88,7 @@ def poller_status(limit: int = 20) -> dict:
     ngồi canh log console, và xem được cả khi server chạy nền không có console.
     `limit` = số hội thoại tiêu cực gần nhất lấy từ kho.
     """
-    from app.db import inbox_store
+    from app.db.repositories import inbox_store
 
     out: dict = {}
     try:

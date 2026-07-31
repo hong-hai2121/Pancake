@@ -5,19 +5,19 @@
   - Thử tin nhắn: mô phỏng tin khách để xem bot truy xuất được gì.
 Hai tab đầu đều có: form thêm mới (tự tạo embedding khi lưu) + danh sách + nút xoá.
 
-Phần khung (menu trái, topbar, CSS) lấy từ `app.ui.shell`.
+Phần khung (menu trái, topbar, CSS) lấy từ `app.web.shell`.
 """
 
 import json
 from datetime import datetime, timezone
 from html import escape
 
-from app.bot.prompt import NO_MATCH_SENTINEL
-from app.config import settings
-from app.pancake.client import mask_token
-from app.pancake.switches import is_page_enabled
-from app.ui.shell import flash as flash_bar
-from app.ui.shell import render_shell, tabs_bar
+from app.ai.prompt import NO_MATCH_SENTINEL
+from app.core.config import settings
+from app.integrations.pancake.client import mask_token
+from app.integrations.pancake.switches import is_page_enabled
+from app.web.shell import flash as flash_bar
+from app.web.shell import render_shell, tabs_bar
 
 
 def _fmt_dt(iso: str) -> str:
@@ -416,7 +416,7 @@ _SIM_INTRO = (
 
 # --------------------------------------------------------------- thử API
 # Mẫu sẵn: (nhãn, method, path, "k=v" mỗi tham số, dùng public API?)
-# Lấy đúng các endpoint mà app đang gọi thật (xem app/pancake/client.py).
+# Lấy đúng các endpoint mà app đang gọi thật (xem app/integrations/pancake/client.py).
 _API_PRESETS = [
     ("Danh sách page", "GET", "pages", [], False),
     ("Hội thoại của 1 page", "GET", "pages/{page_id}/conversations",
@@ -534,10 +534,10 @@ def render_api_test(
 
     ⚠️ XOÁ KHI XONG DỰ ÁN — tab này phơi access_token + page ID ra màn hình,
     chỉ dùng để thử ở localhost. Muốn bỏ: xoá route `/data/thu-api`
-    (app/data/routes.py), 3 hàm `render_api_test`/`_api_reference`/
+    (app/web/routes/data.py), 3 hàm `render_api_test`/`_api_reference`/
     `_render_api_result` + `_API_JS`/`_API_PRESETS` ở file này, dòng tab trong
-    `_TABS`, hàm `raw_call`/`mask_token` (app/pancake/client.py) và khối CSS
-    "tab Thử API" trong app/ui/shell.py.
+    `_TABS`, hàm `raw_call`/`mask_token` (app/integrations/pancake/client.py) và khối CSS
+    "tab Thử API" trong app/web/shell.py.
     """
     rows = "".join(_kv_row(k, v) for k, v in (pairs or [])) or _kv_row()
     base = (

@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     # --- Chọn nơi lưu dữ liệu ---
     # postgres = Postgres + pgvector cài trên máy này (mặc định).
     # supabase = Postgres trên cloud của Supabase (REST + pgvector).
-    # Đổi backend KHÔNG đổi code: mọi hàm trong app/db/queries.py giữ nguyên
+    # Đổi backend KHÔNG đổi code: mọi hàm trong app/db/repositories/queries.py giữ nguyên
     # chữ ký, chỉ định tuyến sang lớp cài đặt tương ứng (xem app/db/backends/).
     db_backend: str = "postgres"            # postgres | supabase
 
@@ -120,5 +120,5 @@ def get_settings() -> Settings:
     return Settings()
 
 
-# Import sẵn để mọi nơi chỉ cần `from app.config import settings`.
+# Import sẵn để mọi nơi chỉ cần `from app.core.config import settings`.
 settings = get_settings()

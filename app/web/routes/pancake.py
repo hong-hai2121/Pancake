@@ -9,7 +9,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.pancake.client import (
+from app.integrations.pancake.client import (
     PancakeError,
     get_conversation,
     get_page,
@@ -18,7 +18,7 @@ from app.pancake.client import (
     send_message,
     token_owner,
 )
-from app.pancake.webview import (
+from app.web.views.pancake import (
     render_conversation,
     render_error,
     render_pages,

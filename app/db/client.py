@@ -9,7 +9,7 @@ Backend nào được dùng là do `DB_BACKEND` trong .env quyết định:
 
 from functools import lru_cache
 
-from app.config import settings
+from app.core.config import settings
 
 
 @lru_cache

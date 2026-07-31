@@ -3,7 +3,7 @@
 import json
 import re
 
-from app.rag.llm import complete
+from app.ai.llm import complete
 
 DISTILL_PROMPT = (
     "Dưới đây là một đoạn chat giữa khách và nhân viên bán hàng đã chốt đơn.\n"

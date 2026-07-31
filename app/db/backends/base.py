@@ -1,6 +1,6 @@
 """Giao diện chung mà mọi backend lưu trữ phải cài đặt.
 
-`app/db/queries.py` chỉ nói chuyện qua giao diện này, nên đổi nơi lưu dữ liệu
+`app/db/repositories/queries.py` chỉ nói chuyện qua giao diện này, nên đổi nơi lưu dữ liệu
 (Supabase cloud <-> SQLite trên máy) KHÔNG phải sửa một dòng nào ở brain / flow /
 ui / ingestion.
 

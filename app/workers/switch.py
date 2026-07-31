@@ -7,17 +7,16 @@ worker đọc lại MỖI vòng lặp → bấm nút trên giao diện là có t
 
 Giá trị mặc định khi chưa có file: lấy theo `.env` (`SENTIMENT_ENABLED`,
 `SENTIMENT_METHOD`) — nên hành vi của bản cũ giữ nguyên cho tới khi bạn bấm nút
-lần đầu. Cùng kiểu với công tắc BẬT/TẮT page ở `app/pancake/switches.py`.
+lần đầu. Cùng kiểu với công tắc BẬT/TẮT page ở `app/integrations/pancake/switches.py`.
 """
 
 import json
 import os
-from pathlib import Path
 
-from app.config import settings
+from app.core.config import settings
+from app.core.paths import PROJECT_ROOT
 
-# app/workers/switch.py -> parents[2] = gốc project (giống page_switches.json)
-_FILE = Path(__file__).resolve().parents[2] / "sentiment_switch.json"
+_FILE = PROJECT_ROOT / "sentiment_switch.json"
 
 _CACH_QUET_HOP_LE = ("keyword", "llm")
 

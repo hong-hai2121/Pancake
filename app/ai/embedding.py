@@ -8,7 +8,7 @@ của model, KHÔNG cắt bớt (không mất thông tin).
 
 from functools import lru_cache
 
-from app.config import settings
+from app.core.config import settings
 
 
 class EmbeddingError(RuntimeError):

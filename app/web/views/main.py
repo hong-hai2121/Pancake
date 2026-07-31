@@ -1,16 +1,16 @@
 """Dựng HTML cho 3 màn hình chung: Bảng điều khiển, Tin nhắn, Khách hàng.
 
-Chỉ lo phần hiển thị — dữ liệu do `app/ui/routes.py` lấy sẵn rồi truyền vào.
+Chỉ lo phần hiển thị — dữ liệu do `app/web/routes/main.py` lấy sẵn rồi truyền vào.
 Dùng lại các hàm dựng thẻ/bong bóng của Pancake để 2 màn chat giống hệt nhau.
 """
 
 from html import escape
 from urllib.parse import urlencode
 
-from app.pancake.client import ALL_PAGES
-from app.pancake.client import tag_label as _tag_label
-from app.pancake.switches import is_page_enabled
-from app.pancake.webview import (
+from app.integrations.pancake.client import ALL_PAGES
+from app.integrations.pancake.client import tag_label as _tag_label
+from app.integrations.pancake.switches import is_page_enabled
+from app.web.views.pancake import (
     _avatar,
     _fmt_dt,
     _relative_time,
@@ -20,7 +20,7 @@ from app.pancake.webview import (
     render_recent_list,
     render_thread,
 )
-from app.ui.shell import render_shell, stat
+from app.web.shell import render_shell, stat
 
 
 def render_tag_filter(
@@ -59,7 +59,7 @@ def _page_select(
 ) -> str:
     """Ô chọn page ở góc phải topbar; đổi lựa chọn là nhảy trang luôn.
 
-    `data-nav-tpl` để `_NAV_JS` (app/ui/shell.py) bắt sự kiện đổi lựa chọn và
+    `data-nav-tpl` để `_NAV_JS` (app/web/shell.py) bắt sự kiện đổi lựa chọn và
     điều hướng bằng AJAX, thay vì gán thẳng location.href (tải lại cả trang).
 
     `all_label` — có thì thêm mục "gộp mọi page" (value=ALL) lên đầu. Chỉ màn

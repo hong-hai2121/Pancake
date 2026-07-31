@@ -12,7 +12,7 @@ import json
 import sys
 from pathlib import Path
 
-from app.db.queries import insert_script
+from app.db.repositories.queries import insert_script
 
 
 async def load(path: str = "data/kich_ban.json") -> int:

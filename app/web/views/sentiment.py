@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from urllib.parse import urlencode
 
-from app.cam_xuc import sentiment_engine
-from app.ui.shell import flash, render_shell, stat
+from app.ai import sentiment as sentiment_engine
+from app.web.shell import flash, render_shell, stat
 
 # Pancake trả giờ UTC; hiển thị theo giờ VN cho khớp các màn khác.
 _TZ = timezone(timedelta(hours=7))

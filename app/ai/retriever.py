@@ -1,7 +1,7 @@
 """Tìm top-k cặp hỏi–đáp liên quan trong hoi_thoai_mau."""
 
-from app.db.queries import search_similar
-from app.rag.embedding import embed
+from app.db.repositories.queries import search_similar
+from app.ai.embedding import embed
 
 
 async def retrieve(text: str, k: int = 5) -> list[str]:

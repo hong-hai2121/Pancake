@@ -7,7 +7,7 @@ nối lại webhook/Send API của Meta.
 
 import httpx
 
-from app.config import settings
+from app.core.config import settings
 
 # Endpoint Send API của Meta (v19.0). "me" = chính page ứng với page access token.
 GRAPH_API_URL = "https://graph.facebook.com/v19.0/me/messages"

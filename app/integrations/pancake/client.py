@@ -11,8 +11,9 @@ from pathlib import Path
 
 import httpx
 
-from app.config import settings
-from app.pancake.switches import is_page_enabled
+from app.core.config import settings
+from app.core.paths import ENV_FILE
+from app.integrations.pancake.switches import is_page_enabled
 
 # Nhãn tiếng Việt cho từng nhóm page mà Pancake trả về trong `categorized`.
 # Bỏ qua `activated_page_ids` vì đó là list id, không phải list page.
@@ -225,8 +226,8 @@ def _tag_page_ids() -> set[str]:
 
 
 def _env_path() -> Path:
-    """Đường dẫn file .env ở gốc project (app/pancake/client.py -> parents[2])."""
-    return Path(__file__).resolve().parents[2] / ".env"
+    """Đường dẫn file .env ở gốc project (xem app/core/paths.py)."""
+    return ENV_FILE
 
 
 def _save_page_token(page_id: str, token: str) -> None:

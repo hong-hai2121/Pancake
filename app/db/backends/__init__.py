@@ -10,7 +10,7 @@ bất kỳ chỗ nào khác trong app.
 
 from functools import lru_cache
 
-from app.config import settings
+from app.core.config import settings
 
 # Backend mặc định khi .env không có DB_BACKEND.
 DEFAULT_BACKEND = "postgres"

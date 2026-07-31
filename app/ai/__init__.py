@@ -1,8 +1,14 @@
-"""Màn hình "Cảm xúc": theo dõi + BẬT/TẮT worker quét tin nhắn tiêu cực.
+"""Toàn bộ phần AI của hệ thống, gom về một chỗ.
 
-    routes.py  — /cam-xuc (xem), /cam-xuc/bat-tat, /cam-xuc/cach-quet, /cam-xuc/quet-lai
-    webview.py — dựng HTML
+    llm.py        — gọi model sinh văn bản (OpenAI/tương thích)
+    embedding.py  — sinh vector cho tìm kiếm ngữ nghĩa
+    retriever.py  — tra kho tri thức bằng vector
+    prompt.py     — dựng prompt (chọn câu mẫu, trích tri thức, gợi ý trả lời)
+    brain.py      — điều phối RAG: hỏi → tìm → chọn câu trả lời
+    session.py    — trạng thái hội thoại nhiều bước của từng khách
+    flow.py       — bước tiếp theo trong luồng nghiệp vụ (còn stub)
+    sentiment.py  — quét cảm xúc tiêu cực (từ khoá hoặc LLM)
 
-Worker thật nằm ở `app/workers/sentiment.py`; trang này chỉ đọc kho
-`watcher.hoi_thoai` và lật công tắc ở `app/workers/switch.py`.
+Trước đây nằm rải ở `app/rag`, `app/bot` và `app/cam_xuc`. Đặc tả CRM còn cần
+thêm chấm điểm cuộc gọi và kiểm duyệt nội dung — cũng sẽ đặt vào đây.
 """

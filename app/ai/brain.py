@@ -6,14 +6,14 @@ RAG (tìm hội thoại mẫu tương tự) + LLM để trả lời tự nhiên.
 
 import json
 
-from app.bot.flow import next_step
-from app.bot.prompt import build_extract_prompt, build_prompt, build_suggest_prompt
-from app.bot.session import get_session, save_session
-from app.config import settings
-from app.db.queries import search_similar
-from app.rag.embedding import embed
-from app.rag.llm import complete
-from app.rag.retriever import retrieve
+from app.ai.flow import next_step
+from app.ai.prompt import build_extract_prompt, build_prompt, build_suggest_prompt
+from app.ai.session import get_session, save_session
+from app.core.config import settings
+from app.db.repositories.queries import search_similar
+from app.ai.embedding import embed
+from app.ai.llm import complete
+from app.ai.retriever import retrieve
 
 # Số câu mẫu tương đồng gửi lên GPT để CHỌN (top N trong số top-k đã tìm được).
 _SUGGEST_CANDIDATES = 3
@@ -181,7 +181,7 @@ async def extract_qa_candidates(transcript: str) -> list[dict]:
     """Trích đề xuất cặp hỏi-đáp từ 1 đoạn hội thoại thật (nút "Trích tri thức").
 
     CHỈ đề xuất — KHÔNG ghi DB (người dùng xem/sửa/bỏ ở màn hình trước khi bấm
-    Lưu, xem app/ui/routes.py). Hội thoại rỗng hoặc model không trích được gì
+    Lưu, xem app/web/routes/main.py). Hội thoại rỗng hoặc model không trích được gì
     hợp lệ -> trả về [].
     """
     transcript = (transcript or "").strip()

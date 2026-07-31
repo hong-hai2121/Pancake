@@ -19,9 +19,9 @@ Các hàm là `async` để gọi được từ handler FastAPI và vì `embed()
 riêng phần chạm DB vẫn đồng bộ (blocking) đúng như hành vi vốn có.
 """
 
-from app.config import settings
+from app.core.config import settings
 from app.db.backends import get_backend
-from app.rag.embedding import embed
+from app.ai.embedding import embed
 
 
 def _count(table: str, only_with_embedding: bool = False) -> int:

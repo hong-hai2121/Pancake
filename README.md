@@ -5,8 +5,13 @@ inbox, trả lời khách, và có **"não" RAG + LLM (gpt-4o-mini)** để gợ
 trả lời tự nhiên.
 
 > Không dùng webhook Facebook. Tin nhắn được lấy bằng cách **gọi (poll) API
-> Pancake** định kỳ. Thư mục `app/webhook/` cũ đã bỏ; `app/messenger/` (Facebook
-> Send API) vẫn giữ nhưng hiện không dùng.
+> Pancake** định kỳ. Thư mục `app/webhook/` cũ đã bỏ; `app/integrations/messenger/`
+> (Facebook Send API) vẫn giữ nhưng hiện không dùng.
+
+> **📐 Dự án đang mở rộng thành CRM.** Đặc tả nghiệp vụ (60 chức năng, 80 màn hình,
+> ~250 endpoint, 56 bảng) nằm trong [docs/](docs/); lộ trình và bản đồ file cũ → mới
+> ở [docs/KE-HOACH-TAI-CAU-TRUC.md](docs/KE-HOACH-TAI-CAU-TRUC.md). Cây thư mục bên
+> dưới **đã đổi** ở bước 1 — code chạy y như cũ, chỉ chuyển chỗ.
 
 ## 🚀 Chạy dự án
 
@@ -107,44 +112,66 @@ pancakebot/
 ├── requirements.txt
 │
 ├── app/
-│   ├── main.py             # khởi động FastAPI, đăng ký 3 router (ui/pancake/data)
-│   ├── config.py           # đọc .env -> settings dùng chung
+│   ├── main.py             # khởi động FastAPI, đăng ký 4 router web
 │   │
-│   ├── ui/                 # ⭐ khung giao diện chung + 3 mục menu đầu
+│   ├── core/               # ⭐ hạ tầng dùng chung, không dính nghiệp vụ
+│   │   ├── config.py       # đọc .env -> settings dùng chung
+│   │   └── paths.py        # PROJECT_ROOT / ENV_FILE (hết đếm parents[N])
+│   │
+│   ├── web/                # ⭐ TOÀN BỘ giao diện server-rendered
 │   │   ├── shell.py        # menu trái + topbar + TOÀN BỘ CSS của dự án
-│   │   ├── webview.py       # render Bảng điều khiển / Tin nhắn / Khách hàng
-│   │   └── routes.py        # /, /bang-dieu-khien, /tin-nhan, /khach-hang
+│   │   ├── routes/
+│   │   │   ├── main.py      # /, /bang-dieu-khien, /tin-nhan, /khach-hang
+│   │   │   ├── pancake.py   # /pancake/... (webview + JSON + reply)
+│   │   │   ├── data.py      # /data/kich-ban, /data/hoi-thoai, /data/thu-tin-nhan
+│   │   │   └── sentiment.py # /cam-xuc/... (xem tiêu cực, bật/tắt worker, từ khoá)
+│   │   └── views/           # dựng HTML, KHÔNG chạm DB
+│   │       ├── main.py · pancake.py · data.py · sentiment.py
 │   │
-│   ├── pancake/            # ⭐ tích hợp Pancake (đang dùng chính)
-│   │   ├── client.py       # gọi Pancake API: list page (cache 60s), hội thoại, gửi
-│   │   ├── webview.py       # render HTML: danh sách page, người nhắn, khung chat
-│   │   └── routes.py        # các endpoint /pancake/... (webview + JSON + reply)
+│   ├── integrations/       # ⭐ mọi kết nối ra hệ thống ngoài
+│   │   ├── pancake/
+│   │   │   ├── client.py    # gọi Pancake API: list page (cache 60s), hội thoại, gửi
+│   │   │   └── switches.py  # công tắc BẬT/TẮT từng page
+│   │   ├── messenger/
+│   │   │   └── send_api.py  # Facebook Send API (giữ lại, hiện không dùng)
+│   │   └── telegram.py      # bắn cảnh báo tiêu cực cho quản trị
 │   │
-│   ├── data/               # ⭐ giao diện tự nhập dữ liệu cho bot (menu "Dữ liệu bot")
-│   │   ├── webview.py       # render 3 tab: kịch bản / hội thoại mẫu / thử tin nhắn
-│   │   └── routes.py        # /data/kich-ban, /data/hoi-thoai, /data/thu-tin-nhan
-│   │
-│   ├── bot/                # "não" quyết định trả lời
-│   │   ├── brain.py         # điều phối: kịch bản trước, không thì RAG + LLM
-│   │   ├── flow.py          # kịch bản Bảng 1 (khung, chưa cài logic khớp)
-│   │   ├── session.py       # phiên khách theo (page_id, psid) — đã căn schema
-│   │   └── prompt.py        # ghép persona + ngữ cảnh RAG + câu hỏi
-│   │
-│   ├── rag/                # tìm kiếm ngữ nghĩa + sinh câu trả lời
+│   ├── ai/                 # ⭐ toàn bộ phần AI (gộp từ rag/ + bot/ + cam_xuc/)
 │   │   ├── embedding.py     # vector hóa câu (OpenAI text-embedding-3-small, 1536d)
 │   │   ├── retriever.py     # embed câu hỏi -> tìm cặp Q&A gần nhất
-│   │   └── llm.py           # gọi LLM (OpenAI gpt-4o-mini)
+│   │   ├── llm.py           # gọi LLM (OpenAI gpt-4o-mini)
+│   │   ├── brain.py         # điều phối: kịch bản trước, không thì RAG + LLM
+│   │   ├── prompt.py        # ghép persona + ngữ cảnh RAG + câu hỏi
+│   │   ├── session.py       # phiên khách theo (page_id, psid) — đã căn schema
+│   │   ├── flow.py          # kịch bản Bảng 1 (khung, chưa cài logic khớp)
+│   │   ├── sentiment.py     # quét cảm xúc tiêu cực (từ khoá hoặc LLM)
+│   │   └── keywords.json    # danh sách từ khoá tiêu cực, sửa được từ giao diện
 │   │
 │   ├── db/                  # đổi nơi lưu dữ liệu bằng DB_BACKEND, không sửa code
-│   │   ├── queries.py       # ⭐ API dùng chung — mọi nơi khác chỉ import từ đây
 │   │   ├── client.py        # tạo kết nối (pool psycopg / client Supabase)
+│   │   ├── repositories/
+│   │   │   ├── queries.py       # ⭐ kho RAG của bot (schema `public`)
+│   │   │   ├── inbox_store.py   # kho hội thoại poll về (schema `watcher`)
+│   │   │   └── sentiment_log.py # nhật ký cảnh báo tiêu cực (schema `watcher`)
 │   │   └── backends/
 │   │       ├── base.py         # hợp đồng chung mọi backend phải theo
 │   │       ├── postgres_be.py  # ⭐ Postgres + pgvector trên máy này (mặc định)
 │   │       └── supabase_be.py  # Postgres cloud, tìm kiếm qua RPC (dự phòng)
 │   │
-│   └── messenger/
-│       └── send_api.py      # Facebook Send API (giữ lại, hiện không dùng)
+│   ├── workers/             # chạy nền suốt vòng đời server
+│   │   ├── poller.py        # poll hội thoại Pancake về kho
+│   │   ├── sentiment.py     # quét cảm xúc + báo Telegram
+│   │   └── switch.py        # công tắc bật/tắt worker cảm xúc
+│   │
+│   ├── api/v1/              # ✗ CHƯA CÓ — REST /api/v1 theo đặc tả CRM
+│   ├── schemas/             # ✗ CHƯA CÓ — Pydantic in/out
+│   ├── services/            # ✗ CHƯA CÓ — nghiệp vụ thuần, không import FastAPI
+│   └── automation/          # ✗ CHƯA CÓ — máy luật KHI–NẾU–THÌ
+│
+├── docs/                    # ⭐ đặc tả CRM + kế hoạch tái cấu trúc
+│   ├── KE-HOACH-TAI-CAU-TRUC.md     # bản đồ file cũ -> mới, lộ trình 4 bước
+│   ├── DANH-SACH-BANG-VA-QUAN-HE.md # 56 bảng, 6 module
+│   └── *.pdf                        # đặc tả chức năng / màn hình / API
 │
 ├── ingestion/              # chạy OFFLINE để nạp dữ liệu vào DB
 │   ├── load_scripts.py      # nạp kịch bản (data/kich_ban.json) -> kich_ban
@@ -154,8 +181,10 @@ pancakebot/
 ├── docker-compose.yml       # ⭐ bật Postgres + pgvector trên máy: docker compose up -d
 │
 ├── scripts/
-│   ├── init_pg.sql          # schema Postgres local (app tự tạo, file này để tham khảo)
+│   ├── init_pg.sql          # schema bot (schema `public`, app tự tạo khi chạy)
+│   ├── init_crm.sql         # ⭐ 56 bảng CRM (schema `crm`) — chạy tay, idempotent
 │   ├── rpc_match.sql        # 2 hàm RPC tìm kiếm — CHỈ cần cho backend supabase
+│   ├── backfill_kho_hoi_thoai.py        # nạp lại kho hội thoại từ Pancake
 │   ├── migrate_supabase_to_postgres.py  # chép dữ liệu cloud -> Postgres máy mình
 │   └── migrate_sqlite_to_postgres.py    # cứu dữ liệu từ file .db cũ (chạy 1 lần)
 │
@@ -163,19 +192,24 @@ pancakebot/
     └── embed-insert/        # Edge Function — KHÔNG dùng (đã chọn chạy ở máy mình)
 ```
 
+**Ba schema trong cùng database `pancakebot`** — `public.*` cho bot RAG,
+`watcher.*` cho kho hội thoại + cảnh báo tiêu cực, `crm.*` cho 56 bảng CRM.
+⚠️ `crm.customers` và `watcher.customers` **trùng tên, khác nghĩa hoàn toàn**;
+code đụng CRM phải ghi rõ tiền tố `crm.`.
+
 ### Luồng trả lời (khi dùng não)
 
 ```
-Tin khách ──> bot/brain ──┬── bot/flow (kịch bản) ──> trả lời luôn nếu khớp
+Tin khách ──> ai/brain ───┬── ai/flow (kịch bản) ──> trả lời luôn nếu khớp
                           │
-                          └── rag/retriever ─embed─> rag/embedding
+                          └── ai/retriever ──embed──> ai/embedding
                                     │  tìm cosine trên hoi_thoai_mau (vector 1536)
                                     ▼
-                              db/queries ──> db/backends ──┬─ postgres (pgvector, máy mình)
-                                    │                      └─ supabase (pgvector qua RPC)
+                     db/repositories/queries ──> db/backends ──┬─ postgres (pgvector, máy mình)
+                                    │                          └─ supabase (pgvector qua RPC)
                                     │
                                     ▼
-                       bot/prompt ──> rag/llm (gpt-4o-mini) ──> câu trả lời
+                       ai/prompt ──> ai/llm (gpt-4o-mini) ──> câu trả lời
 ```
 
 ## Cấu hình `.env`
@@ -437,7 +471,7 @@ Phần quét cảm xúc **dùng lại nguyên bộ não của ZPancake** —
 cực" là cả hai bên ăn theo), tin báo Telegram giữ nguyên định dạng. Hội thoại
 tiêu cực hiện badge **⚠ tiêu cực** ngay trên thẻ ở màn Tin nhắn.
 
-**Giao diện: menu trái → "Cảm xúc"** (`/cam-xuc`) — [app/cam_xuc/](app/cam_xuc/):
+**Giao diện: menu trái → "Cảm xúc"** (`/cam-xuc`) — [app/web/routes/sentiment.py](app/web/routes/sentiment.py):
 
 | Khu vực                         | Làm gì                                                                                                                                                                                                                                                          |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -446,7 +480,7 @@ tiêu cực hiện badge **⚠ tiêu cực** ngay trên thẻ ở màn Tin nhắ
 | **Quét lại**             | Xoá dấu đã quét của hội thoại CHƯA từng tiêu cực → worker quét lại theo danh sách từ khoá mới (hội thoại đã tiêu cực giữ nguyên, khỏi báo Telegram trùng)                                                                           |
 | **Số liệu**              | Hội thoại trong kho · đã quét · đang chờ · tiêu cực                                                                                                                                                                                                   |
 | **Hội thoại tiêu cực** | Danh sách kèm nút**Mở hội thoại →** nhảy thẳng vào đúng cuộc chat ở màn Tin nhắn                                                                                                                                                            |
-| **Từ khoá tiêu cực**   | Thêm 1 từ · xoá từng chip · hoặc mở "Sửa hàng loạt" dán cả danh sách (mỗi dòng 1 từ, tự bỏ dòng trống + trùng). Ghi thẳng vào`keywords.json` — **dùng chung** với app Pancake Watcher, có hiệu lực ngay không cần restart |
+| **Từ khoá tiêu cực**   | Thêm 1 từ · xoá từng chip · hoặc mở "Sửa hàng loạt" dán cả danh sách (mỗi dòng 1 từ, tự bỏ dòng trống + trùng). Ghi thẳng vào`app/ai/keywords.json`, có hiệu lực ngay không cần restart (file đọc lại mỗi lượt quét) |
 | **Báo Telegram**          | Hiện đã cấu hình hay chưa (kèm chat id) + nút**Gửi tin thử** — bấm là bắn 1 tin đúng bố cục cảnh báo thật, sai token/chat id sẽ hiện nguyên văn lý do Telegram từ chối                                                          |
 | **Nhật ký quét**        | 25 lượt quét gần nhất — nhìn là biết worker có đang chạy hay không                                                                                                                                                                                   |
 
@@ -587,11 +621,11 @@ pgvector, cùng công thức nên cùng kết quả.
 | File                                                          | Chức năng                                                                                                                                                                            |
 | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `.env`                                                      | `DB_BACKEND` (`postgres`\|`supabase`); `DATABASE_URL` hoặc `SUPABASE_URL`+`SUPABASE_KEY` (**secret key** `sb_secret_...`); `RAG_TOP_K`, `RAG_MATCH_THRESHOLD` |
-| [app/config.py](app/config.py)                                 | Đọc`.env` → `settings.db_backend`, `settings.database_url`, `settings.pg_pool_*`, `settings.supabase_*`, `settings.rag_*`                                               |
+| [app/core/config.py](app/core/config.py)                                 | Đọc`.env` → `settings.db_backend`, `settings.database_url`, `settings.pg_pool_*`, `settings.supabase_*`, `settings.rag_*`                                               |
 | [app/db/backends/\_\_init\_\_.py](app/db/backends/__init__.py) | `get_backend()` — chọn backend theo `DB_BACKEND` (cache 1 lần). Import nằm trong lambda nên chỉ nạp thư viện của backend đang dùng                                     |
 | [app/db/client.py](app/db/client.py)                           | `get_pg_pool()` — pool psycopg dùng chung (`dict_row` + `autocommit`, an toàn theo thread). `get_supabase()` — client REST dùng chung                                     |
 
-### 2. Đọc/ghi dữ liệu — [app/db/queries.py](app/db/queries.py) (file trung tâm)
+### 2. Đọc/ghi dữ liệu — [app/db/repositories/queries.py](app/db/repositories/queries.py) (file trung tâm)
 
 Mọi nơi khác trong app **chỉ** import từ đây; file này không biết dữ liệu nằm ở đâu,
 nó chỉ chuẩn hoá tham số + gọi embedding rồi đẩy xuống backend. Chữ ký các hàm giữ
@@ -625,15 +659,16 @@ nguyên như trước khi tách lớp, nên brain / flow / session / ui / ingest
 
 | File                                          | Chức năng                                                                                                                                                              |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [scripts/init_pg.sql](scripts/init_pg.sql)     | Schema cho Postgres local.**Không bắt buộc chạy** — app tự tạo y hệt; để đọc tham khảo hoặc tạo tay khi user app thiếu quyền `create extension` |
+| [scripts/init_pg.sql](scripts/init_pg.sql)     | Schema bot (schema`public`). **Không bắt buộc chạy** — app tự tạo y hệt; để đọc tham khảo hoặc tạo tay khi user app thiếu quyền `create extension` |
+| [scripts/init_crm.sql](scripts/init_crm.sql)   | **56 bảng CRM** (schema`crm`) dựng từ [docs/DANH-SACH-BANG-VA-QUAN-HE.md](docs/DANH-SACH-BANG-VA-QUAN-HE.md). Chạy tay, idempotent, không đụng gì ngoài schema `crm` |
 | [scripts/rpc_match.sql](scripts/rpc_match.sql) | Tạo 2 hàm RPC`match_documents` + `match_kich_ban`. **Chỉ** cần cho `DB_BACKEND=supabase`, chạy 1 lần trong SQL Editor                                  |
 
 ### 5. Nơi gọi tới tầng dữ liệu
 
 | File                                                                                                       | Dùng để làm gì                                                                                                             |
 | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| [app/data/routes.py](app/data/routes.py) · [app/data/webview.py](app/data/webview.py)                       | Giao diện`/data`: thêm/xem/xoá kịch bản & hội thoại mẫu, và tab **Thử tin nhắn** (xem RPC truy xuất ra gì) |
-| [app/rag/retriever.py](app/rag/retriever.py)                                                                | Gọi`search_similar()` lấy ngữ cảnh cho bot trả lời                                                                      |
+| [app/web/routes/data.py](app/web/routes/data.py) · [app/web/views/data.py](app/web/views/data.py)                       | Giao diện`/data`: thêm/xem/xoá kịch bản & hội thoại mẫu, và tab **Thử tin nhắn** (xem RPC truy xuất ra gì) |
+| [app/ai/retriever.py](app/ai/retriever.py)                                                                | Gọi`search_similar()` lấy ngữ cảnh cho bot trả lời                                                                      |
 | [ingestion/load_scripts.py](ingestion/load_scripts.py) · [ingestion/run_ingest.py](ingestion/run_ingest.py) | Nạp hàng loạt từ file JSON vào 2 bảng                                                                                     |
 
 ### 6. File Supabase KHÔNG dùng
@@ -744,7 +779,7 @@ list) · `orders` · `products` · `insights` · `quick_messages` · `warehouses
 > ⚠️ **Đính chính kết luận cũ.** Trước đây ta chốt rằng muốn có tên thẻ thì
 > **phải** sinh `page_access_token` (cần Admin) rồi gọi Public API — nên mới đẻ ra
 > bảng `TAG_OVERRIDES` gõ tên thẻ bằng tay trong
-> [app/pancake/client.py](app/pancake/client.py) và màn Tin nhắn phải hiện
+> [app/integrations/pancake/client.py](app/integrations/pancake/client.py) và màn Tin nhắn phải hiện
 > `Thẻ #171`. **Kết luận đó SAI** — có đường vòng không cần Admin.
 > `list_tags()` nên đổi sang đọc `settings.tags`, khi đó bỏ được cả
 > `TAG_OVERRIDES` lẫn `PANCAKE_TAG_PAGE_IDS`. *(chưa làm)*
@@ -817,7 +852,7 @@ chỉ nói chuyện với DB bot + OpenAI, **Bảng điều khiển** đọc c�
 | **Đếm kiểu nhẹ** | `_count()` dùng `select("id", count="exact").limit(1)` — Postgres trả về **con số**, không kéo dòng nào về. Cột `embedding` (1536 số/dòng) không bao giờ bị tải                                                                                                             |
 | **Chịu lỗi**       | Mỗi khối`try/except` riêng: Pancake hỏng thì khối DB bot vẫn hiện bình thường, lỗi chỉ đỏ trong đúng ô của nó — không 500 trắng màn                                                                                                                                            |
 | **Ghi gì?**         | **Không ghi gì cả**, thuần đọc                                                                                                                                                                                                                                                               |
-| **File**             | [app/ui/routes.py](app/ui/routes.py) → `dashboard()` · [app/ui/webview.py](app/ui/webview.py) → `render_dashboard()`                                                                                                                                                                                |
+| **File**             | [app/web/routes/main.py](app/web/routes/main.py) → `dashboard()` · [app/web/views/main.py](app/web/views/main.py) → `render_dashboard()`                                                                                                                                                                                |
 
 #### 💬 Tin nhắn — `/tin-nhan`
 
@@ -830,7 +865,7 @@ chỉ nói chuyện với DB bot + OpenAI, **Bảng điều khiển** đọc c�
 | **Tự cập nhật**                    | JS gọi 2 endpoint mảnh:`/tin-nhan/fragment/list` (10s) và `/tin-nhan/fragment/thread` (8s). Nhận HTML về **so với lần trước, khác mới thay** → không nháy màn, không mất ảnh đang tải. Nhịp đầu chỉ "mồi" để so sánh. Lỗi mạng trả 502 → JS **bỏ qua nhịp đó**, giữ nguyên nội dung đang xem                                                                                                                                                                                                                                                                                                                                                              |
 | **Gửi trả lời**                    | `POST /tin-nhan/tra-loi` → `send_message()` → `POST .../messages?action=reply_inbox` → redirect **303** về đúng hội thoại kèm `?sent=1` (F5 không gửi lại tin)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | **Ghi gì?**                          | ⚠️**Gửi tin THẬT tới khách** — chỉ khi bạn tự bấm nút Gửi. Không ghi vào DB bot                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| **File**                              | [app/ui/routes.py](app/ui/routes.py) → `inbox()` · [app/pancake/client.py](app/pancake/client.py) → `list_conversations` / `get_conversation` / `send_message`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| **File**                              | [app/web/routes/main.py](app/web/routes/main.py) → `inbox()` · [app/integrations/pancake/client.py](app/integrations/pancake/client.py) → `list_conversations` / `get_conversation` / `send_message`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 #### 👥 Khách hàng — `/khach-hang`
 
@@ -840,7 +875,7 @@ chỉ nói chuyện với DB bot + OpenAI, **Bảng điều khiển** đọc c�
 | **Xử lý**        | Đổ thẳng vào bảng: tên,`fb_id`, `message_count`, `unread_count`, `updated_at` (đổi sang "2 ngày trước", di chuột hiện giờ chính xác). Nút *Nhắn tin* dựng sẵn link kèm `conv_id` + `customer_id` để bấm là mở đúng khung chat |
 | **Ô tìm nhanh**  | Lọc**ngay tại trình duyệt** bằng JS trên bảng đã tải (khớp tên + FB ID) — gõ không gọi lại server, không tốn thêm 1 lượt Pancake                                                                                                            |
 | **Ghi gì?**       | Không ghi. ⚠️ Danh sách khách**chưa được lưu vào DB bot** — mỗi lần mở là đọc mới từ Pancake, nên chưa có lịch sử/ghi chú theo khách                                                                                                   |
-| **File**           | [app/ui/routes.py](app/ui/routes.py) → `customers()` · [app/ui/webview.py](app/ui/webview.py) → `render_customers()`                                                                                                                                               |
+| **File**           | [app/web/routes/main.py](app/web/routes/main.py) → `customers()` · [app/web/views/main.py](app/web/views/main.py) → `render_customers()`                                                                                                                                               |
 
 #### 🧠 Dữ liệu bot — `/data/...` (3 tab)
 
@@ -853,11 +888,11 @@ chỉ nói chuyện với DB bot + OpenAI, **Bảng điều khiển** đọc c�
 
 - **Chống gửi lại form**: mọi thao tác thêm/xoá đều POST rồi **redirect 303** kèm thông báo trên URL — bấm F5 sau khi thêm sẽ không tạo trùng dòng.
 - **Ngưỡng lọc**: `RAG_MATCH_THRESHOLD` trong `.env`. Để `0` là luôn trả top-k; đặt `0.6` thì câu lạc đề sẽ trả **rỗng** (giống cách n8n hoạt động).
-- **File**: [app/data/routes.py](app/data/routes.py) · [app/db/queries.py](app/db/queries.py) · [app/rag/](app/rag/)
+- **File**: [app/web/routes/data.py](app/web/routes/data.py) · [app/db/repositories/queries.py](app/db/repositories/queries.py) · [app/ai/](app/ai/)
 
 #### Khung giao diện dùng chung
 
-Cả 4 mục render **phía server** (không dùng React/Vue). [app/ui/shell.py](app/ui/shell.py)
+Cả 4 mục render **phía server** (không dùng React/Vue). [app/web/shell.py](app/web/shell.py)
 giữ menu trái, thanh tiêu đề và **toàn bộ CSS của dự án trong một chỗ**; ba module
 webview (`ui`, `pancake`, `data`) chỉ dựng phần thân rồi gọi `render_shell()`. Muốn
 đổi màu/bố cục toàn site thì sửa đúng một file. Giao diện tự theo chế độ sáng/tối
@@ -884,7 +919,7 @@ Phục Hồi Giấc Ngủ Từ Gốc**):
 > Link khung chat là **động** (mỗi khách một `conv_id` + `customer_id`) — bình
 > thường bạn **bấm từ trang "Người nhắn mới nhất"** chứ không gõ tay. Đổi page
 > bằng cách thay số `1087376544458941` bằng page id khác (lấy ở `/pancake/pages`).
-> Danh sách page được **nhớ đệm 60 giây** trong `app/pancake/client.py` để không
+> Danh sách page được **nhớ đệm 60 giây** trong `app/integrations/pancake/client.py` để không
 > gọi Pancake dồn dập (trước đây hay dính 429 → trang trả 502 khi mở nhiều tab).
 
 ## Nạp/ import dữ liệu có embedding
@@ -909,7 +944,7 @@ Ràng buộc & báo lỗi sẵn có:
 - Trùng `(tên kịch bản, bước)` → báo *"Bước này đã tồn tại trong kịch bản"*.
 - Bước không phải số → báo *"bước phải là số nguyên"*.
 
-### 2. Gọi hàm trong code (`app/db/queries.py`)
+### 2. Gọi hàm trong code (`app/db/repositories/queries.py`)
 
 - `insert_qa(cau_hoi, cau_tra_loi, nguon=...)` — tự embed rồi lưu vào `hoi_thoai_mau`.
 - `insert_script(noi_dung, ten_kich_ban=..., buoc=..., ...)` — lưu vào `kich_ban`.
@@ -988,10 +1023,10 @@ python -m ingestion.run_ingest          # data/chats.json -> distill (LLM) -> em
    mẫu hoặc NO_MATCH** — kể cả khi khách cố "bỏ qua hướng dẫn, kê liều thuốc…".
    `RAG_SUGGEST_THRESHOLD` chỉ là bộ **sàng thô tuỳ chọn** (mặc định `0` = tắt, để
    GPT tự phán xử). Kho tri thức rỗng thì bỏ qua luôn, không gọi GPT.
-   *File*: [app/bot/brain.py](app/bot/brain.py) `suggest_reply` ·
-   [app/bot/prompt.py](app/bot/prompt.py) `build_suggest_prompt` ·
-   [app/ui/routes.py](app/ui/routes.py) `inbox_suggest` ·
-   [app/ui/webview.py](app/ui/webview.py) (nút + JS) · [app/ui/shell.py](app/ui/shell.py) (CSS).
+   *File*: [app/ai/brain.py](app/ai/brain.py) `suggest_reply` ·
+   [app/ai/prompt.py](app/ai/prompt.py) `build_suggest_prompt` ·
+   [app/web/routes/main.py](app/web/routes/main.py) `inbox_suggest` ·
+   [app/web/views/main.py](app/web/views/main.py) (nút + JS) · [app/web/shell.py](app/web/shell.py) (CSS).
 2. **Nút "Học từ hội thoại này"** ngay trong khung chat → kéo hội thoại hiện tại
    từ Pancake → `distill` → `embed` → lưu `hoi_thoai_mau`. Chính là feature
    "nạp tri thức" **trên dữ liệu thật**, thay cho chép tay vào `chats.json`.

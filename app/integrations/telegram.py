@@ -11,7 +11,7 @@ Thiếu `TELEGRAM_BOT_TOKEN` hoặc `TELEGRAM_CHAT_ID` -> tắt hẳn tính năn
 
 import httpx
 
-from app.config import settings
+from app.core.config import settings
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
 

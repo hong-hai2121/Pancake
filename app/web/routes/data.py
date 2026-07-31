@@ -10,9 +10,9 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.config import settings
+from app.core.config import settings
 
-from app.db.queries import (
+from app.db.repositories.queries import (
     debug_search,
     delete_qa,
     delete_script,
@@ -21,12 +21,12 @@ from app.db.queries import (
     list_qa_pairs,
     list_scripts,
 )
-from app.bot.brain import choose_reply
-from app.bot.prompt import build_prompt
-from app.rag.embedding import embed
-from app.rag.llm import complete
-from app.pancake.client import PancakeError, list_pages, raw_call
-from app.data.webview import (
+from app.ai.brain import choose_reply
+from app.ai.prompt import build_prompt
+from app.ai.embedding import embed
+from app.ai.llm import complete
+from app.integrations.pancake.client import PancakeError, list_pages, raw_call
+from app.web.views.data import (
     render_api_test,
     render_error,
     render_qa,

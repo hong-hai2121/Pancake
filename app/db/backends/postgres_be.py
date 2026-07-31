@@ -33,7 +33,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from psycopg_pool import PoolTimeout
 
-from app.config import settings
+from app.core.config import settings
 from app.db.client import get_pg_pool
 
 # Bảng hợp lệ cho count() — chặn tên bảng lạ ghép thẳng vào SQL.

@@ -1,0 +1,1071 @@
+-- ============================================================
+-- CRM TIÊU HÓA — 56 bảng, dựng từ DANH-SACH-BANG-VA-QUAN-HE.md
+--
+-- Chạy (idempotent, chạy lại nhiều lần không sao):
+--   docker exec -i pancakebot-pg psql -U postgres -d pancakebot < scripts/init_crm.sql
+--   psql "postgresql://postgres:postgres@127.0.0.1:5432/pancakebot" -f scripts/init_crm.sql
+--
+-- Toàn bộ nằm trong schema RIÊNG `crm`. Bản đồ schema của DB pancakebot:
+--   public.*   -> bot RAG   (kich_ban, hoi_thoai_mau, trang_thai_khach)
+--   watcher.*  -> watcher   (customers, hoi_thoai, canh_bao_tieu_cuc)
+--   crm.*      -> 56 bảng dưới đây
+-- Script này KHÔNG đụng gì ngoài schema crm (hàm/trigger cũng nằm trong crm).
+--
+-- ⚠️ CÓ 2 BẢNG TÊN `customers`: crm.customers (hồ sơ khách) và watcher.customers
+-- (hàng đợi hội thoại). Query LUÔN ghi rõ schema, hoặc đặt search_path:
+--     set search_path = crm, public;               -- trong phiên psql
+--     options='-c search_path=crm,public'          -- trong chuỗi kết nối
+--
+-- QUY ƯỚC (theo tài liệu):
+--   * PK: bigint generated always as identity
+--   * created_at ở mọi bảng; updated_at ở bảng có sửa (trigger tự cập nhật)
+--   * thời gian: timestamptz · tiền: numeric(14,2)
+--   * trạng thái: text + CHECK, KHÔNG dùng ENUM gốc của Postgres
+--
+-- NHÓM A — đã chốt:
+--   1. customers.primary_phone KHÔNG duy nhất, chỉ đánh index
+--   2. ĐÃ thêm customer_treatments.order_id  (đơn hàng → liệu trình)
+--   3. ĐÃ thêm users.password_hash + users.last_login_at (nullable, SSO vẫn dùng được)
+--   4. 3 quan hệ đa hình giữ nguyên dạng (type, id), CHECK trên cột type, không FK
+--
+-- NHÓM B — đã chốt danh mục, tất cả đều là CHECK có ĐẶT TÊN nên sửa 1 dòng:
+--       alter table X drop constraint ck_X_Y;
+--       alter table X add  constraint ck_X_Y check (Y in (...));
+--   teams.department · customer_identities.platform · pipelines.type
+--   lead_reasons.category · treatment_templates.level · care_plan_steps.step_code
+--   thang điểm triệu chứng 0–10 (customer_symptoms + symptom_assessments)
+--   + các cột `status`/`platform` còn bỏ trống, theo đúng quy ước "trạng thái phải có CHECK"
+--
+-- NHÓM C — 2 cột ERD đọc không rõ, ĐÃ ĐOÁN VÀ TẠO (đánh dấu "ĐOÁN" ở comment cột):
+--   knowledge_documents.access_level  (= "quyền xem tài liệu")
+--   scenario_steps.role_level         (= bước này dành cho cấp nào)
+--   funnel_events.value               → chốt là TIỀN (VND)
+--
+-- NHÓM D — CHƯA ĐỘNG (partition theo tháng, chính sách lưu ghi âm) — xem cuối file.
+-- ============================================================
+
+begin;
+
+create schema if not exists crm;
+
+-- Mọi `create table` không ghi schema ở dưới sẽ rơi vào crm.
+-- public đứng sau để vẫn thấy extension vector và các kiểu dùng chung.
+set local search_path = crm, public;
+
+-- Hàm riêng của crm — CỐ Ý không dùng chung public.set_updated_at() của bot,
+-- để script này không bao giờ ghi đè object của bot.
+create or replace function crm.set_updated_at()
+returns trigger as $$
+begin
+    new.updated_at = now();
+    return new;
+end;
+$$ language plpgsql;
+
+
+-- ============================================================
+-- MODULE 1 — TỔ CHỨC & PHÂN QUYỀN
+-- ============================================================
+
+create table if not exists pages (
+    id               bigint generated always as identity primary key,
+    external_page_id text not null,
+    name             text not null,
+    platform         text not null
+                     check (platform in ('facebook','zalo','tiktok','website')),
+    status           text not null default 'active'
+                     check (status in ('active','paused','disconnected')),
+    created_at       timestamptz not null default now(),
+    updated_at       timestamptz not null default now(),
+    unique (platform, external_page_id)
+);
+comment on table pages is 'Fanpage / kênh chat kết nối vào CRM';
+
+create table if not exists permissions (
+    id         bigint generated always as identity primary key,
+    code       text not null unique,
+    name       text not null,
+    created_at timestamptz not null default now()
+);
+comment on column permissions.code is 'Dạng customer.view, order.approve';
+
+create table if not exists roles (
+    id          bigint generated always as identity primary key,
+    name        text not null unique,
+    description text,
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now()
+);
+
+create table if not exists role_permissions (
+    role_id       bigint not null references roles(id)       on delete cascade,
+    permission_id bigint not null references permissions(id) on delete cascade,
+    created_at    timestamptz not null default now(),
+    primary key (role_id, permission_id)
+);
+
+-- teams tạo TRƯỚC users (users.team_id trỏ về đây); manager_id gắn FK ở cuối
+-- module vì hai bảng phụ thuộc vòng.
+create table if not exists teams (
+    id         bigint generated always as identity primary key,
+    name       text not null unique,
+    department text,
+    manager_id bigint,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint ck_teams_department check (department is null or department in
+        ('sale','cskh','marketing','chuyen_mon','admin'))
+);
+comment on column teams.department is
+    'sale=bán hàng · cskh=chăm sóc khách · marketing · chuyen_mon=chuyên môn/y tế · admin=vận hành';
+
+create table if not exists users (
+    id            bigint generated always as identity primary key,
+    name          text not null,
+    email         text not null unique,
+    phone         text,
+    status        text not null default 'active'
+                  check (status in ('active','inactive','suspended')),
+    team_id       bigint references teams(id) on delete set null,
+    role_id       bigint references roles(id) on delete set null,
+    password_hash text,
+    last_login_at timestamptz,
+    created_at    timestamptz not null default now(),
+    updated_at    timestamptz not null default now()
+);
+comment on column users.password_hash is
+    'Thêm ngoài ERD: để trống nếu đăng nhập bằng SSO';
+
+do $$
+begin
+    if not exists (select 1 from pg_constraint
+                   where conname = 'fk_teams_manager'
+                     and connamespace = 'crm'::regnamespace) then
+        alter table crm.teams
+            add constraint fk_teams_manager
+            foreign key (manager_id) references crm.users(id) on delete set null;
+    end if;
+end $$;
+
+create index if not exists idx_users_team on users (team_id);
+create index if not exists idx_users_role on users (role_id);
+create index if not exists idx_teams_manager on teams (manager_id);
+
+
+-- ============================================================
+-- MODULE 2 — KHÁCH HÀNG & TƯƠNG TÁC
+-- ============================================================
+
+create table if not exists customers (
+    id            bigint generated always as identity primary key,
+    customer_code text unique,
+    full_name     text not null,
+    primary_phone text,
+    gender        text check (gender in ('male','female','other')),
+    birth_date    date,
+    province      text,
+    status        text not null default 'new'
+                  check (status in ('new','consulting','customer','treating',
+                                    'completed','churned','blocked')),
+    created_at    timestamptz not null default now(),
+    updated_at    timestamptz not null default now()
+);
+comment on column customers.primary_phone is
+    'CỐ Ý không đặt UNIQUE: người nhà dùng chung số. Chỉ đánh index để tra cứu';
+
+create index if not exists idx_customers_phone  on customers (primary_phone);
+create index if not exists idx_customers_status on customers (status);
+
+create table if not exists customer_identities (
+    id                   bigint generated always as identity primary key,
+    customer_id          bigint not null references customers(id) on delete cascade,
+    platform             text,
+    external_customer_id text,
+    psid                 text,
+    page_id              bigint references pages(id) on delete set null,
+    created_at           timestamptz not null default now(),
+    updated_at           timestamptz not null default now(),
+    constraint ck_customer_identities_platform check (platform is null or platform in
+        ('facebook','zalo','tiktok','website'))
+);
+comment on column customer_identities.psid is 'ID phạm vi trang, chỉ duy nhất trong 1 page';
+comment on column customer_identities.platform is 'Dùng chung danh mục với pages.platform';
+
+create unique index if not exists uq_customer_identities_page_psid
+    on customer_identities (page_id, psid) where psid is not null;
+create index if not exists idx_customer_identities_customer
+    on customer_identities (customer_id);
+
+create table if not exists conversations (
+    id                       bigint generated always as identity primary key,
+    customer_id              bigint references customers(id) on delete set null,
+    page_id                  bigint references pages(id) on delete set null,
+    external_conversation_id text,
+    status                   text not null default 'open'
+                             check (status in ('open','pending','closed','spam')),
+    last_message_at          timestamptz,
+    created_at               timestamptz not null default now(),
+    updated_at               timestamptz not null default now(),
+    unique (page_id, external_conversation_id)
+);
+comment on column conversations.customer_id is
+    'Cho phép rỗng: chat về trước khi kịp định danh khách';
+
+create index if not exists idx_conversations_customer on conversations (customer_id);
+create index if not exists idx_conversations_last_msg on conversations (last_message_at desc);
+
+create table if not exists messages (
+    id                  bigint generated always as identity primary key,
+    conversation_id     bigint not null references conversations(id) on delete cascade,
+    external_message_id text,
+    sender_type         text not null
+                        check (sender_type in ('customer','agent','bot','system')),
+    sender_user_id      bigint references users(id) on delete set null,
+    content             text,
+    sent_at             timestamptz not null,
+    created_at          timestamptz not null default now()
+);
+comment on table messages is
+    'Bảng phình nhanh nhất. Sau 1-2 năm cân nhắc partition by range (sent_at)';
+
+create index if not exists idx_messages_conversation on messages (conversation_id, sent_at desc);
+create index if not exists idx_messages_sender_user  on messages (sender_user_id);
+
+create table if not exists calls (
+    id              bigint generated always as identity primary key,
+    customer_id     bigint references customers(id) on delete set null,
+    user_id         bigint references users(id)     on delete set null,
+    external_call_id text unique,
+    direction       text check (direction in ('inbound','outbound')),
+    started_at      timestamptz not null,
+    duration_sec    integer check (duration_sec >= 0),
+    status          text check (status in ('answered','missed','busy','failed','voicemail')),
+    recording_url   text,
+    created_at      timestamptz not null default now(),
+    updated_at      timestamptz not null default now()
+);
+
+create index if not exists idx_calls_customer on calls (customer_id, started_at desc);
+create index if not exists idx_calls_user     on calls (user_id, started_at desc);
+
+create table if not exists call_transcripts (
+    id         bigint generated always as identity primary key,
+    call_id    bigint not null references calls(id) on delete cascade,
+    speaker    text check (speaker in ('agent','customer','unknown')),
+    content    text,
+    start_sec  numeric(10,2),
+    end_sec    numeric(10,2),
+    confidence numeric(4,3) check (confidence between 0 and 1),
+    created_at timestamptz not null default now(),
+    constraint ck_call_transcripts_range check (end_sec is null or start_sec is null or end_sec >= start_sec)
+);
+
+create index if not exists idx_call_transcripts_call on call_transcripts (call_id, start_sec);
+
+create table if not exists call_evaluations (
+    id            bigint generated always as identity primary key,
+    call_id       bigint not null references calls(id) on delete cascade,
+    score_total   numeric(6,2),
+    risk_level    text check (risk_level in ('low','medium','high','critical')),
+    summary       text,
+    review_status text not null default 'pending'
+                  check (review_status in ('pending','reviewed','disputed','closed')),
+    created_at    timestamptz not null default now(),
+    updated_at    timestamptz not null default now()
+);
+comment on column call_evaluations.risk_level is
+    'Rủi ro tuân thủ: tư vấn viên hứa công dụng vượt hồ sơ. Đối chiếu product_versions.prohibited_claims';
+
+create index if not exists idx_call_evaluations_call on call_evaluations (call_id);
+
+create table if not exists tags (
+    id         bigint generated always as identity primary key,
+    name       text not null,
+    type       text,
+    created_at timestamptz not null default now(),
+    unique (type, name)
+);
+
+create table if not exists customer_tags (
+    customer_id bigint not null references customers(id) on delete cascade,
+    tag_id      bigint not null references tags(id)      on delete cascade,
+    created_at  timestamptz not null default now(),
+    primary key (customer_id, tag_id)
+);
+
+create table if not exists customer_assignments (
+    id              bigint generated always as identity primary key,
+    customer_id     bigint not null references customers(id) on delete cascade,
+    user_id         bigint not null references users(id),
+    assignment_type text not null,
+    start_at        timestamptz not null default now(),
+    end_at          timestamptz,
+    created_at      timestamptz not null default now(),
+    updated_at      timestamptz not null default now()
+);
+comment on column customer_assignments.assignment_type is 'sale / cskh / chuyên môn';
+comment on column customer_assignments.end_at is 'Rỗng = đang phụ trách';
+
+-- Mỗi khách, mỗi loại vai trò chỉ 1 người đang phụ trách tại một thời điểm
+create unique index if not exists uq_customer_assignments_active
+    on customer_assignments (customer_id, assignment_type) where end_at is null;
+create index if not exists idx_customer_assignments_user on customer_assignments (user_id);
+
+
+-- ============================================================
+-- MODULE 3 — SALE & TƯ VẤN
+-- ============================================================
+
+create table if not exists pipelines (
+    id         bigint generated always as identity primary key,
+    name       text not null unique,
+    type       text,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    constraint ck_pipelines_type check (type is null or type in
+        ('new_sale','upsell','reactivation'))
+);
+comment on column pipelines.type is
+    'new_sale=bán mới · upsell=nâng liệu trình · reactivation=đánh thức khách cũ';
+
+create table if not exists pipeline_stages (
+    id          bigint generated always as identity primary key,
+    pipeline_id bigint not null references pipelines(id) on delete cascade,
+    code        text not null,
+    name        text not null,
+    sort_order  integer not null default 0,
+    is_closed   boolean not null default false,
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now(),
+    unique (pipeline_id, code)
+);
+comment on column pipeline_stages.is_closed is 'true = giai đoạn kết thúc (thắng hoặc thua)';
+
+create table if not exists lead_reasons (
+    id         bigint generated always as identity primary key,
+    code       text not null unique,
+    name       text not null,
+    category   text,
+    created_at timestamptz not null default now(),
+    constraint ck_lead_reasons_category check (category is null or category in
+        ('price','trust','timing','competitor','health','other'))
+);
+comment on column lead_reasons.category is
+    'price=giá · trust=niềm tin · timing=thời điểm · competitor=đối thủ · health=sức khỏe · other=khác';
+
+create table if not exists leads (
+    id             bigint generated always as identity primary key,
+    customer_id    bigint not null references customers(id) on delete cascade,
+    pipeline_id    bigint not null references pipelines(id),
+    stage_id       bigint not null references pipeline_stages(id),
+    owner_id       bigint references users(id) on delete set null,
+    source         text,
+    priority       text not null default 'normal'
+                   check (priority in ('low','normal','high','urgent')),
+    next_action_at timestamptz,
+    created_at     timestamptz not null default now(),
+    updated_at     timestamptz not null default now()
+);
+
+create index if not exists idx_leads_customer    on leads (customer_id);
+create index if not exists idx_leads_owner       on leads (owner_id);
+create index if not exists idx_leads_stage       on leads (stage_id);
+create index if not exists idx_leads_next_action on leads (next_action_at);
+
+-- stage_id phải thuộc đúng pipeline_id — FK thường không làm được, dùng trigger
+create or replace function crm.check_lead_stage_pipeline()
+returns trigger as $$
+declare
+    v_pipeline_id bigint;
+begin
+    select pipeline_id into v_pipeline_id from pipeline_stages where id = new.stage_id;
+    if v_pipeline_id is distinct from new.pipeline_id then
+        raise exception 'stage_id % không thuộc pipeline_id %', new.stage_id, new.pipeline_id;
+    end if;
+    return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_leads_stage_pipeline on crm.leads;
+create trigger trg_leads_stage_pipeline
+    before insert or update of stage_id, pipeline_id on crm.leads
+    for each row execute function crm.check_lead_stage_pipeline();
+
+create table if not exists lead_stage_history (
+    id            bigint generated always as identity primary key,
+    lead_id       bigint not null references leads(id) on delete cascade,
+    from_stage_id bigint references pipeline_stages(id),
+    to_stage_id   bigint not null references pipeline_stages(id),
+    changed_by    bigint references users(id) on delete set null,
+    changed_at    timestamptz not null default now(),
+    reason        text,
+    created_at    timestamptz not null default now()
+);
+comment on column lead_stage_history.from_stage_id is 'Rỗng khi lead mới tạo';
+
+create index if not exists idx_lead_stage_history_lead on lead_stage_history (lead_id, changed_at desc);
+
+create table if not exists lead_lost_reasons (
+    id             bigint generated always as identity primary key,
+    lead_id        bigint not null references leads(id) on delete cascade,
+    lost_reason_id bigint not null references lead_reasons(id),
+    note           text,
+    evidence_type  text check (evidence_type in ('message','call','note')),
+    evidence_id    bigint,
+    created_at     timestamptz not null default now()
+);
+comment on column lead_lost_reasons.evidence_id is
+    'QUAN HỆ ĐA HÌNH: trỏ messages hoặc calls tùy evidence_type — không có FK, phần mềm tự kiểm';
+
+create index if not exists idx_lead_lost_reasons_lead on lead_lost_reasons (lead_id);
+
+create table if not exists consultation_sessions (
+    id           bigint generated always as identity primary key,
+    customer_id  bigint not null references customers(id) on delete cascade,
+    lead_id      bigint references leads(id) on delete set null,
+    user_id      bigint references users(id) on delete set null,
+    channel      text check (channel in ('chat','call','zalo','direct')),
+    started_at   timestamptz,
+    completed_at timestamptz,
+    risk_level   text check (risk_level in ('low','medium','high','critical')),
+    created_at   timestamptz not null default now(),
+    updated_at   timestamptz not null default now()
+);
+comment on column consultation_sessions.channel is 'direct = tư vấn trực tiếp';
+
+create index if not exists idx_consultation_sessions_customer on consultation_sessions (customer_id);
+create index if not exists idx_consultation_sessions_lead     on consultation_sessions (lead_id);
+
+create table if not exists consultation_answers (
+    id            bigint generated always as identity primary key,
+    session_id    bigint not null references consultation_sessions(id) on delete cascade,
+    question_code text not null,
+    answer_text   text,
+    answer_value  numeric(12,4),
+    captured_at   timestamptz,
+    created_at    timestamptz not null default now()
+);
+comment on column consultation_answers.answer_value is 'Bản số hóa để tính điểm / so sánh';
+
+create index if not exists idx_consultation_answers_session on consultation_answers (session_id);
+
+create table if not exists symptoms (
+    id         bigint generated always as identity primary key,
+    code       text not null unique,
+    name       text not null,
+    group_name text,
+    created_at timestamptz not null default now()
+);
+comment on column symptoms.group_name is 'dạ dày / đại tràng / tiêu hóa chung';
+
+create table if not exists customer_symptoms (
+    id          bigint generated always as identity primary key,
+    customer_id bigint not null references customers(id) on delete cascade,
+    symptom_id  bigint not null references symptoms(id),
+    severity    integer,
+    frequency   text check (frequency in ('rare','sometimes','often','daily','constant')),
+    started_at  timestamptz,
+    is_primary  boolean not null default false,
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now(),
+    constraint ck_customer_symptoms_severity check (severity is null or severity between 0 and 10),
+    unique (customer_id, symptom_id)
+);
+comment on column customer_symptoms.severity is
+    'Thang 0-10 (0 = không có, 10 = nặng nhất). Đổi thang thì drop constraint ck_customer_symptoms_severity';
+comment on column customer_symptoms.frequency is
+    'rare=hiếm, sometimes=thỉnh thoảng, often=thường, daily=hằng ngày, constant=liên tục';
+
+create table if not exists safety_screenings (
+    id              bigint generated always as identity primary key,
+    customer_id     bigint not null references customers(id) on delete cascade,
+    screening_type  text not null,
+    value           text,
+    risk_level      text check (risk_level in ('low','medium','high','critical')),
+    requires_review boolean not null default false,
+    created_at      timestamptz not null default now()
+);
+comment on table safety_screenings is
+    'Chốt chặn an toàn (sụt cân, đi ngoài ra máu, nuốt nghẹn, thai kỳ, thuốc chống đông...). '
+    'PHẢI kiểm tra trước khi tạo customer_treatments';
+
+create index if not exists idx_safety_screenings_customer on safety_screenings (customer_id, created_at desc);
+
+
+-- ============================================================
+-- MODULE 4 — SẢN PHẨM, LIỆU TRÌNH & ĐƠN HÀNG
+-- ============================================================
+
+create table if not exists products (
+    id                 bigint generated always as identity primary key,
+    product_code       text unique,
+    name               text not null,
+    product_type       text,
+    price              numeric(14,2) check (price >= 0),
+    package            text,
+    units_per_package  integer check (units_per_package > 0),
+    status             text not null default 'active'
+                       check (status in ('active','inactive','discontinued')),
+    approval_status    text not null default 'draft'
+                       check (approval_status in ('draft','pending','approved','rejected')),
+    created_at         timestamptz not null default now(),
+    updated_at         timestamptz not null default now()
+);
+comment on column products.approval_status is
+    'Trạng thái duyệt nội dung công bố. CHỈ sản phẩm approved mới được đưa vào tư vấn';
+
+create table if not exists product_versions (
+    id                bigint generated always as identity primary key,
+    product_id        bigint not null references products(id) on delete cascade,
+    version_no        integer not null,
+    usage_text        text,
+    approved_claims   jsonb not null default '[]'::jsonb,
+    prohibited_claims jsonb not null default '[]'::jsonb,
+    effective_from    timestamptz not null default now(),
+    effective_to      timestamptz,
+    created_at        timestamptz not null default now(),
+    updated_at        timestamptz not null default now(),
+    unique (product_id, version_no)
+);
+comment on table product_versions is
+    'Chỗ dựa pháp lý. Chấm call_evaluations phải đối chiếu phiên bản CÓ HIỆU LỰC TẠI THỜI ĐIỂM GỌI, không phải bản mới nhất';
+
+create index if not exists idx_product_versions_effective
+    on product_versions (product_id, effective_from desc);
+
+create table if not exists treatment_templates (
+    id            bigint generated always as identity primary key,
+    template_code text not null,
+    name          text not null,
+    problem_group text,
+    level         text,
+    base_price    numeric(14,2) check (base_price >= 0),
+    duration_days integer check (duration_days > 0),
+    status        text not null default 'draft'
+                  check (status in ('draft','active','archived')),
+    version_no    integer not null default 1,
+    created_at    timestamptz not null default now(),
+    updated_at    timestamptz not null default now(),
+    unique (template_code, version_no),
+    constraint ck_treatment_templates_level check (level is null or level in
+        ('mild','moderate','severe'))
+);
+comment on column treatment_templates.level is
+    'mild=nhẹ · moderate=trung bình · severe=nặng';
+
+create table if not exists treatment_template_items (
+    id          bigint generated always as identity primary key,
+    template_id bigint not null references treatment_templates(id) on delete cascade,
+    product_id  bigint not null references products(id),
+    quantity    numeric(12,2) not null check (quantity > 0),
+    dose_text   text,
+    sort_order  integer not null default 0,
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now()
+);
+
+create index if not exists idx_treatment_template_items_template
+    on treatment_template_items (template_id, sort_order);
+
+create table if not exists treatment_rules (
+    id             bigint generated always as identity primary key,
+    template_id    bigint not null references treatment_templates(id) on delete cascade,
+    rule_type      text not null,
+    condition_json jsonb not null default '{}'::jsonb,
+    action_json    jsonb not null default '{}'::jsonb,
+    priority       integer not null default 0,
+    status         text not null default 'active'
+                   check (status in ('active','inactive')),
+    created_at     timestamptz not null default now(),
+    updated_at     timestamptz not null default now()
+);
+comment on table treatment_rules is
+    'Chống chỉ định, tăng/giảm liều theo triệu chứng, loại trừ khi có cờ đỏ';
+comment on column treatment_rules.priority is 'Số lớn chạy trước';
+
+create index if not exists idx_treatment_rules_template
+    on treatment_rules (template_id, priority desc);
+
+create table if not exists orders (
+    id               bigint generated always as identity primary key,
+    customer_id      bigint not null references customers(id),
+    external_order_id text unique,
+    order_type       text check (order_type in ('new','repurchase','upsell','exchange')),
+    sale_owner_id    bigint references users(id) on delete set null,
+    cskh_owner_id    bigint references users(id) on delete set null,
+    status           text not null default 'draft'
+                     check (status in ('draft','confirmed','packing','shipping',
+                                       'delivered','returned','cancelled')),
+    total_amount     numeric(14,2) not null default 0 check (total_amount >= 0),
+    delivered_at     timestamptz,
+    created_at       timestamptz not null default now(),
+    updated_at       timestamptz not null default now()
+);
+comment on column orders.delivered_at is
+    'MỐC KHỞI TÍNH liệu trình và lịch CSKH — có index riêng';
+
+create index if not exists idx_orders_customer     on orders (customer_id, created_at desc);
+create index if not exists idx_orders_delivered_at on orders (delivered_at);
+create index if not exists idx_orders_sale_owner   on orders (sale_owner_id);
+create index if not exists idx_orders_cskh_owner   on orders (cskh_owner_id);
+
+create table if not exists order_items (
+    id                   bigint generated always as identity primary key,
+    order_id             bigint not null references orders(id) on delete cascade,
+    product_id           bigint not null references products(id),
+    treatment_template_id bigint references treatment_templates(id),
+    quantity             numeric(12,2) not null check (quantity > 0),
+    unit_price           numeric(14,2) not null check (unit_price >= 0),
+    line_total           numeric(14,2),
+    created_at           timestamptz not null default now(),
+    updated_at           timestamptz not null default now()
+);
+comment on column order_items.unit_price is
+    'Giá TẠI THỜI ĐIỂM BÁN — không tra ngược products.price';
+
+create index if not exists idx_order_items_order    on order_items (order_id);
+create index if not exists idx_order_items_product  on order_items (product_id);
+create index if not exists idx_order_items_template on order_items (treatment_template_id);
+
+create table if not exists order_status_history (
+    id          bigint generated always as identity primary key,
+    order_id    bigint not null references orders(id) on delete cascade,
+    from_status text,
+    to_status   text,
+    changed_at  timestamptz not null default now(),
+    changed_by  bigint references users(id) on delete set null,
+    created_at  timestamptz not null default now()
+);
+
+create index if not exists idx_order_status_history_order
+    on order_status_history (order_id, changed_at desc);
+
+create table if not exists customer_treatments (
+    id                bigint generated always as identity primary key,
+    customer_id       bigint not null references customers(id) on delete cascade,
+    template_id       bigint references treatment_templates(id),
+    order_id          bigint references orders(id) on delete set null,
+    approved_by       bigint references users(id) on delete set null,
+    start_date        date,
+    expected_end_date date,
+    status            text not null default 'planned'
+                      check (status in ('planned','active','paused','completed','stopped')),
+    created_at        timestamptz not null default now(),
+    updated_at        timestamptz not null default now()
+);
+comment on column customer_treatments.order_id is
+    'THÊM ngoài ERD: truy được đơn hàng nào sinh ra liệu trình (tính doanh thu theo liệu trình)';
+
+create index if not exists idx_customer_treatments_customer on customer_treatments (customer_id);
+create index if not exists idx_customer_treatments_order    on customer_treatments (order_id);
+create index if not exists idx_customer_treatments_end_date on customer_treatments (expected_end_date);
+
+create table if not exists customer_treatment_items (
+    id                    bigint generated always as identity primary key,
+    customer_treatment_id bigint not null references customer_treatments(id) on delete cascade,
+    product_id            bigint not null references products(id),
+    quantity              numeric(12,2) not null check (quantity > 0),
+    dose_text             text,
+    actual_start_date     date,
+    actual_end_date       date,
+    created_at            timestamptz not null default now(),
+    updated_at            timestamptz not null default now()
+);
+
+create index if not exists idx_customer_treatment_items_parent
+    on customer_treatment_items (customer_treatment_id);
+
+
+-- ============================================================
+-- MODULE 5 — CSKH, CÔNG VIỆC & MUA LẠI
+-- ============================================================
+
+create table if not exists care_plans (
+    id                    bigint generated always as identity primary key,
+    customer_id           bigint not null references customers(id) on delete cascade,
+    customer_treatment_id bigint references customer_treatments(id) on delete set null,
+    owner_id              bigint references users(id) on delete set null,
+    status                text not null default 'active'
+                          check (status in ('active','paused','completed','cancelled')),
+    started_at            timestamptz,
+    ended_at              timestamptz,
+    created_at            timestamptz not null default now(),
+    updated_at            timestamptz not null default now()
+);
+
+create index if not exists idx_care_plans_customer  on care_plans (customer_id);
+create index if not exists idx_care_plans_treatment on care_plans (customer_treatment_id);
+create index if not exists idx_care_plans_owner     on care_plans (owner_id);
+
+create table if not exists care_plan_steps (
+    id           bigint generated always as identity primary key,
+    care_plan_id bigint not null references care_plans(id) on delete cascade,
+    step_code    text,
+    planned_at   timestamptz,
+    completed_at timestamptz,
+    status       text not null default 'pending'
+                 check (status in ('pending','due','done','skipped','failed')),
+    result_code  text,
+    created_at   timestamptz not null default now(),
+    updated_at   timestamptz not null default now(),
+    constraint ck_care_plan_steps_step_code check (step_code is null or step_code in
+        ('D0_xac_nhan_don',   -- chốt đơn, hẹn giao
+         'D1_giao_hang',      -- xác nhận đã nhận hàng (mốc = orders.delivered_at)
+         'D3_kiem_tra',       -- kiểm tra đã dùng đúng cách chưa
+         'D7_danh_gia',       -- đánh giá chuyển biến lần 1
+         'D14_theo_doi',
+         'D30_tong_ket',      -- tổng kết tháng 1
+         'D60_ket_lieu_trinh',-- kết thúc liệu trình
+         'D_mua_lai',         -- chào mua lại / nâng liệu trình
+         'khac'))             -- lối thoát cho mốc phát sinh
+);
+comment on column care_plan_steps.step_code is
+    'Bộ mốc chuẩn D0/D1/D3/D7/D14/D30/D60 + D_mua_lai. Số ngày tính từ orders.delivered_at. '
+    'Dùng ''khac'' cho mốc phát sinh thay vì phá CHECK';
+
+create index if not exists idx_care_plan_steps_plan   on care_plan_steps (care_plan_id);
+create index if not exists idx_care_plan_steps_due    on care_plan_steps (planned_at) where status in ('pending','due');
+
+create table if not exists care_interactions (
+    id                bigint generated always as identity primary key,
+    care_plan_step_id bigint references care_plan_steps(id) on delete set null,
+    customer_id       bigint not null references customers(id) on delete cascade,
+    user_id           bigint references users(id) on delete set null,
+    channel           text check (channel in ('call','chat','zalo','sms','direct')),
+    contacted         boolean,
+    summary           text,
+    next_action_at    timestamptz,
+    created_at        timestamptz not null default now(),
+    updated_at        timestamptz not null default now()
+);
+
+create index if not exists idx_care_interactions_customer on care_interactions (customer_id, created_at desc);
+create index if not exists idx_care_interactions_step     on care_interactions (care_plan_step_id);
+
+create table if not exists symptom_assessments (
+    id                  bigint generated always as identity primary key,
+    care_interaction_id bigint not null references care_interactions(id) on delete cascade,
+    symptom_id          bigint not null references symptoms(id),
+    before_score        numeric(6,2),
+    current_score       numeric(6,2),
+    change_score        numeric(6,2) generated always as (before_score - current_score) stored,
+    created_at          timestamptz not null default now(),
+    constraint ck_symptom_assessments_scale check (
+        (before_score  is null or before_score  between 0 and 10) and
+        (current_score is null or current_score between 0 and 10))
+);
+comment on column symptom_assessments.change_score is
+    'Cột tính tự động = before_score - current_score; DƯƠNG = cải thiện (khoảng -10..10)';
+comment on constraint ck_symptom_assessments_scale on symptom_assessments is
+    'Thang 0-10, khớp customer_symptoms.severity. Đổi thang thì drop cả 2 constraint ck_*_scale / ck_*_severity';
+
+create index if not exists idx_symptom_assessments_interaction
+    on symptom_assessments (care_interaction_id);
+create index if not exists idx_symptom_assessments_symptom
+    on symptom_assessments (symptom_id);
+
+create table if not exists tasks (
+    id           bigint generated always as identity primary key,
+    customer_id  bigint references customers(id) on delete cascade,
+    assigned_to  bigint references users(id) on delete set null,
+    task_type    text not null,
+    due_at       timestamptz,
+    priority     text not null default 'normal'
+                 check (priority in ('low','normal','high','urgent')),
+    status       text not null default 'open'
+                 check (status in ('open','in_progress','done','cancelled','overdue')),
+    related_type text check (related_type in ('lead','order','care_plan_step',
+                                              'customer_treatment','repurchase_opportunity')),
+    related_id   bigint,
+    created_at   timestamptz not null default now(),
+    updated_at   timestamptz not null default now()
+);
+comment on column tasks.related_id is
+    'QUAN HỆ ĐA HÌNH theo related_type — không đặt được FK, phần mềm tự kiểm';
+
+create index if not exists idx_tasks_assigned on tasks (assigned_to, status, due_at);
+create index if not exists idx_tasks_customer on tasks (customer_id);
+create index if not exists idx_tasks_related  on tasks (related_type, related_id);
+
+create table if not exists repurchase_opportunities (
+    id                   bigint generated always as identity primary key,
+    customer_id          bigint not null references customers(id) on delete cascade,
+    current_treatment_id bigint references customer_treatments(id) on delete set null,
+    next_template_id     bigint references treatment_templates(id),
+    owner_id             bigint references users(id) on delete set null,
+    expected_close_date  date,
+    expected_value       numeric(14,2) check (expected_value >= 0),
+    stage                text not null default 'identified'
+                         check (stage in ('identified','contacted','negotiating',
+                                          'won','lost','postponed')),
+    lost_reason_id       bigint references lead_reasons(id),
+    created_at           timestamptz not null default now(),
+    updated_at           timestamptz not null default now()
+);
+comment on table repurchase_opportunities is
+    'Sinh tự động bằng job quét customer_treatments sắp đến expected_end_date';
+
+create index if not exists idx_repurchase_customer  on repurchase_opportunities (customer_id);
+create index if not exists idx_repurchase_owner     on repurchase_opportunities (owner_id, stage);
+create index if not exists idx_repurchase_treatment on repurchase_opportunities (current_treatment_id);
+
+create table if not exists reactivation_campaigns (
+    id                bigint generated always as identity primary key,
+    name              text not null,
+    segment_rule_json jsonb not null default '{}'::jsonb,
+    start_at          timestamptz,
+    end_at            timestamptz,
+    status            text not null default 'draft'
+                      check (status in ('draft','running','paused','finished')),
+    created_at        timestamptz not null default now(),
+    updated_at        timestamptz not null default now()
+);
+
+create table if not exists reactivation_members (
+    id          bigint generated always as identity primary key,
+    campaign_id bigint not null references reactivation_campaigns(id) on delete cascade,
+    customer_id bigint not null references customers(id) on delete cascade,
+    assigned_to bigint references users(id) on delete set null,
+    status      text not null default 'pending'
+                check (status in ('pending','contacted','responded','converted',
+                                  'refused','unreachable')),
+    result      text,
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now(),
+    unique (campaign_id, customer_id)
+);
+
+create index if not exists idx_reactivation_members_customer on reactivation_members (customer_id);
+
+
+-- ============================================================
+-- MODULE 6 — KHO KIẾN THỨC, AI & MARKETING
+-- ============================================================
+
+create table if not exists knowledge_documents (
+    id             bigint generated always as identity primary key,
+    title          text not null,
+    category       text,
+    status         text not null default 'draft',
+    access_level   text not null default 'internal',
+    approved_by    bigint references users(id) on delete set null,
+    effective_from timestamptz,
+    effective_to   timestamptz,
+    created_at     timestamptz not null default now(),
+    updated_at     timestamptz not null default now(),
+    constraint ck_knowledge_documents_status check (status in
+        ('draft','pending','approved','archived')),
+    constraint ck_knowledge_documents_access check (access_level in
+        ('public','internal','restricted'))
+);
+comment on column knowledge_documents.access_level is
+    'ĐOÁN cột thứ 6 của ERD (ghi là "is_permission / quyền xem"). '
+    'public=gửi được cho khách · internal=nội bộ mọi nhân sự · restricted=chỉ chuyên môn. '
+    'Nếu ERD thật là boolean thì: alter table ... drop column access_level, add column is_permission boolean';
+
+create table if not exists knowledge_versions (
+    id          bigint generated always as identity primary key,
+    document_id bigint not null references knowledge_documents(id) on delete cascade,
+    version_no  integer not null,
+    content     text,
+    created_by  bigint references users(id) on delete set null,
+    approved_at timestamptz,
+    created_at  timestamptz not null default now(),
+    unique (document_id, version_no)
+);
+
+create table if not exists consultation_scenarios (
+    id            bigint generated always as identity primary key,
+    name          text not null,
+    problem_group text,
+    version_no    integer not null default 1,
+    status        text not null default 'draft',
+    created_at    timestamptz not null default now(),
+    updated_at    timestamptz not null default now(),
+    constraint ck_consultation_scenarios_status check (status in
+        ('draft','active','archived'))
+);
+
+create table if not exists scenario_rules (
+    id             bigint generated always as identity primary key,
+    scenario_id    bigint not null references consultation_scenarios(id) on delete cascade,
+    condition_json jsonb not null default '{}'::jsonb,
+    action_json    jsonb not null default '{}'::jsonb,
+    priority       integer not null default 0,
+    status         text not null default 'active',
+    created_at     timestamptz not null default now(),
+    updated_at     timestamptz not null default now(),
+    constraint ck_scenario_rules_status check (status in ('active','inactive'))
+);
+comment on column scenario_rules.priority is 'Số lớn chạy trước (giống treatment_rules)';
+
+create index if not exists idx_scenario_rules_scenario
+    on scenario_rules (scenario_id, priority desc);
+
+create table if not exists scenario_steps (
+    id               bigint generated always as identity primary key,
+    scenario_id      bigint not null references consultation_scenarios(id) on delete cascade,
+    step_code        text,
+    step_type        text,
+    question_text    text,
+    customer_message text,
+    required         boolean not null default false,
+    next_step_code   text,
+    role_level       text not null default 'all',
+    created_at       timestamptz not null default now(),
+    updated_at       timestamptz not null default now(),
+    unique (scenario_id, step_code),
+    constraint ck_scenario_steps_type check (step_type is null or step_type in
+        ('question','message','action','branch','end')),
+    constraint ck_scenario_steps_role_level check (role_level in
+        ('all','sale','cskh','chuyen_mon'))
+);
+comment on column scenario_steps.role_level is
+    'ĐOÁN cột gần cuối của ERD ("bước này dành cho cấp nào"). Dùng chung danh mục với teams.department. '
+    'chuyen_mon = bước đụng nội dung y tế, chỉ người có chuyên môn được nói';
+comment on column scenario_steps.step_type is
+    'question=hỏi khách · message=đọc mẫu câu · action=thao tác · branch=rẽ nhánh theo scenario_rules · end=kết thúc';
+comment on column scenario_steps.question_text is 'Câu hỏi cho tư vấn viên';
+comment on column scenario_steps.customer_message is 'Mẫu câu nói với khách';
+
+create table if not exists ad_campaigns (
+    id                  bigint generated always as identity primary key,
+    external_campaign_id text not null,
+    name                text not null,
+    platform            text not null,
+    status              text,
+    created_at          timestamptz not null default now(),
+    updated_at          timestamptz not null default now(),
+    unique (platform, external_campaign_id),
+    constraint ck_ad_campaigns_platform check (platform in
+        ('facebook','google','tiktok','zalo')),
+    constraint ck_ad_campaigns_status check (status is null or status in
+        ('active','paused','archived','deleted'))
+);
+comment on constraint ck_ad_campaigns_status on ad_campaigns is
+    'Theo trạng thái chuẩn của Meta/Google/TikTok Ads';
+
+create table if not exists ad_sets (
+    id              bigint generated always as identity primary key,
+    campaign_id     bigint not null references ad_campaigns(id) on delete cascade,
+    external_adset_id text unique,
+    name            text,
+    created_at      timestamptz not null default now(),
+    updated_at      timestamptz not null default now()
+);
+
+create index if not exists idx_ad_sets_campaign on ad_sets (campaign_id);
+
+create table if not exists ads (
+    id            bigint generated always as identity primary key,
+    ad_set_id     bigint not null references ad_sets(id) on delete cascade,
+    external_ad_id text unique,
+    name          text,
+    creative_id   text,
+    status        text,
+    created_at    timestamptz not null default now(),
+    updated_at    timestamptz not null default now(),
+    constraint ck_ads_status check (status is null or status in
+        ('active','paused','archived','deleted'))
+);
+
+create index if not exists idx_ads_ad_set on ads (ad_set_id);
+
+create table if not exists lead_attributions (
+    id            bigint generated always as identity primary key,
+    customer_id   bigint references customers(id) on delete cascade,
+    lead_id       bigint references leads(id) on delete cascade,
+    campaign_id   bigint references ad_campaigns(id) on delete set null,
+    ad_set_id     bigint references ad_sets(id) on delete set null,
+    ad_id         bigint references ads(id) on delete set null,
+    touch_type    text check (touch_type in ('first','last','assisted')),
+    attributed_at timestamptz,
+    created_at    timestamptz not null default now()
+);
+comment on table lead_attributions is
+    'Một lead có nhiều bản ghi quy nguồn (chạm đầu / cuối / hỗ trợ) — tính được cả hai mô hình quy nguồn';
+
+create index if not exists idx_lead_attributions_lead     on lead_attributions (lead_id);
+create index if not exists idx_lead_attributions_customer on lead_attributions (customer_id);
+create index if not exists idx_lead_attributions_campaign on lead_attributions (campaign_id);
+
+create table if not exists funnel_events (
+    id          bigint generated always as identity primary key,
+    customer_id bigint references customers(id) on delete cascade,
+    lead_id     bigint references leads(id) on delete set null,
+    order_id    bigint references orders(id) on delete set null,
+    event_type  text not null,
+    event_at    timestamptz not null default now(),
+    value       numeric(14,2),
+    created_at  timestamptz not null default now()
+);
+comment on table funnel_events is 'Bảng nhật ký, phình nhanh';
+comment on column funnel_events.value is
+    'ĐOÁN: chốt là TIỀN (VND) — giá trị quy cho sự kiện phễu, để cộng doanh thu theo nguồn. '
+    'Sự kiện không có tiền thì để rỗng';
+
+create index if not exists idx_funnel_events_customer on funnel_events (customer_id, event_at desc);
+create index if not exists idx_funnel_events_type     on funnel_events (event_type, event_at desc);
+
+create table if not exists ai_recommendations (
+    id                  bigint generated always as identity primary key,
+    customer_id         bigint references customers(id) on delete cascade,
+    session_id          bigint references consultation_sessions(id) on delete set null,
+    recommendation_type text,
+    content             text,
+    source_refs         jsonb not null default '[]'::jsonb,
+    risk_level          text check (risk_level in ('low','medium','high','critical')),
+    accepted_by         bigint references users(id) on delete set null,
+    created_at          timestamptz not null default now()
+);
+comment on column ai_recommendations.source_refs is
+    'QUAN HỆ ĐA HÌNH: nguồn trích dẫn, nên trỏ về knowledge_versions.id — không FK';
+comment on column ai_recommendations.accepted_by is
+    'NGƯỜI THẬT đã duyệt gợi ý của máy trước khi nói với khách';
+
+create index if not exists idx_ai_recommendations_customer on ai_recommendations (customer_id, created_at desc);
+create index if not exists idx_ai_recommendations_session  on ai_recommendations (session_id);
+
+
+-- ============================================================
+-- TRIGGER updated_at cho mọi bảng CÓ CỘT updated_at trong schema crm
+-- (lọc theo nspname='crm' nên không bao giờ chạm bảng của bot/watcher)
+-- ============================================================
+do $$
+declare
+    t text;
+begin
+    for t in
+        select c.relname
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+        join pg_attribute a on a.attrelid = c.oid
+        where n.nspname = 'crm'
+          and c.relkind = 'r'
+          and a.attname = 'updated_at'
+          and not a.attisdropped
+    loop
+        execute format('drop trigger if exists trg_%I_updated on crm.%I', t, t);
+        execute format(
+            'create trigger trg_%I_updated before update on crm.%I '
+            'for each row execute function crm.set_updated_at()', t, t);
+    end loop;
+end $$;
+
+commit;
+
+-- ============================================================
+-- CÁC CỘT CỐ Ý ĐỂ TEXT TỰ DO (danh mục mở, KHÔNG đặt CHECK)
+--   products.product_type · tags.type · tasks.task_type
+--   safety_screenings.screening_type · treatment_rules.rule_type
+--   funnel_events.event_type · ai_recommendations.recommendation_type
+--   care_plan_steps.result_code · symptoms.group_name · leads.source
+-- Đây là các bộ mã sẽ nở ra theo vận hành, khoá cứng bằng CHECK chỉ tổ vướng.
+--
+-- NHÓM D — CHƯA ĐỘNG, quyết định sau khi có dữ liệu thật:
+--   * partition theo tháng cho messages / funnel_events / call_transcripts
+--     (làm được về sau, nhưng phải dừng ghi một lúc để chuyển bảng)
+--   * chính sách lưu trữ ghi âm + bóc băng: thời hạn xoá calls.recording_url
+--   * ai được xem call_transcripts — dữ liệu nhạy cảm, hiện CHƯA có phân quyền
+--     ở tầng DB (không bật row level security), phần mềm phải tự chặn
+-- ============================================================

@@ -1,6 +1,6 @@
 """Dựng HTML cho các màn hình Pancake (server-side render).
 
-Chỉ dựng phần THÂN trang rồi bọc bằng `app.ui.shell.render_shell` để mọi màn
+Chỉ dựng phần THÂN trang rồi bọc bằng `app.web.shell.render_shell` để mọi màn
 hình dùng chung menu trái + topbar + stylesheet.
 """
 
@@ -8,8 +8,8 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from urllib.parse import urlencode
 
-from app.pancake.client import tag_color_override
-from app.ui.shell import render_shell
+from app.integrations.pancake.client import tag_color_override
+from app.web.shell import render_shell
 
 # Pancake trả thời gian theo UTC; cộng offset này để hiển thị GIỜ ĐỊA PHƯƠNG (VN=+7).
 _DISPLAY_TZ = timezone(timedelta(hours=7))
@@ -481,7 +481,7 @@ _POLL_JS = """
       })
       .catch(function(){});
   }
-  // Đăng ký vào __pjaxTimers để _NAV_JS (app/ui/shell.py) huỷ khi rời trang
+  // Đăng ký vào __pjaxTimers để _NAV_JS (app/web/shell.py) huỷ khi rời trang
   // bằng AJAX — không thì mỗi lần quay lại lại chồng thêm 1 vòng poll.
   (window.__pjaxTimers = window.__pjaxTimers || []).push(setInterval(tick, __MS__));
 })();

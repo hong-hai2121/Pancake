@@ -11,7 +11,7 @@ Dùng cho động cơ luồng `bot/flow.next_step` + bot tự động Tầng 2. 
 lời" hiện KHÔNG dùng phiên (stateless).
 """
 
-from app.db.queries import load_customer_state, upsert_customer_state
+from app.db.repositories.queries import load_customer_state, upsert_customer_state
 
 
 def _new_session(page_id: str, psid: str) -> dict:

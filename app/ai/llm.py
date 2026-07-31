@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from app.config import settings
+from app.core.config import settings
 
 
 class LLMError(RuntimeError):

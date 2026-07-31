@@ -30,9 +30,9 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from app.config import settings
-from app.db import inbox_store
-from app.pancake.client import enabled_pages, fetch_conversations_fresh
+from app.core.config import settings
+from app.db.repositories import inbox_store
+from app.integrations.pancake.client import enabled_pages, fetch_conversations_fresh
 
 # Số page gọi song song trong 1 lượt.
 _CONCURRENCY = 5

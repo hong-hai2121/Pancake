@@ -11,10 +11,10 @@ chạm đĩa mỗi lần poll.
 """
 
 import json
-from pathlib import Path
 
-# app/pancake/switches.py -> parents[2] = gốc project (giống _env_path trong client)
-_FILE = Path(__file__).resolve().parents[2] / "page_switches.json"
+from app.core.paths import PROJECT_ROOT
+
+_FILE = PROJECT_ROOT / "page_switches.json"
 
 _off_cache: set[str] | None = None   # None = chưa nạp
 

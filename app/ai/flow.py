@@ -17,6 +17,6 @@ def next_step(session: dict, text: str) -> str | None:
         nhật `buoc_hien_tai`) và trả `noi_dung` của bước đó. Không khớp -> None để
         brain nhường cho RAG.
 
-    TODO: nạp kịch bản từ DB (app.db.queries.load_scripts) và cài logic so khớp.
+    TODO: nạp kịch bản từ DB (app.db.repositories.queries.load_scripts) và cài logic so khớp.
     """
     return None

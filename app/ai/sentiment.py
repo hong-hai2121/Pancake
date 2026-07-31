@@ -23,7 +23,7 @@ import json
 import re
 from pathlib import Path
 
-from app.config import settings
+from app.core.config import settings
 
 KEYWORDS_PATH = Path(__file__).parent / "keywords.json"
 

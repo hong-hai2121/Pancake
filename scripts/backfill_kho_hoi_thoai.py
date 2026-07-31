@@ -23,8 +23,8 @@ import argparse
 import asyncio
 import sys
 
-from app.db import inbox_store
-from app.pancake.client import close_http, enabled_pages, fetch_conversations_fresh
+from app.db.repositories import inbox_store
+from app.integrations.pancake.client import close_http, enabled_pages, fetch_conversations_fresh
 
 # Số page gọi song song + nghỉ giữa 2 lượt (giây) — cố ý chậm hơn worker.
 _SONG_SONG = 2

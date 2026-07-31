@@ -13,12 +13,12 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from app.bot.brain import extract_qa_candidates, suggest_reply
-from app.config import settings
-from app.db import inbox_store
+from app.ai.brain import extract_qa_candidates, suggest_reply
+from app.core.config import settings
+from app.db.repositories import inbox_store
 from app.db.backends import backend_name
-from app.db.queries import _count, insert_qa
-from app.pancake.client import (
+from app.db.repositories.queries import _count, insert_qa
+from app.integrations.pancake.client import (
     ALL_PAGES,
     PancakeError,
     enabled_pages,
@@ -30,9 +30,9 @@ from app.pancake.client import (
     send_message,
     token_owner,
 )
-from app.pancake.switches import disable_all, enable_all, toggle_page
-from app.pancake.webview import _relative_time, render_recent_list, render_thread
-from app.ui.webview import (
+from app.integrations.pancake.switches import disable_all, enable_all, toggle_page
+from app.web.views.pancake import _relative_time, render_recent_list, render_thread
+from app.web.views.main import (
     render_customers,
     render_dashboard,
     render_error,

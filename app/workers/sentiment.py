@@ -1,7 +1,7 @@
 """Worker nền: quét cảm xúc TIÊU CỰC cho hội thoại mới trong kho.
 
-Bộ quét + báo Telegram nằm ở `app/cam_xuc/sentiment_engine.py` và
-`app/cam_xuc/telegram.py`. Trước đây hai thứ này đi mượn của ZPancake qua một
+Bộ quét + báo Telegram nằm ở `app/ai/sentiment.py` và
+`app/integrations/telegram.py`. Trước đây hai thứ này đi mượn của ZPancake qua một
 đoạn chèn `sys.path` + `load_dotenv` thủ công; ZPancake đã bỏ nên chúng được
 chuyển hẳn vào app, không còn phụ thuộc thư mục ngoài.
 
@@ -18,9 +18,10 @@ lần nào, hoặc khách đã nhắn thêm kể từ lần quét trước (xem 
 import asyncio
 from datetime import datetime, timezone
 
-from app.cam_xuc import sentiment_engine, telegram
-from app.config import settings
-from app.db import inbox_store, sentiment_log
+from app.ai import sentiment as sentiment_engine
+from app.integrations import telegram
+from app.core.config import settings
+from app.db.repositories import inbox_store, sentiment_log
 from app.workers import switch
 
 # Thống kê + chi tiết vòng gần nhất — xem qua `GET /poller`.

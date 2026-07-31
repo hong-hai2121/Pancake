@@ -10,9 +10,10 @@ from urllib.parse import parse_qs, urlencode
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.cam_xuc import sentiment_engine, telegram
-from app.cam_xuc.webview import render_cam_xuc
-from app.db import inbox_store, sentiment_log
+from app.ai import sentiment as sentiment_engine
+from app.integrations import telegram
+from app.web.views.sentiment import render_cam_xuc
+from app.db.repositories import inbox_store, sentiment_log
 from app.workers import switch
 
 router = APIRouter(prefix="/cam-xuc", tags=["cam-xuc"])

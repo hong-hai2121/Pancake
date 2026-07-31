@@ -11,7 +11,7 @@ import json
 import sys
 from pathlib import Path
 
-from app.db.queries import insert_qa
+from app.db.repositories.queries import insert_qa
 from ingestion.distill import distill
 
 
