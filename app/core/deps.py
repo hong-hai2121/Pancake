@@ -52,6 +52,25 @@ def require_permission(ma_quyen: str):
     return _check
 
 
+def require_any_permission(*ma_quyen: str):
+    """Như `require_permission` nhưng chỉ cần CÓ MỘT trong các quyền đưa vào —
+    dùng cho endpoint mở cho cả Admin (`user.manage`) lẫn trưởng nhóm
+    (`user.manage_team`); phạm vi hẹp/rộng do service quyết tiếp."""
+
+    def _check(request: Request) -> dict:
+        user = get_current_user(request)
+        perms = user.get("perms") or []
+        if not any(m in perms for m in ma_quyen):
+            raise ApiError(
+                "FORBIDDEN",
+                f"Bạn cần một trong các quyền: {', '.join(ma_quyen)} — "
+                "liên hệ Admin nếu cần cấp",
+            )
+        return user
+
+    return _check
+
+
 def co_quyen(user: dict | None, ma_quyen: str) -> bool:
     """Kiểm quyền 'mềm' cho web/view (ẩn nút, ẩn mục menu) — không raise."""
     return bool(user) and ma_quyen in (user.get("perms") or [])

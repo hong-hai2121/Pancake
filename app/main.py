@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.api.v1.auth import router as auth_api_router
 from app.core.config import settings
@@ -47,9 +47,11 @@ async def lifespan(_app: FastAPI):
     # Worker cảm xúc LUÔN được tạo; quét hay không do công tắc ở trang /cam-xuc
     # quyết định (mặc định lấy theo SENTIMENT_ENABLED trong .env). Nhờ vậy bật
     # lại từ giao diện là chạy ngay, không phải khởi động lại server.
-    from app.workers import sentiment_loop
+    from app.workers import sentiment_loop, task_escalation_loop
 
     tasks.append(asyncio.create_task(sentiment_loop(), name="sentiment"))
+    # B4: 5 phút một lần đánh dấu việc quá hạn + audit "báo quản lý" (mục 19).
+    tasks.append(asyncio.create_task(task_escalation_loop(), name="tasks-qua-han"))
 
     yield
 
@@ -116,6 +118,14 @@ _MIEN_DANG_NHAP: frozenset[str] = frozenset({
     "/favicon.ico",
 })
 
+# Khu Bot Pancake (nhóm menu 2) — chỉ tài khoản cấp toàn hệ thống (quyền
+# `bot.view`, seed chỉ gán qua _ALL cho Chủ DN + Admin) mới được vào. Chặn
+# theo TIỀN TỐ ở middleware để ăn trọn mọi route con (fragment, form post...);
+# /khach-hang là màn bot cũ — KH của CRM nằm ở /crm/khach-hang không dính.
+_KHU_BOT: tuple[str, ...] = (
+    "/bang-dieu-khien", "/tin-nhan", "/khach-hang", "/cam-xuc", "/data", "/pancake",
+)
+
 
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
@@ -175,11 +185,23 @@ async def auth_gate(request: Request, call_next):
     request.state.user = user
     ctx_token = current_user.set(user)   # cho render_shell hiện tên + nút đăng xuất
     try:
-        response = await call_next(request)
+        if (request.url.path.startswith(_KHU_BOT)
+                and "bot.view" not in (user.get("perms") or [])):
+            from app.web.views.admin import render_403
+
+            response = HTMLResponse(render_403(
+                "Khu Bot Pancake chỉ dành cho tài khoản cấp toàn hệ thống "
+                "(Chủ doanh nghiệp / Admin).", heading="Bot Pancake",
+            ), status_code=403)
+        else:
+            response = await call_next(request)
     finally:
         current_user.reset(ctx_token)
     if lam_moi:  # gắn access mới phát vào cookie
         dat_cookie_dang_nhap(response, lam_moi, remember=False)
+    # Nội dung sau đăng nhập cấm cache (no-store loại trang khỏi cả bfcache):
+    # đăng xuất xong bấm Back/mở lại phải ra màn đăng nhập, không moi bản cũ.
+    response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
@@ -208,6 +230,26 @@ app.include_router(leads_api_router)
 from app.api.v1.customers import router as customers_api_router  # noqa: E402
 
 app.include_router(customers_api_router)
+
+# B4: API công việc (TASK-001…009) — task engine chung Sale/CSKH, luật mục 19
+# BRD nằm ở services/task_service.py.
+from app.api.v1.tasks import router as tasks_api_router  # noqa: E402
+
+app.include_router(tasks_api_router)
+
+# B5: API hồ sơ tư vấn + sàng lọc an toàn (CONSULT/SYMPTOM/MEDICAL/SAFETY) —
+# luật FR-050…053 nằm ở services/consult_service.py; cờ đỏ chặn đề xuất (B6).
+from app.api.v1.consult import router as consult_api_router  # noqa: E402
+
+app.include_router(consult_api_router)
+
+# B6: API sản phẩm & liệu trình (PRODUCT-001…008 · TREATMENT-001…014) — rule
+# engine đề xuất trong services/treatment_service.py, luật nằm ở DB (mục 10 BRD).
+from app.api.v1.products import router as products_api_router  # noqa: E402
+from app.api.v1.treatments import router as treatments_api_router  # noqa: E402
+
+app.include_router(products_api_router)
+app.include_router(treatments_api_router)
 
 # Bộ màn CRM tạm (khung): /crm/* — cấu trúc theo danh sách màn hình, số liệu
 # thật từ schema crm; lát cắt B1…B11 làm đầy dần (xem app/web/views/crm.py).

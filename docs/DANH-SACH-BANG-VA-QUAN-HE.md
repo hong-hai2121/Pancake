@@ -54,7 +54,7 @@ Tổng: **55 bảng**, chia 6 module.
 |---|---|
 | `id` | PK |
 | `name` | UQ |
-| `department` | ⚠️ cần chốt danh mục: sale / cskh / marketing / chuyên môn |
+| `department` | danh mục đã chốt (CHECK): sale / cskh / marketing / chuyen_mon / kho_van / admin — thêm giá trị mới thì nới CHECK `ck_teams_department` |
 | `manager_id` | FK → `users` |
 
 ### `users` — Nhân sự vận hành

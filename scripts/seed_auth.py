@@ -46,7 +46,12 @@ PERMISSIONS: list[tuple[str, str]] = [
     ("integration.manage", "Quản lý tích hợp"),
     # A5 — FR-002/003 cần quyền riêng cho quản trị tài khoản + xem audit (màn 65-67, 77)
     ("user.manage", "Quản lý nhân viên & phân quyền"),
+    ("user.manage_team", "Quản lý tài khoản trong đội (trưởng nhóm)"),
     ("audit.view", "Xem nhật ký hoạt động"),
+    # Khu Bot Pancake (điều khiển bot, tin nhắn, dữ liệu bot, cảm xúc) — chỉ cấp
+    # toàn hệ thống: quyền này KHÔNG nằm trong danh sách của vai trò nào bên dưới,
+    # chỉ Chủ DN + Admin nhận qua _ALL.
+    ("bot.view", "Xem khu Bot Pancake (điều khiển bot, tin nhắn, dữ liệu bot)"),
 ]
 
 _ALL = [code for code, _ in PERMISSIONS]
@@ -56,11 +61,12 @@ ROLE_PERMS: dict[str, list[str]] = {
     "Chủ doanh nghiệp": _ALL,
     "Admin": _ALL,
     "Trưởng nhóm Sale": ["customer.view", "customer.edit", "customer.view_phone",
-                          "call.listen", "health.view", "revenue.view"],
+                          "call.listen", "health.view", "revenue.view",
+                          "user.manage_team"],
     "Sale": ["customer.view", "customer.edit", "customer.view_phone",
              "health.view", "treatment.edit"],
     "Trưởng nhóm CSKH": ["customer.view", "customer.edit", "customer.view_phone",
-                          "call.listen", "health.view"],
+                          "call.listen", "health.view", "user.manage_team"],
     "CSKH": ["customer.view", "customer.edit", "customer.view_phone", "health.view"],
     "Marketing": ["customer.view"],
     "Kế toán": ["customer.view", "revenue.view", "data.export"],

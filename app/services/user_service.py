@@ -4,8 +4,11 @@ Luật FR-002 cài ở đây:
   * Không xoá cứng tài khoản — chỉ đổi status (không có hàm delete).
   * Nhân viên nghỉ việc PHẢI chuyển hết khách/việc trước khi khoá.
   * Mọi thay đổi đều ghi audit kèm giá trị cũ/mới (A4).
+  * Phạm vi 2 tầng: `user.manage` (Chủ DN/Admin) đụng được mọi tài khoản;
+    `user.manage_team` (trưởng nhóm Sale/CSKH) chỉ TẠO + reset mật khẩu cho
+    THÀNH VIÊN đội mình — xem `pham_vi_doi()`.
 
-`actor` = payload token của người đang thao tác (dict, có sub/name);
+`actor` = payload token của người đang thao tác (dict, có sub/name/perms);
 `ip`/`user_agent` đi kèm để audit — cùng nếp với auth_service.
 """
 
@@ -15,7 +18,46 @@ from psycopg.errors import UniqueViolation
 
 from app.core import security
 from app.core.errors import ApiError
-from app.db.repositories import audit_repo, auth_repo, user_repo
+from app.db.repositories import audit_repo, auth_repo, org_repo, user_repo
+
+# Trưởng nhóm của bộ phận nào chỉ tạo/quản được vai trò THÀNH VIÊN bộ phận đó
+_VAI_THANH_VIEN = {"sale": "Sale", "cskh": "CSKH"}
+
+
+def pham_vi_doi(actor: dict) -> dict | None:
+    """Xác định phạm vi quản lý tài khoản của người thao tác.
+
+    * Có `user.manage`      -> None (toàn quyền, mọi cấp).
+    * Có `user.manage_team` -> dict {team_id, team_name, role_id, role_name}:
+      phải LÀ TRƯỞNG NHÓM (teams.manager_id trỏ về mình) và đội phải gắn bộ
+      phận sale/cskh; chỉ được đụng tài khoản vai trò thành viên tương ứng.
+    * Không có gì -> FORBIDDEN — chặn ở service để API lẫn web không lọt.
+
+    Tra DB chứ không tin team_id trong token: đổi đội/trưởng nhóm ăn ngay,
+    không phải chờ refresh token.
+    """
+    perms = actor.get("perms") or []
+    if "user.manage" in perms:
+        return None
+    if "user.manage_team" not in perms:
+        raise ApiError("FORBIDDEN", "Bạn không có quyền quản lý tài khoản")
+    nguoi = user_repo.get_user(int(actor["sub"]))
+    doi = org_repo.get_team(nguoi["team_id"]) if nguoi and nguoi.get("team_id") else None
+    if not doi or doi.get("manager_id") != nguoi["id"]:
+        raise ApiError(
+            "FORBIDDEN",
+            "Bạn chưa được gán làm trưởng nhóm của đội nào — liên hệ Admin",
+        )
+    ten_vai = _VAI_THANH_VIEN.get(doi.get("department") or "")
+    vai = org_repo.get_role_by_name(ten_vai) if ten_vai else None
+    if not vai:
+        raise ApiError(
+            "CONFLICT",
+            f"Đội {doi['name']} chưa gắn bộ phận sale/cskh — "
+            "Admin sửa ở màn Vai trò & quyền",
+        )
+    return {"team_id": doi["id"], "team_name": doi["name"],
+            "role_id": vai["id"], "role_name": vai["name"]}
 
 
 def _audit(actor: dict | None, ip, ua, **kw) -> None:
@@ -37,7 +79,21 @@ def _khac_nhau(cu: dict, moi: dict) -> tuple[dict, dict]:
 def create_user(
     data: dict, *, actor: dict, ip=None, user_agent=None
 ) -> dict:
-    """USER-003. `data` đã qua Pydantic; mật khẩu đầu do Admin đặt hoặc tự sinh."""
+    """USER-003. `data` đã qua Pydantic; mật khẩu đầu do Admin đặt hoặc tự sinh.
+
+    Trưởng nhóm (`user.manage_team`): vai trò + đội bị ÉP theo phạm vi ở
+    server — form có gửi gì khác cũng không ăn; xin vai trò khác thì báo thẳng.
+    """
+    pham_vi = pham_vi_doi(actor)
+    if pham_vi:
+        if data.get("role_id") and data["role_id"] != pham_vi["role_id"]:
+            raise ApiError(
+                "FORBIDDEN",
+                f"Trưởng nhóm chỉ tạo được tài khoản {pham_vi['role_name']} "
+                "trong đội mình",
+            )
+        data["role_id"] = pham_vi["role_id"]
+        data["team_id"] = pham_vi["team_id"]
     mat_khau = data.get("password") or ("Nv-" + secrets.token_urlsafe(9))
     if len(mat_khau) < 8:
         raise ApiError("VALIDATION_ERROR", "Mật khẩu phải từ 8 ký tự",
@@ -121,10 +177,21 @@ def set_status(
 def reset_password(
     user_id: int, *, actor: dict, ip=None, user_agent=None
 ) -> dict:
-    """FR-002 'Đặt lại mật khẩu': sinh mật khẩu mới + thu hồi mọi phiên của user đó."""
+    """FR-002 'Đặt lại mật khẩu': sinh mật khẩu mới + thu hồi mọi phiên của user đó.
+
+    Trưởng nhóm chỉ reset được cho THÀNH VIÊN đội mình (không reset được
+    trưởng nhóm khác hay người ngoài đội).
+    """
     user = user_repo.get_user(user_id)
     if not user:
         raise ApiError("NOT_FOUND", "Không tìm thấy nhân viên")
+    pham_vi = pham_vi_doi(actor)
+    if pham_vi and (user["team_id"] != pham_vi["team_id"]
+                    or user["role_id"] != pham_vi["role_id"]):
+        raise ApiError(
+            "FORBIDDEN",
+            f"Chỉ đặt lại được mật khẩu của {pham_vi['role_name']} trong đội mình",
+        )
     mat_khau = "Nv-" + secrets.token_urlsafe(9)
     auth_repo.update_password(user_id, security.hash_password(mat_khau))
     auth_repo.revoke_all_sessions(user_id)

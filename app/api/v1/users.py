@@ -1,8 +1,10 @@
-"""USER-001…006 + đặt lại mật khẩu (A5). Tất cả đòi quyền `user.manage`."""
+"""USER-001…006 + đặt lại mật khẩu (A5). Sửa/khoá/chuyển khách đòi
+`user.manage`; riêng xem danh sách + tạo + reset mật khẩu mở thêm cho
+`user.manage_team` (trưởng nhóm) — phạm vi ép trong service (`pham_vi_doi`)."""
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.core.deps import require_permission
+from app.core.deps import require_any_permission, require_permission
 from app.core.errors import ApiError
 from app.core.response import PhanTrang, bao_trang, ok, phan_trang
 from app.db.repositories import user_repo
@@ -12,6 +14,7 @@ from app.services import user_service
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 _can_quyen = Depends(require_permission("user.manage"))
+_can_quyen_doi = Depends(require_any_permission("user.manage", "user.manage_team"))
 
 
 def _ip_ua(request: Request) -> dict:
@@ -28,9 +31,14 @@ async def list_users(
     team_id: int | None = Query(None),
     status: str = Query("", pattern="^(active|inactive|suspended)?$"),
     pt: PhanTrang = Depends(phan_trang),
-    _user: dict = _can_quyen,
+    user: dict = _can_quyen_doi,
 ):
-    """USER-001 — lọc theo vai trò/nhóm/trạng thái/từ khoá."""
+    """USER-001 — lọc theo vai trò/nhóm/trạng thái/từ khoá.
+
+    Trưởng nhóm: chỉ thấy đội mình (team_id bị ghi đè theo phạm vi)."""
+    pham_vi = user_service.pham_vi_doi(user)
+    if pham_vi:
+        team_id = pham_vi["team_id"]
     rows, total = user_repo.list_users(
         q=q, role_id=role_id, team_id=team_id, status=status,
         limit=pt.limit, offset=pt.offset,
@@ -48,7 +56,7 @@ async def get_user(user_id: int, _user: dict = _can_quyen):
 
 
 @router.post("", status_code=201)
-async def create_user(body: UserCreateIn, request: Request, user: dict = _can_quyen):
+async def create_user(body: UserCreateIn, request: Request, user: dict = _can_quyen_doi):
     """USER-003 — `initial_password` chỉ trả MỘT lần, đưa tay cho nhân viên."""
     data = user_service.create_user(
         body.model_dump(), actor=user, **_ip_ua(request)
@@ -79,7 +87,7 @@ async def set_status(
 
 
 @router.post("/{user_id}/reset-password")
-async def reset_password(user_id: int, request: Request, user: dict = _can_quyen):
+async def reset_password(user_id: int, request: Request, user: dict = _can_quyen_doi):
     """FR-002 'Đặt lại mật khẩu' — mật khẩu mới chỉ hiện MỘT lần."""
     return ok(
         user_service.reset_password(user_id, actor=user, **_ip_ua(request)),

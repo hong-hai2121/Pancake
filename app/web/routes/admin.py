@@ -1,12 +1,18 @@
 """Route khu Quản trị (A5): /quan-tri/... — cần quyền `user.manage`
-(riêng nhật ký: `audit.view`). Gọi chung services với API nên luật + audit
-chỉ có một chỗ; lỗi nghiệp vụ (ApiError) hiện thành dải đỏ trên trang.
+(riêng nhật ký: `audit.view`). Tab Nhân viên mở thêm cho `user.manage_team`:
+trưởng nhóm Sale/CSKH chỉ thấy đội mình, chỉ TẠO + reset mật khẩu cho thành
+viên đội (phạm vi ép trong `user_service.pham_vi_doi`). Gọi chung services
+với API nên luật + audit chỉ có một chỗ; lỗi nghiệp vụ (ApiError) hiện thành
+dải đỏ trên trang.
 """
 
+import csv
+import io
+from datetime import datetime
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.core.deps import co_quyen
 from app.core.errors import ApiError
@@ -29,6 +35,15 @@ def _user(request: Request) -> dict:
 
 def _chan(request: Request, quyen: str = "user.manage") -> HTMLResponse | None:
     if not co_quyen(_user(request), quyen):
+        return HTMLResponse(render_403(), status_code=403)
+    return None
+
+
+def _chan_nv(request: Request) -> HTMLResponse | None:
+    """Tab Nhân viên: Admin/Chủ DN (`user.manage`) hoặc trưởng nhóm
+    (`user.manage_team`) đều vào được — phạm vi hẹp/rộng do service quyết."""
+    user = _user(request)
+    if not (co_quyen(user, "user.manage") or co_quyen(user, "user.manage_team")):
         return HTMLResponse(render_403(), status_code=403)
     return None
 
@@ -56,18 +71,76 @@ def _to_int(v: str) -> int | None:
 
 # ------------------------------------------------------------ nhân viên
 @router.get("/nhan-vien", response_class=HTMLResponse)
-async def users_page(request: Request, q: str = "", ok: str = "", error: str = ""):
-    if chan := _chan(request):
+async def users_page(
+    request: Request, q: str = "", nhom: str = "", ok: str = "", error: str = ""
+):
+    if chan := _chan_nv(request):
         return chan
-    users, _total = user_repo.list_users(q=q, limit=100)
+    try:
+        pham_vi = user_service.pham_vi_doi(_user(request))
+    except ApiError as err:
+        return HTMLResponse(render_403(err.message), status_code=403)
+    # Chip nhóm lọc NGAY trên trình duyệt nên admin luôn nhận đủ danh sách;
+    # `nhom` trên URL chỉ để chọn sẵn chip lúc mở. Trưởng nhóm vẫn bị cắt
+    # về đội mình từ server (an ninh, không phải giao diện).
+    if pham_vi:
+        nhom = ""
+    users, _total = user_repo.list_users(
+        q=q, team_id=pham_vi["team_id"] if pham_vi else None, limit=100,
+    )
     return HTMLResponse(render_users(
-        users, org_repo.list_roles(), org_repo.list_teams(), q=q, ok=ok, error=error,
+        users, org_repo.list_roles(), org_repo.list_teams(), q=q, nhom=nhom,
+        co_xuat=co_quyen(_user(request), "data.export"),
+        ok=ok, error=error, gioi_han=pham_vi,
     ))
+
+
+@router.get("/nhan-vien/xuat-excel")
+async def users_export(request: Request):
+    """Xuất danh sách nhân viên ra CSV mở được bằng Excel (BOM UTF-8, chấm
+    phẩy — khớp Excel bản địa VN). Cần thêm quyền `data.export`; trưởng nhóm
+    có quyền đó cũng chỉ xuất được đội mình. Mỗi lần xuất đều ghi audit."""
+    if chan := _chan_nv(request):
+        return chan
+    actor = _user(request)
+    if not co_quyen(actor, "data.export"):
+        return HTMLResponse(
+            render_403("Xuất Excel cần quyền data.export"), status_code=403
+        )
+    try:
+        pham_vi = user_service.pham_vi_doi(actor)
+    except ApiError as err:
+        return HTMLResponse(render_403(err.message), status_code=403)
+    users, _ = user_repo.list_users(
+        team_id=pham_vi["team_id"] if pham_vi else None, limit=100,
+    )
+
+    out = io.StringIO()
+    w = csv.writer(out, delimiter=";")
+    w.writerow(["Username", "Họ tên", "Email", "SĐT", "Vai trò", "Nhóm",
+                "Trạng thái", "Đăng nhập cuối"])
+    for u in users:
+        w.writerow([
+            u["username"], u["name"], u["email"], u["phone"] or "",
+            u["role_name"] or "", u["team_name"] or "", u["status"],
+            u["last_login_at"].strftime("%d/%m/%Y %H:%M") if u["last_login_at"] else "",
+        ])
+    audit_repo.ghi(
+        action="users_export", object_type="user", user_id=actor.get("id"),
+        reason=f"xuất {len(users)} nhân viên", **_ip_ua(request),
+    )
+    ten = f"nhan-vien-{datetime.now():%Y%m%d}.csv"
+    # BOM đầu file: Excel cần nó mới nhận UTF-8, thiếu là tiếng Việt vỡ font
+    return Response(
+        content="﻿" + out.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{ten}"'},
+    )
 
 
 @router.post("/nhan-vien")
 async def create_user(request: Request):
-    if chan := _chan(request):
+    if chan := _chan_nv(request):
         return chan
     f = await _form(request)
     try:
@@ -76,6 +149,7 @@ async def create_user(request: Request):
                 "name": f.get("name", ""), "email": f.get("email", ""),
                 "username": f.get("username", ""),
                 "password": f.get("password") or None,
+                "phone": f.get("phone") or None,
                 "role_id": _to_int(f.get("role_id", "")),
                 "team_id": _to_int(f.get("team_id", "")),
             },
@@ -146,7 +220,7 @@ async def user_status(request: Request, user_id: int):
 
 @router.post("/nhan-vien/{user_id}/reset-mat-khau")
 async def user_reset_password(request: Request, user_id: int):
-    if chan := _chan(request):
+    if chan := _chan_nv(request):
         return chan
     try:
         data = user_service.reset_password(

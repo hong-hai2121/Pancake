@@ -24,21 +24,39 @@ def list_users(
     q: str = "",
     role_id: int | None = None,
     team_id: int | None = None,
+    no_team: bool = False,
     status: str = "",
     limit: int = 20,
     offset: int = 0,
 ) -> tuple[list[dict], int]:
-    """USER-001: danh sách + tổng số (cho phân trang), lọc theo PDF API."""
+    """USER-001: danh sách + tổng số (cho phân trang), lọc theo PDF API.
+
+    `q` bắt đầu bằng `@` -> chỉ dò username; còn lại dò tên/email/username/SĐT
+    (SĐT so thêm bản đã bỏ khoảng trắng và dấu chấm để gõ kiểu nào cũng trúng).
+    `no_team=True` -> chỉ người chưa vào nhóm nào (team_id null).
+    """
     dieu_kien, tham_so = ["true"], []
-    if q:
-        dieu_kien.append("(u.name ilike %s or u.email ilike %s or u.username ilike %s)")
-        tham_so += [f"%{q}%"] * 3
+    q = q.strip()
+    if q.startswith("@"):
+        dieu_kien.append("u.username ilike %s")
+        tham_so.append(f"%{q[1:]}%")
+    elif q:
+        so = "".join(c for c in q if c.isdigit())
+        dieu_kien.append(
+            "(u.name ilike %s or u.email ilike %s or u.username ilike %s"
+            " or u.phone ilike %s"
+            + (" or replace(replace(u.phone,' ',''),'.','') like %s" if so else "")
+            + ")"
+        )
+        tham_so += [f"%{q}%"] * 4 + ([f"%{so}%"] if so else [])
     if role_id is not None:
         dieu_kien.append("u.role_id = %s")
         tham_so.append(role_id)
     if team_id is not None:
         dieu_kien.append("u.team_id = %s")
         tham_so.append(team_id)
+    if no_team:
+        dieu_kien.append("u.team_id is null")
     if status:
         dieu_kien.append("u.status = %s")
         tham_so.append(status)
