@@ -1,9 +1,9 @@
 """Worker nền: quét cảm xúc TIÊU CỰC cho hội thoại mới trong kho.
 
-Dùng LẠI đúng bộ não của ZPancake (`ZPancake/server/sentiment.py` +
-`telegram.py`) thay vì viết lại: danh sách từ khoá vẫn là `keywords.json` duy
-nhất, sửa bằng GUI "Quản lý từ khoá tiêu cực" là cả hai bên cùng ăn theo, và
-tin báo Telegram giữ nguyên định dạng.
+Bộ quét + báo Telegram nằm ở `app/cam_xuc/sentiment_engine.py` và
+`app/cam_xuc/telegram.py`. Trước đây hai thứ này đi mượn của ZPancake qua một
+đoạn chèn `sys.path` + `load_dotenv` thủ công; ZPancake đã bỏ nên chúng được
+chuyển hẳn vào app, không còn phụ thuộc thư mục ngoài.
 
 Chạy TÁCH HẲN khỏi vòng poll và khỏi request của trình duyệt:
 
@@ -16,34 +16,12 @@ lần nào, hoặc khách đã nhắn thêm kể từ lần quét trước (xem 
 """
 
 import asyncio
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
-from dotenv import load_dotenv
-
+from app.cam_xuc import sentiment_engine, telegram
 from app.config import settings
-from app.db import inbox_store
+from app.db import inbox_store, sentiment_log
 from app.workers import switch
-
-# --- mượn sentiment/telegram của ZPancake ------------------------------------
-# Hai module đó đọc cấu hình lúc import (SENTIMENT_METHOD) nên phải nạp .env của
-# ZPancake TRƯỚC. `override=False` để .env gốc (đã nạp qua app.config) vẫn thắng
-# ở những biến trùng tên, ví dụ OPENAI_API_KEY.
-_ROOT = Path(__file__).resolve().parents[2]
-_ZP = _ROOT / "ZPancake" / "server"
-if str(_ZP) not in sys.path:
-    sys.path.insert(0, str(_ZP))
-# Nạp CẢ HAI .env vào os.environ: `telegram.py` và `sentiment.py` của ZPancake đọc
-# cấu hình bằng `os.getenv`, mà pydantic-settings (app/config.py) chỉ đọc file
-# chứ KHÔNG xuất biến ra môi trường. Không nạp .env gốc thì ai điền
-# TELEGRAM_BOT_TOKEN vào đó sẽ thấy thông báo im lặng không chạy mà chẳng có lỗi.
-# .env riêng của ZPancake nạp sau + override để nó vẫn là nơi ưu tiên.
-load_dotenv(_ROOT / ".env")
-load_dotenv(_ZP / ".env", override=True)
-
-import sentiment as zp_sentiment  # noqa: E402 — buộc phải sau load_dotenv
-import telegram as zp_telegram    # noqa: E402
 
 # Thống kê + chi tiết vòng gần nhất — xem qua `GET /poller`.
 _KEEP_DETAIL = 50
@@ -67,34 +45,47 @@ async def scan_once(limit: int) -> dict:
 
     for row in rows:
         try:
-            ket_qua, cach = await zp_sentiment.analyze(row["snippet"])
+            ket_qua, cach, tu_khoa = await sentiment_engine.analyze(
+                row["snippet"], switch.cach_quet()
+            )
             await asyncio.to_thread(
                 inbox_store.save_sentiment,
                 row["page_id"], row["conv_id"], ket_qua, cach, row["updated_at"],
             )
             quet += 1
             if ket_qua == "negative":
+                # VÀO SỔ TRƯỚC khi báo Telegram. Cột `sentiment` ở kho chỉ là
+                # trạng thái hiện tại — khách nhắn thêm câu bình thường là bị
+                # quét lại rồi ghi đè thành neutral, mất dấu từng tiêu cực.
+                # Dòng trong sổ thì không bao giờ bị sửa/xoá.
+                try:
+                    await asyncio.to_thread(sentiment_log.ghi, row, cach, tu_khoa)
+                except Exception as err:  # noqa: BLE001 — không chặn cả mẻ quét
+                    _log(f"[sentiment] Không ghi được nhật ký tiêu cực: {err}")
                 tieu_cuc_ct.append({
                     "page": row.get("page_name") or row["page_id"],
                     "khach": row.get("name") or "",
                     "snippet": (row.get("snippet") or "")[:120],
                     "cach_quet": cach,
+                    "tu_khoa": tu_khoa,
                     "conv_id": row["conv_id"],
                 })
                 _log(
                     f"[sentiment] ⚠ TIÊU CỰC · {row.get('page_name') or row['page_id']}"
                     f" · {row.get('name')}: {(row['snippet'] or '')[:80]}"
+                    + (f"  [khớp: {', '.join(tu_khoa)}]" if tu_khoa else "")
                 )
                 # Best-effort: thiếu cấu hình Telegram thì hàm tự bỏ qua, lỗi
                 # mạng cũng không được phép chặn việc quét các hội thoại sau.
                 try:
-                    await zp_telegram.send_negative_alert(
+                    await telegram.send_negative_alert(
                         name=row.get("name"),
                         snippet=row.get("snippet"),
                         platform="pancake",
                         raw_id=f"{row['page_id']}:{row['conv_id']}",
                         page_id=row["page_id"],
                         conv_id=row["conv_id"],
+                        tu_khoa=tu_khoa,
                     )
                 except Exception as err:  # noqa: BLE001
                     _log(f"[sentiment] Telegram lỗi: {err}")
@@ -136,8 +127,9 @@ async def sentiment_loop() -> None:
             if not switch.is_on():
                 await asyncio.sleep(settings.sentiment_interval)
                 continue
-            # `analyze()` của ZPancake đọc biến module này để chọn keyword/llm.
-            zp_sentiment.SENTIMENT_METHOD = switch.cach_quet()
+            # Cách quét đi thẳng vào `analyze()` theo tham số (xem scan_once) —
+            # bản cũ phải gán đè một biến module toàn cục, dễ lệch khi có 2 mẻ
+            # chạy chồng nhau.
             await scan_once(settings.sentiment_batch)
         except Exception as err:  # noqa: BLE001
             _log(f"[sentiment] Lỗi vòng lặp: {type(err).__name__}: {err}")

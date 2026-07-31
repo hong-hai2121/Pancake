@@ -1,9 +1,11 @@
 """Dựng HTML cho màn hình Cảm xúc (quét tin nhắn tiêu cực)."""
 
+import re
 from datetime import datetime, timedelta, timezone
 from html import escape
 from urllib.parse import urlencode
 
+from app.cam_xuc import sentiment_engine
 from app.ui.shell import flash, render_shell, stat
 
 # Pancake trả giờ UTC; hiển thị theo giờ VN cho khớp các màn khác.
@@ -73,6 +75,79 @@ def _the_nhat_ky(row: dict) -> str:
       </tr>"""
 
 
+def _to_sang(snippet: str, tu_khoa: list[str], gioi_han: int = 110) -> str:
+    """Escape `snippet` rồi bọc `<mark>` quanh các cụm từ khoá đã khớp.
+
+    Cắt bớt cho vừa ô nhưng CỬA SỔ CẮT bám theo cụm khớp đầu tiên: cắt cứng 110
+    ký tự đầu thì từ khoá nằm ở cuối câu dài sẽ không bao giờ lộ ra, đúng lúc
+    người dùng cần nhìn nhất. Cắt ở giữa thì thêm "…" hai đầu cho biết còn nữa.
+
+    Luật khớp lặp lại `mau_khop` của sentiment_engine (ranh giới từ) thay vì tìm
+    chuỗi con: từ khoá đã lưu chắc chắn có trong câu, nhưng tìm thô có thể tô
+    nhầm chỗ khác (vd "ngu" trong "Nguyễn") — nơi quyết định tiêu cực vẫn là
+    sentiment_engine, đây chỉ là phần nhìn.
+    """
+    if not snippet:
+        return ""
+    if not tu_khoa:
+        return escape(snippet[:gioi_han])
+
+    vung: list[tuple[int, int]] = []
+    for kw in tu_khoa:
+        for m in re.finditer(sentiment_engine.mau_khop(kw), snippet, re.IGNORECASE):
+            vung.append((m.start(), m.end()))
+    if not vung:
+        return escape(snippet[:gioi_han])
+    vung.sort()
+
+    # Cửa sổ hiển thị: mở từ trước cụm khớp đầu tiên một quãng cho có ngữ cảnh.
+    dau = 0
+    if vung[0][0] > gioi_han - 40:
+        dau = max(0, vung[0][0] - 30)
+    cuoi = dau + gioi_han
+
+    ra = "… " if dau else ""
+    vi_tri = dau
+    for bat_dau, ket_thuc in vung:
+        if ket_thuc <= dau or bat_dau >= cuoi:      # nằm ngoài cửa sổ
+            continue
+        ra += escape(snippet[vi_tri:bat_dau])
+        ra += f'<mark class="kw">{escape(snippet[bat_dau:ket_thuc])}</mark>'
+        vi_tri = ket_thuc
+    ra += escape(snippet[vi_tri:cuoi])
+    if len(snippet) > cuoi:
+        ra += " …"
+    return ra
+
+
+def _the_canh_bao(row: dict) -> str:
+    """1 dòng trong SỔ cảnh báo tiêu cực (bảng riêng, không bao giờ xoá).
+
+    Khác `_the_nhat_ky`: nội dung ở đây là bản CHỤP lúc phát hiện, nên vẫn đọc
+    được đúng câu đã làm bung cảnh báo dù về sau khách nhắn tiếp hàng chục tin.
+    """
+    tu_khoa = row.get("tu_khoa_khop") or []
+    if tu_khoa:
+        khop_html = "".join(
+            f'<span class="kwhit">{escape(kw)}</span>' for kw in tu_khoa
+        )
+    elif (row.get("cach_quet") or "") == "llm":
+        khop_html = '<span class="rmeta" title="LLM tự đọc ngữ cảnh, không dựa trên từ khoá">LLM quyết định</span>'
+    else:
+        # Dòng ghi TRƯỚC khi có tính năng này — cố ý không dò lại (xem sentiment_log).
+        khop_html = '<span class="rmeta" title="Dòng ghi trước khi có tính năng lưu từ khoá">—</span>'
+    return f"""
+      <tr>
+        <td class="nowrap">{escape(_gio(row.get("phat_hien_luc")))}</td>
+        <td>{escape(row.get("page_name") or "")}</td>
+        <td>{escape(row.get("name") or "")}</td>
+        <td class="snip-kw">{_to_sang(row.get("snippet") or "", tu_khoa)}</td>
+        <td class="nowrap">{khop_html}</td>
+        <td class="nowrap"><span class="badge">{escape(row.get("cach_quet") or "")}</span></td>
+        <td class="nowrap"><a class="btn" href="{_link_hoi_thoai(row)}">Mở →</a></td>
+      </tr>"""
+
+
 def _khung_tu_khoa(tu_khoa: list[str]) -> str:
     """Khung thêm/xoá/sửa hàng loạt danh sách từ khoá tiêu cực.
 
@@ -134,12 +209,20 @@ def render_cam_xuc(
     loi_kho: str = "",
     ok: str = "",
     error: str = "",
+    canh_bao: list[dict] | None = None,
+    so_canh_bao: dict | None = None,
 ) -> str:
     """Trang /cam-xuc: công tắc + số liệu + danh sách tiêu cực + nhật ký quét.
 
     `telegram_chat` = chat id đang cấu hình ("" nghĩa là chưa cấu hình -> tính
     năng báo Telegram đang TẮT, worker sẽ bỏ qua bước gửi mà không báo lỗi).
+
+    `canh_bao` / `so_canh_bao` = SỔ cảnh báo vĩnh viễn (`watcher.canh_bao_tieu_cuc`).
+    Cố tình tách khỏi `tieu_cuc`: cái kia là trạng thái HIỆN TẠI (khách nhắn thêm
+    câu bình thường là hội thoại rơi khỏi danh sách), còn sổ thì giữ mãi.
     """
+    canh_bao = canh_bao or []
+    so_canh_bao = so_canh_bao or {}
     nut_thu = (
         '<form method="post" action="/cam-xuc/thu-telegram" style="display:inline">'
         '<button class="btn" type="submit">Gửi tin thử</button></form>'
@@ -208,9 +291,11 @@ def render_cam_xuc(
             + stat("Đang chờ quét", str(so_lieu.get("cho_quet", 0)),
                    "hết = worker đã theo kịp",
                    tone="warn" if so_lieu.get("cho_quet") else "")
-            + stat("Tiêu cực", str(so_lieu.get("tieu_cuc", 0)),
-                   "cần xem lại ngay",
+            + stat("Đang tiêu cực", str(so_lieu.get("tieu_cuc", 0)),
+                   "theo tin nhắn MỚI NHẤT",
                    tone="err" if so_lieu.get("tieu_cuc") else "ok")
+            + stat("Đã vào sổ cảnh báo", str(so_canh_bao.get("tong", 0)),
+                   f'{so_canh_bao.get("so_hoi_thoai", 0)} hội thoại · giữ vĩnh viễn')
             + "</div>"
         )
 
@@ -233,13 +318,39 @@ def render_cam_xuc(
     else:
         nhat_ky_html = '<p class="empty">Chưa quét hội thoại nào.</p>'
 
+    # --- sổ cảnh báo vĩnh viễn ---
+    if canh_bao:
+        canh_bao_html = (
+            '<div class="tblwrap"><table class="tbl"><thead><tr>'
+            "<th>Phát hiện lúc</th><th>Page</th><th>Khách</th>"
+            "<th>Nội dung lúc đó</th><th>Khớp từ</th><th>Cách quét</th><th></th>"
+            "</tr></thead><tbody>"
+            + "".join(_the_canh_bao(r) for r in canh_bao)
+            + "</tbody></table></div>"
+        )
+    else:
+        canh_bao_html = (
+            '<p class="empty">Sổ chưa có dòng nào — chưa phát hiện tiêu cực lần nào '
+            "kể từ khi bật tính năng này.</p>"
+        )
+
     body = (
         flash(ok, error)
         + '<h2 class="grp">Công tắc</h2>' + cong_tac
         + f'<h2 class="grp">Từ khoá tiêu cực <span class="count">{len(tu_khoa)}</span></h2>'
         + _khung_tu_khoa(tu_khoa)
         + '<h2 class="grp">Số liệu</h2>' + so_lieu_html
-        + f'<h2 class="grp">Hội thoại tiêu cực <span class="count">{len(tieu_cuc)}</span></h2>'
+        + f'<h2 class="grp">Sổ cảnh báo tiêu cực '
+          f'<span class="count">{so_canh_bao.get("tong", 0)}</span></h2>'
+        + '<p class="intro">Mỗi lần phát hiện là một dòng, <b>không bao giờ bị xoá '
+          'hay ghi đè</b> — một tháng sau vẫn tra được. Nội dung là bản chụp đúng '
+          'lúc bung cảnh báo, <b>từ khoá đã khớp được tô vàng</b> ngay trong câu '
+          'để soi được ca báo nhầm.</p>'
+        + canh_bao_html
+        + f'<h2 class="grp">Đang tiêu cực <span class="count">{len(tieu_cuc)}</span></h2>'
+        + '<p class="intro">Xét theo tin nhắn <b>mới nhất</b> của hội thoại. Khách '
+          'nhắn tiếp câu bình thường thì hội thoại rời khỏi mục này — nhưng vẫn còn '
+          'nguyên trong sổ ở trên.</p>'
         + ds_tieu_cuc
         + '<h2 class="grp">Nhật ký quét gần đây</h2>' + nhat_ky_html
     )

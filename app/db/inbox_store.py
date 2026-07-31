@@ -108,6 +108,12 @@ def _conn():
                 f"create index if not exists idx_hoi_thoai_co_sdt on {TABLE}"
                 f" (updated_at desc) where has_phone"
             )
+            # Lọc theo thẻ (`tags @> '[171]'`) khi kéo xuống nạp thêm ở màn Tin
+            # nhắn — GIN là loại index duy nhất phục vụ được toán tử chứa của jsonb.
+            conn.execute(
+                f"create index if not exists idx_hoi_thoai_the on {TABLE}"
+                f" using gin (tags jsonb_path_ops)"
+            )
             # Hàng đợi quét cảm xúc: chỉ những dòng chưa quét bản mới nhất.
             conn.execute(
                 f"create index if not exists idx_hoi_thoai_can_quet on {TABLE}"
@@ -204,20 +210,38 @@ def upsert_conversations(page_id: str, page_name: str, convs: list[dict]) -> lis
 
 
 def list_recent(
-    limit: int = 100, page_id: str | None = None, only_negative: bool = False
+    limit: int = 100, page_id: str | None = None, only_negative: bool = False,
+    before: tuple[str, str] | None = None, tag: int | None = None,
 ) -> list[dict]:
-    """Hội thoại mới nhất trong kho (mọi page, hoặc 1 page), mới -> cũ."""
+    """Hội thoại mới nhất trong kho (mọi page, hoặc 1 page), mới -> cũ.
+
+    `before` = (updated_at, conv_id) của dòng CUỐI đang hiển thị -> chỉ lấy các
+    dòng cũ hơn mốc đó. Dùng cho "kéo xuống nạp thêm" ở màn Tin nhắn.
+
+    Phân trang kiểu KEYSET (so với mốc) chứ không phải `offset`: kho được worker
+    nền cập nhật liên tục, hội thoại vừa có tin mới nhảy lên đầu làm mọi dòng sau
+    nó dịch một bậc — `offset` khi đó vừa trả trùng dòng vừa bỏ sót dòng. So theo
+    mốc thì dù thứ tự có xáo, "cũ hơn dòng cuối đang xem" vẫn luôn đúng.
+    `conv_id` là tiêu chí phụ vì nhiều hội thoại có thể trùng `updated_at`.
+    """
     where, params = [], []
     if page_id:
         where.append("page_id = %s")
         params.append(str(page_id))
     if only_negative:
         where.append("sentiment = 'negative'")
+    if tag is not None:
+        where.append("tags @> %s::jsonb")
+        params.append(json.dumps([tag]))
+    if before:
+        where.append("(updated_at < %s or (updated_at = %s and conv_id < %s))")
+        params.extend([before[0], before[0], before[1]])
     clause = f"where {' and '.join(where)}" if where else ""
     params.append(limit)
     with _conn() as conn:
         return conn.execute(
-            f"select {_COLS} from {TABLE} {clause} order by updated_at desc limit %s",
+            f"select {_COLS} from {TABLE} {clause}"
+            f" order by updated_at desc, conv_id desc limit %s",
             tuple(params),
         ).fetchall()
 

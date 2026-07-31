@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     sentiment_enabled: bool = True       # tắt = không quét cảm xúc (kho vẫn được cập nhật)
     sentiment_interval: float = 8.0      # giây giữa 2 mẻ quét
     sentiment_batch: int = 10            # số hội thoại tối đa mỗi mẻ (llm: canh chi phí ở đây)
+    # Model dùng khi cách quét = "llm". Để RIÊNG với `llm_model` (model viết câu
+    # trả lời): phân loại 1 nhãn thì model rẻ là đủ, không cần con đắt tiền.
+    sentiment_llm_model: str = "gpt-4o-mini"
+
+    # --- Báo Telegram khi phát hiện tiêu cực ---
+    # Thiếu 1 trong 2 = TẮT hẳn (không gửi gì, cũng không báo lỗi).
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
 
     # --- Chọn nơi lưu dữ liệu ---
     # postgres = Postgres + pgvector cài trên máy này (mặc định).

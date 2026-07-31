@@ -89,51 +89,88 @@ def _page_select(
 
 
 # ---------------------------------------------------------- bảng điều khiển
-def _dashboard_page_list(pages: list[dict]) -> str:
+def _dashboard_page_list(pages: list[dict], loi_page: dict | None = None) -> str:
     """Panel danh sách page hiện NGAY trên bảng điều khiển (ẩn, bấm ô stat mới mở).
 
     Dùng CSS `:target` (không JS): ô "Page truy cập được" trỏ tới #ds-page ->
     bấm là panel hiện ra tại chỗ, không rời trang. Bấm "Đóng" (href="#") thì ẩn lại.
+
+    `loi_page` = poller.page_loi(): page nào poller đang gọi lỗi (Pancake vô hiệu
+    hoá, hết hạn gói, mất quyền...). Những page này được tô VÀNG cảnh báo kèm
+    nguyên văn lời Pancake báo, để biết mà TẮT thay vì phải soi log.
     """
     if not pages:
         return ""
+    loi_page = loi_page or {}
     rows = ""
     for p in pages:
         pid = escape(str(p.get("id", "")))
         on = is_page_enabled(p.get("id", ""))
-        sw_cls = "pgsw on" if on else "pgsw off"
-        sw_label = "● BẬT" if on else "○ TẮT"
-        sw_title = (
-            "Đang BẬT — bấm để TẮT (chặn lấy/gửi tin của page này)" if on
-            else "Đang TẮT — bấm để BẬT lại"
-        )
+        # Chỉ cảnh báo page ĐANG BẬT: page đã tắt thì poller không hỏi nữa, lỗi
+        # còn sót trong RAM là chuyện cũ, tô vàng chỉ gây nhiễu.
+        loi = loi_page.get(str(p.get("id", ""))) if on else None
+        sw_cls = "pgsw warn" if loi else ("pgsw on" if on else "pgsw off")
+        sw_label = "⚠ BẬT" if loi else ("● BẬT" if on else "○ TẮT")
+        if loi:
+            sw_title = (
+                f'Pancake báo lỗi {loi["lan"]} lượt liên tiếp: {loi["loi"]}'
+                " — bấm để TẮT page này"
+            )
+        else:
+            sw_title = (
+                "Đang BẬT — bấm để TẮT (chặn lấy/gửi tin của page này)" if on
+                else "Đang TẮT — bấm để BẬT lại"
+            )
         switch = (
             '<form method="post" action="/bang-dieu-khien/page-switch" '
             'style="flex:0 0 auto;margin:0">'
             f'<input type="hidden" name="page_id" value="{pid}">'
-            f'<button type="submit" class="{sw_cls}" title="{sw_title}">{sw_label}</button>'
+            f'<button type="submit" class="{sw_cls}" title="{escape(sw_title)}">'
+            f"{sw_label}</button>"
             "</form>"
         )
+        if loi:
+            trang_thai = '<span class="pgstate">LỖI</span>'
+            canh_bao = (
+                '<div class="pgwarn">⚠ '
+                + escape(str(loi["loi"]).split(": ", 1)[-1])
+                + f' · lỗi {loi["lan"]} lượt'
+                + (" · đã ngắt mạch, 30 phút nữa mới thử lại" if loi["ngat_mach"] else "")
+                + "</div>"
+            )
+        else:
+            trang_thai = f'<span class="pgstate">{"ĐANG BẬT" if on else "ĐANG TẮT"}</span>'
+            canh_bao = ""
         rows += f"""
-          <li class="row pgrow {"on" if on else "off"}" style="align-items:center">
+          <li class="row pgrow {"warn" if loi else ("on" if on else "off")}"
+              style="align-items:center">
             {_avatar(p).replace('class="avatar"', 'class="avatar sm"')}
             <div class="rbody">
               <div class="name">{escape(p.get("name") or "(không tên)")}
-                <span class="pgstate">{"ĐANG BẬT" if on else "ĐANG TẮT"}</span></div>
+                {trang_thai}</div>
               <div class="rmeta">ID {pid} · {escape(p.get("platform") or "")}</div>
+              {canh_bao}
             </div>
             {switch}
             <a class="btn" style="flex:0 0 auto" href="/tin-nhan?page_id={pid}">Mở tin nhắn</a>
           </li>"""
     on_total = sum(1 for p in pages if is_page_enabled(p.get("id", "")))
     off_total = len(pages) - on_total
+    loi_total = sum(
+        1 for p in pages
+        if is_page_enabled(p.get("id", "")) and str(p.get("id", "")) in loi_page
+    )
+    loi_html = (
+        f' · <span style="color:var(--warn);font-weight:700">⚠ {loi_total} LỖI</span>'
+        if loi_total else ""
+    )
     return (
         '<section id="ds-page" class="ds-page"><div class="card">'
         '<div class="ds-page-head">'
         f'<b>Danh sách page ({len(pages)})</b>'
         f'<span class="rmeta" style="margin:0">'
         f'<span style="color:var(--ok);font-weight:700">● {on_total} BẬT</span> · '
-        f'{off_total} TẮT</span>'
+        f'{off_total} TẮT{loi_html}</span>'
         '<form method="post" action="/bang-dieu-khien/page-switch-all" '
         'style="margin:0 0 0 auto">'
         '<input type="hidden" name="action" value="on">'
@@ -149,7 +186,7 @@ def _dashboard_page_list(pages: list[dict]) -> str:
 
 def render_dashboard(
     pancake: dict, data: dict, config: dict, errors: dict,
-    pages: list[dict] | None = None,
+    pages: list[dict] | None = None, loi_page: dict | None = None,
 ) -> str:
     """Trang tổng quan: số liệu Pancake + kho dữ liệu bot + cấu hình hệ thống."""
 
@@ -241,7 +278,7 @@ def render_dashboard(
 
     body = (
         '<h2 class="grp">Pancake</h2>' + pancake_stats
-        + _dashboard_page_list(pages or [])
+        + _dashboard_page_list(pages or [], loi_page)
         + '<h2 class="grp">Kho dữ liệu bot</h2>' + data_stats
         + '<h2 class="grp">Lối tắt</h2>' + links
         + '<h2 class="grp">Cấu hình hệ thống</h2>' + cfg
@@ -310,7 +347,9 @@ def render_inbox(
     )
     left = (
         '<div class="inbox-list">'
-        f'<div class="lhead">{lhead_label}{live_html}</div>'
+        # id="lcount" để JS sửa lại con số sau mỗi lượt "kéo xuống nạp thêm" —
+        # để nguyên thì tiêu đề vẫn ghi 100 trong khi cột đang hiện cả nghìn dòng.
+        f'<div class="lhead"><span id="lcount">{lhead_label}</span>{live_html}</div>'
         f'{render_tag_filter(tags_facet or [], active_tag, page_id, tags_meta)}'
         f'<div class="lbody" id="feed">{list_html}</div></div>'
     )
@@ -455,6 +494,8 @@ def render_error(message: str, active: str = "dashboard") -> str:
 _INBOX_JS = """
 (function(){
   var q = location.search || '?';
+  // Cột trái đã "kéo xuống nạp thêm" hay chưa (phần nạp thêm ở cuối file này).
+  var feedExtended = false;
   function poll(id, url, ms, stick){
     var el = document.getElementById(id);
     if (!el) return;
@@ -463,6 +504,10 @@ _INBOX_JS = """
     // AJAX — không thì mỗi lần quay lại Tin nhắn lại chồng thêm 1 vòng poll.
     (window.__pjaxTimers = window.__pjaxTimers || []).push(setInterval(function(){
       if (document.hidden) return;
+      // Đã nạp thêm dòng ngoài khung ban đầu -> KHÔNG làm mới cột trái nữa:
+      // fragment chỉ trả về khung đầu, ghi đè vào là xoá sạch phần vừa nạp và
+      // ném người dùng ngược lên đầu danh sách.
+      if (id === 'feed' && feedExtended) return;
       fetch(url, {cache:'no-store'})
         .then(function(r){ return r.ok ? r.text() : null; })
         .then(function(html){
@@ -483,6 +528,124 @@ _INBOX_JS = """
   // mỗi nhịp không bung ra N lời gọi Pancake).
   if (!/[?&]tag=/.test(q)) poll('feed', '/tin-nhan/fragment/list' + q, __LIST_MS__, false);
   poll('thread', '/tin-nhan/fragment/thread' + q, 8000, true);
+
+  // --- Kéo xuống đáy cột trái -> nạp thêm hội thoại CŨ HƠN từ kho Postgres ---
+  // Đường gọi Pancake chỉ trả về khung N hội thoại mới nhất và không có "trang
+  // tiếp theo" (xin nhiều còn dễ dính 429), nên phần cũ hơn lấy từ kho
+  // `watcher.hoi_thoai` do worker nền bồi liên tục — cuộn ngược về quá khứ được
+  // bao xa là tuỳ kho đã tích được bấy nhiêu, không còn trần cứng.
+  var feed = document.getElementById('feed');
+  var moreBusy = false, moreDone = false, moreHint = null;
+  // CHỐNG NẠP DỒN: giữa 2 mẻ phải cách nhau ít nhất COOLDOWN ms. Không có nó,
+  // một cú lăn chuột đà mạnh (hay kéo giữ thanh cuộn ở đáy) sẽ nạp liên tiếp
+  // chục mẻ, đổ gần cả kho vào trang trong vài giây.
+  //
+  // CỐ Ý chỉ dùng mỗi nhịp nghỉ, KHÔNG thêm cờ kiểu "phải rời đáy X px mới cho
+  // nạp mẻ kế": nối thêm nội dung không sinh ra sự kiện cuộn, mà một nấc lăn
+  // chuột lại nhảy thẳng qua vùng vừa nối — cờ đó không bao giờ được bật lại
+  // nên nạp đúng 1 mẻ rồi kẹt cứng. Nhịp nghỉ đủ việc: cuộn dừng là hết sự kiện
+  // cuộn, tự khắc không nạp nữa.
+  var lastLoadAt = 0, retryTimer = null;
+  var NEAR_END = 220;    // còn cách đáy bấy nhiêu px thì nạp mẻ kế
+  var COOLDOWN = 700;    // ms nghỉ tối thiểu giữa 2 mẻ
+
+  function setHint(text, done){
+    if (!moreHint) {
+      moreHint = document.createElement('div');
+      moreHint.className = 'feed-more';
+      feed.appendChild(moreHint);
+    }
+    moreHint.textContent = text;
+    if (done) moreHint.classList.add('done');
+  }
+
+  function clearHint(){
+    if (moreHint) { moreHint.remove(); moreHint = null; }
+  }
+
+  // Mốc phân trang = thẻ CUỐI đang hiển thị. Đọc lại DOM mỗi lần (thay vì nhớ
+  // trong biến) để luôn khớp đúng thứ người dùng đang nhìn thấy, kể cả sau khi
+  // nhịp tự cập nhật vừa thay cả cột.
+  function feedCursor(){
+    var items = feed.querySelectorAll('li[data-upd]');
+    if (!items.length) return null;
+    var last = items[items.length - 1];
+    return {
+      upd: last.getAttribute('data-upd') || '',
+      cid: last.getAttribute('data-cid') || ''
+    };
+  }
+
+  function loadMore(){
+    if (moreBusy || moreDone) return;
+    var cur = feedCursor();
+    if (!cur || !cur.upd) return;
+    var ul = feed.querySelector('ul.list');
+    if (!ul) { moreDone = true; return; }
+    moreBusy = true;
+    setHint('Đang tải thêm…');
+    var p = new URLSearchParams(location.search);
+    p.set('before_upd', cur.upd);
+    p.set('before_cid', cur.cid);
+    fetch('/tin-nhan/fragment/more?' + p.toString(), {cache:'no-store'})
+      .then(function(r){ return r.ok ? r.text() : null; })
+      .then(function(html){
+        moreBusy = false;
+        lastLoadAt = Date.now();     // mốc đếm COOLDOWN, tính từ lúc nạp XONG
+        if (html == null) { setHint('Lỗi tải thêm — cuộn lại để thử.'); return; }
+        if (!html.trim()) {
+          moreDone = true;
+          setHint('— Hết hội thoại trong kho —', true);
+          return;
+        }
+        clearHint();
+        ul.insertAdjacentHTML('beforeend', html);
+        var lc = document.getElementById('lcount');
+        if (lc) {
+          lc.textContent = ul.querySelectorAll('li[data-cid]').length
+                         + ' hội thoại (đã nạp thêm từ kho)';
+        }
+        if (!feedExtended) {
+          feedExtended = true;
+          var live = document.querySelector('.inbox-list .live');
+          if (live) {
+            live.classList.add('paused');
+            live.lastChild.textContent = 'tạm dừng tự cập nhật';
+            live.title = 'Đang xem cả phần cũ nạp từ kho — tải lại trang để '
+                       + 'quay về danh sách mới nhất và bật lại tự cập nhật.';
+          }
+        }
+      })
+      .catch(function(){
+        moreBusy = false;
+        lastLoadAt = Date.now();
+        setHint('Lỗi mạng — cuộn lại để thử.');
+      });
+  }
+
+  // Quyết định có nạp mẻ kế hay không. Tách khỏi handler cuộn vì còn được HẸN
+  // GIỜ gọi lại: cuộn tới sát đáy rồi thì trình duyệt hết sự kiện cuộn để phát
+  // (vị trí không đổi được nữa) — lượt nào bị nhịp nghỉ chặn mà bỏ qua luôn là
+  // kẹt cứng, lăn chuột thêm cũng vô ích.
+  function maybeLoadMore(){
+    if (moreBusy || moreDone) return;
+    var dist = feed.scrollHeight - feed.scrollTop - feed.clientHeight;
+    if (dist >= NEAR_END) return;                  // chưa tới đáy
+    var wait = COOLDOWN - (Date.now() - lastLoadAt);
+    if (wait > 0) {                                // mẻ trước còn nóng -> hẹn lại
+      if (!retryTimer) {
+        retryTimer = setTimeout(function(){
+          retryTimer = null;
+          maybeLoadMore();
+        }, wait + 30);
+        (window.__pjaxTimers = window.__pjaxTimers || []).push(retryTimer);
+      }
+      return;
+    }
+    loadMore();
+  }
+
+  if (feed) feed.addEventListener('scroll', maybeLoadMore);
 
   var t = document.getElementById('thread');
   if (t) t.scrollTop = t.scrollHeight;
@@ -808,6 +971,15 @@ _DASHBOARD_JS = """
     btn.textContent = on ? '● BẬT' : '○ TẮT';
     btn.title = on ? 'Đang BẬT — bấm để TẮT (chặn lấy/gửi tin của page này)'
                    : 'Đang TẮT — bấm để BẬT lại';
+    // Vừa thao tác tay -> gỡ luôn cảnh báo vàng cũ (page tắt thì poller không
+    // hỏi nữa; page bật lại thì lượt poll kế tiếp sẽ tự dựng lại cảnh báo).
+    var row = btn.closest('.pgrow');
+    if (!row) return;
+    row.className = 'row pgrow ' + (on ? 'on' : 'off');
+    var st = row.querySelector('.pgstate');
+    if (st) st.textContent = on ? 'ĐANG BẬT' : 'ĐANG TẮT';
+    var warn = row.querySelector('.pgwarn');
+    if (warn) warn.remove();
   }
   function post(url, data){
     return fetch(url, {

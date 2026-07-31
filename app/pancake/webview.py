@@ -275,8 +275,11 @@ def _conv_card(
         f' (cách quét: {escape(conv.get("sentiment_method") or "?")})">⚠ tiêu cực</span>'
         if conv.get("sentiment") == "negative" else ""
     )
+    # data-upd/data-cid = mốc phân trang cho "kéo xuống nạp thêm" (xem _INBOX_JS):
+    # JS đọc thẻ CUỐI danh sách rồi xin các hội thoại cũ hơn mốc đó từ kho.
     return f"""
-      <li>
+      <li data-upd="{escape(str(conv.get("updated_at") or ""))}"
+          data-cid="{escape(str(conv.get("conv_id") or ""))}">
         <a class="{cls}" href="{conv_href(conv, page_id, mode, tag)}">
           {_avatar(who)}
           <div class="info">
@@ -304,10 +307,18 @@ def render_recent_list(
     mode: str = "pancake",
     active: str = "",
     tag: str = "",
+    items_only: bool = False,
 ) -> str:
-    """Chỉ phần danh sách thẻ (dùng cho cả trang đầy đủ lẫn polling fragment)."""
+    """Chỉ phần danh sách thẻ (dùng cho cả trang đầy đủ lẫn polling fragment).
+
+    `items_only` — trả về CÁC THẺ `<li>` trần, không bọc `<ul>` và không có
+    thông báo rỗng. Dùng cho "kéo xuống nạp thêm": JS nối thẳng chuỗi này vào
+    cuối `<ul>` đang có, và hiểu chuỗi rỗng là "hết hội thoại cũ hơn".
+    """
     kind = "nhắn tin" if msg_type == "INBOX" else "bình luận"
     cards = "".join(_conv_card(c, page_id, mode, active, tag) for c in convs)
+    if items_only:
+        return cards
     return (
         f'<ul class="list">{cards}</ul>'
         if convs

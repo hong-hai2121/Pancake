@@ -252,6 +252,26 @@ def trang_thai_page() -> list[dict]:
     )
 
 
+def page_loi() -> dict[str, dict]:
+    """Page nào đang lỗi -> {page_id: {"lan", "loi", "ngat_mach", "hoi_lai_sau_giay"}}.
+
+    Dùng cho danh sách page ở Bảng điều khiển: page bị Pancake vô hiệu hoá/mất
+    quyền sẽ được tô vàng cảnh báo để người dùng biết mà TẮT đi, thay vì phải
+    ngồi đọc log mới thấy.
+    """
+    now = time.monotonic()
+    return {
+        pid: {
+            "lan": st.loi_lien_tiep,
+            "loi": st.loi_cuoi,
+            "ngat_mach": st.loi_lien_tiep >= settings.inbox_poll_error_threshold,
+            "hoi_lai_sau_giay": max(0, round(st.ke_tiep - now)),
+        }
+        for pid, st in _state.items()
+        if st.loi_lien_tiep
+    }
+
+
 async def poll_loop() -> None:
     """Vòng lặp vô hạn — tích tắc mỗi `_TICK` giây rồi hỏi các page tới hạn."""
     while True:

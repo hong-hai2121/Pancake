@@ -38,6 +38,7 @@ from app.ui.webview import (
     render_error,
     render_inbox,
 )
+from app.workers import poller
 
 router = APIRouter(tags=["ui"])
 
@@ -51,6 +52,11 @@ _TAG_FETCH_LIMIT = 200
 # giới hạn bởi 1 lời gọi Pancake -> cho phép hiện nhiều hơn hẳn chế độ 1 page.
 _MERGED_DEFAULT_LIMIT = 100
 _MERGED_MAX_LIMIT = 500
+# "Kéo xuống nạp thêm": mỗi lượt lấy thêm bấy nhiêu hội thoại CŨ HƠN từ kho
+# `watcher.hoi_thoai`. Không có trần tổng — cuộn tới đâu nạp tới đó, hết kho thì
+# thôi. Mẻ nhỏ để cuộn thấy mượt (truy vấn kho ~vài ms, không tốn quota Pancake).
+_MORE_LIMIT = 20
+_MORE_MAX_LIMIT = 200
 
 
 async def _merged_convs(limit: int) -> list[dict]:
@@ -194,7 +200,10 @@ async def dashboard(page_id: str = "") -> HTMLResponse:
     # `token_owner` chỉ giải mã JWT tại chỗ, không gọi mạng nên không cần try.
     config["owner"] = token_owner().get("name") or ""
 
-    return HTMLResponse(render_dashboard(pancake, data, config, errors, pages))
+    # Page nào poller đang gọi lỗi -> tô vàng cảnh báo trong danh sách page.
+    return HTMLResponse(
+        render_dashboard(pancake, data, config, errors, pages, poller.page_loi())
+    )
 
 
 def _switch_response(request: Request, payload: dict):
@@ -349,6 +358,43 @@ async def inbox_list_fragment(
         return HTMLResponse("", status_code=502)
     return HTMLResponse(
         render_recent_list(convs, pid, "INBOX", mode="inbox", active=conv_id, tag=tag)
+    )
+
+
+@router.get("/tin-nhan/fragment/more", response_class=HTMLResponse)
+async def inbox_more_fragment(
+    request: Request,
+    page_id: str = "", conv_id: str = "", tag: str = "",
+    before_upd: str = "", before_cid: str = "", limit: int = _MORE_LIMIT,
+) -> HTMLResponse:
+    """Nạp thêm hội thoại CŨ HƠN mốc `before_*` — đọc KHO, không gọi Pancake.
+
+    Vì sao đọc kho: 1 lời gọi Pancake chỉ trả về khung N hội thoại mới nhất, xin
+    càng nhiều càng dễ dính 429, và không có cách xin "trang tiếp theo". Kho
+    `watcher.hoi_thoai` thì worker nền bồi liên tục và chỉ thêm chứ không xoá,
+    nên cuộn ngược về quá khứ được bao xa tuỳ kho đã tích được bấy nhiêu — không
+    còn trần 50 như đường gọi thẳng.
+
+    Trả về các `<li>` trần để JS nối vào cuối danh sách; rỗng = đã hết.
+    """
+    page_id = _wanted_page_id(request, page_id)
+    if not before_upd:      # thiếu mốc thì không biết cắt từ đâu -> đừng trả trùng
+        return HTMLResponse("")
+    limit = max(1, min(limit, _MORE_MAX_LIMIT))
+    tag_id = int(tag) if tag.lstrip("-").isdigit() else None
+    convs = await asyncio.to_thread(
+        inbox_store.list_recent,
+        limit=limit,
+        # Hộp thư gộp: không lọc page. Xem 1 page: chỉ hội thoại của page đó.
+        page_id=None if page_id == ALL_PAGES else page_id,
+        before=(before_upd, before_cid),
+        tag=tag_id,
+    )
+    return HTMLResponse(
+        render_recent_list(
+            convs, page_id, "INBOX", mode="inbox", active=conv_id, tag=tag,
+            items_only=True,
+        )
     )
 
 

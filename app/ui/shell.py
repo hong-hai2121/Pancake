@@ -139,6 +139,7 @@ def render_shell(
     page_script_html = f"<script data-page-script>{script}</script>" if script else ""
     script_html = f"<script>{_NAV_JS}</script>{page_script_html}"
     content_cls = "content full" if full else "content"
+    main_cls = "main full" if full else "main"
 
     return (
         "<!doctype html><html lang=\"vi\"><head><meta charset=\"utf-8\">"
@@ -146,7 +147,7 @@ def render_shell(
         f"<title>{escape(title)} — FB Sales Bot</title>"
         f"<style>{_CSS}</style></head><body>"
         + _sidebar(active)
-        + '<main class="main"><header class="topbar">'
+        + f'<main class="{main_cls}"><header class="topbar">'
         '<div class="page-head">'
         f'<h1>{escape(heading)}</h1>{sub_html}</div>{actions_html}'
         f"</header>{tabs}"
@@ -235,6 +236,11 @@ a{color:var(--accent)}
 
 /* ---------- khung phải ---------- */
 .main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh}
+/* Màn "full" (Tin nhắn): main phải bị KHOÁ đúng 100vh (không phải min-height)
+   để .inbox/.pane/.thread bên trong có khung chiều cao cố định mà co/cuộn theo
+   — nếu không thì main tự giãn cao theo tổng số tin nhắn, kéo cả trang cuộn
+   theo kiểu thường (danh sách hội thoại trôi mất, ô soạn tin bị đẩy khuất). */
+.main.full{height:100vh;overflow:hidden}
 /* Thanh trên + tab + nội dung: nền chạy hết bề ngang, còn CHỮ thì căn giữa theo
    cùng một khung 1280px — trước đây chỉ .content bị giới hạn bề rộng mà không
    có margin auto nên cả trang dồn về mép trái khi màn hình rộng. */
@@ -391,15 +397,23 @@ a.stat.link:hover::after{color:var(--accent)}
 .pgrow.off .name{color:var(--sub);font-weight:500}
 .pgrow.off .rmeta{opacity:.7}
 .pgrow.off .btn{opacity:.6}
+/* Page ĐANG BẬT nhưng poller gọi lỗi (Pancake vô hiệu hoá, hết hạn gói, mất
+   quyền...): vạch vàng + nền vàng nhạt để nổi hẳn giữa danh sách, kèm dòng
+   .pgwarn ghi nguyên văn lời Pancake báo. */
+.pgrow.warn{background:var(--warn-bg);border-left-color:var(--warn)}
+.pgwarn{color:var(--warn);font-size:12px;font-weight:600;margin-top:4px;
+  overflow-wrap:anywhere}
 .pgstate{font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.02em}
 .pgrow.on .pgstate{color:var(--ok)}
 .pgrow.off .pgstate{color:var(--sub)}
-/* Công tắc BẬT/TẮT page: BẬT = xanh đặc, TẮT = xám nhạt */
+.pgrow.warn .pgstate{color:var(--warn)}
+/* Công tắc BẬT/TẮT page: BẬT = xanh đặc, TẮT = xám nhạt, LỖI = vàng cảnh báo */
 .pgsw{border:1px solid var(--border);background:var(--card);color:var(--sub);
   border-radius:20px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;
   white-space:nowrap}
 .pgsw.on{background:var(--ok);border-color:var(--ok);color:#fff}
 .pgsw.off{background:var(--bg);border-color:var(--border);color:var(--sub)}
+.pgsw.warn{background:var(--warn);border-color:var(--warn);color:#fff}
 .pgsw:hover{opacity:.9}
 
 /* ---------- thẻ page / hội thoại / khách ---------- */
@@ -456,6 +470,17 @@ a.name:hover{color:var(--accent)}
 .tbl td.nowrap{white-space:nowrap}
 .tbl td.snip{color:var(--sub);max-width:420px;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap}
+/* Ô nội dung ở Sổ cảnh báo: cho xuống dòng để <mark> không bị cắt mất */
+.tbl td.snip-kw{color:var(--sub);max-width:460px;min-width:260px}
+/* Cụm từ khoá làm bung cảnh báo, tô ngay trong câu */
+mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
+  border-radius:4px;padding:0 3px;
+  box-shadow:inset 0 -2px 0 color-mix(in srgb,var(--warn) 55%,transparent)}
+/* Chip liệt kê từ khoá đã khớp ở cột riêng */
+.kwhit{display:inline-block;font-size:11.5px;font-weight:650;line-height:1.8;
+  padding:0 8px;margin:1px 3px 1px 0;border-radius:20px;color:var(--warn);
+  background:var(--warn-bg);
+  border:1px solid color-mix(in srgb,var(--warn) 35%,transparent)}
 .snippet{color:var(--sub);font-size:13px;margin-top:2px;overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
 /* Tên page trên thẻ hội thoại — CHỈ hiện ở hộp thư gộp (page_id=ALL) */
@@ -508,6 +533,11 @@ a.name:hover{color:var(--accent)}
 .lhint{color:var(--sub);font-size:11px;border:1px solid var(--border);
   border-radius:20px;padding:1px 8px}
 .inbox-list .lbody{overflow-y:auto;padding:8px;flex:1;min-height:0}
+/* Dòng trạng thái ở đáy cột trái khi "kéo xuống nạp thêm" (đang tải / hết kho) */
+.feed-more{padding:12px 8px;text-align:center;color:var(--sub);font-size:12px}
+.feed-more.done{opacity:.75}
+/* Đã nạp thêm -> auto-refresh tạm dừng: chấm hết nhấp nháy để khỏi hiểu nhầm */
+.live.paused .dot{background:var(--sub);box-shadow:none;animation:none}
 .inbox-list .list{gap:4px}
 .inbox-list .card{border-color:transparent;box-shadow:none;padding:9px 10px;
   border-radius:10px}
@@ -693,8 +723,19 @@ _NAV_JS = """
     var newMain = doc.querySelector('.main');
     var curSide = document.querySelector('.side');
     var curMain = document.querySelector('.main');
-    if (newSide && curSide) curSide.innerHTML = newSide.innerHTML;
-    if (newMain && curMain) curMain.innerHTML = newMain.innerHTML;
+    // Phải chép cả class chứ không chỉ innerHTML: <main> có thể mang class
+    // "full" (màn Tin nhắn khoá 100vh, overflow:hidden). Nếu chỉ thay ruột thì
+    // đi từ Tin nhắn sang trang thường, <main> vẫn còn "full" -> trang bị khoá
+    // đúng 1 màn hình, cuộn không được và phần dưới (vd nhật ký quét ở màn
+    // Cảm xúc) bị cắt mất.
+    if (newSide && curSide) {
+      curSide.className = newSide.className;
+      curSide.innerHTML = newSide.innerHTML;
+    }
+    if (newMain && curMain) {
+      curMain.className = newMain.className;
+      curMain.innerHTML = newMain.innerHTML;
+    }
     runPageScript(doc);
     window.scrollTo({top: 0});
     var hash = (url.split('#')[1]) || '';
