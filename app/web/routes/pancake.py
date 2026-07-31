@@ -15,6 +15,7 @@ from app.integrations.pancake.client import (
     get_page,
     list_conversations,
     list_pages,
+    list_tags,
     send_message,
     token_owner,
 )
@@ -62,9 +63,12 @@ async def recent_messagers(
     try:
         convs = await list_conversations(page_id, msg_type=msg_type, limit=limit)
         page = await get_page(page_id)
+        tags = {str(page_id): await list_tags(page_id)}
     except (PancakeError, httpx.HTTPError) as exc:
         return HTMLResponse(render_error(str(exc)), status_code=502)
-    return HTMLResponse(render_recent(page_id, page, convs, msg_type, limit))
+    return HTMLResponse(
+        render_recent(page_id, page, convs, msg_type, limit, tags_by_page=tags)
+    )
 
 
 @router.get("/pages/{page_id}/recent/fragment", response_class=HTMLResponse)
@@ -78,10 +82,13 @@ async def recent_fragment(
     limit = max(1, min(limit, 50))
     try:
         convs = await list_conversations(page_id, msg_type=msg_type, limit=limit)
+        tags = {str(page_id): await list_tags(page_id)}
     except (PancakeError, httpx.HTTPError):
         # 502 -> JS bỏ qua nhịp này, giữ nguyên dữ liệu đang hiển thị.
         return HTMLResponse("", status_code=502)
-    return HTMLResponse(render_recent_list(convs, page_id, msg_type))
+    return HTMLResponse(
+        render_recent_list(convs, page_id, msg_type, tags_by_page=tags)
+    )
 
 
 @router.get(

@@ -404,6 +404,24 @@ a.stat.link:hover::after{color:var(--accent)}
 .pgwarn{color:var(--warn);font-size:12px;font-weight:600;margin-top:4px;
   overflow-wrap:anywhere}
 .pgstate{font-size:11px;font-weight:700;margin-left:6px;letter-spacing:.02em}
+/* Nhãn quyền của token trên từng page (suy từ role_in_page Pancake trả về) */
+.pgquyen{display:inline-block;font-size:11px;font-weight:650;line-height:1.7;
+  padding:0 8px;border-radius:20px;white-space:nowrap}
+.pgquyen.du{color:var(--ok);background:var(--ok-bg);
+  border:1px solid color-mix(in srgb,var(--ok) 32%,transparent)}
+.pgquyen.thieu{color:var(--warn);background:var(--warn-bg);
+  border:1px solid color-mix(in srgb,var(--warn) 32%,transparent)}
+.pgquyen.vo_hieu{color:var(--err);background:var(--err-bg);
+  border:1px solid color-mix(in srgb,var(--err) 32%,transparent)}
+/* Dòng tổng kết quyền ở đầu panel danh sách page */
+.pgquyen-sum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  font-size:12px;color:var(--sub);padding:10px 12px;margin-bottom:10px;
+  background:var(--bg);border:1px solid var(--border);border-radius:10px}
+.pgquyen-sum .btn{flex:0 0 auto;padding:4px 11px;font-size:12px}
+.pgquyen-sum .btn:disabled{opacity:.6;cursor:default}
+/* Mốc cập nhật + nút: luôn dính nhau, đẩy về mép phải khi còn chỗ */
+.pgquyen-act{display:flex;align-items:center;gap:8px;margin-left:auto}
+.pgquyen-luc{font-size:11.5px;color:var(--sub);white-space:nowrap}
 .pgrow.on .pgstate{color:var(--ok)}
 .pgrow.off .pgstate{color:var(--sub)}
 .pgrow.warn .pgstate{color:var(--warn)}
@@ -494,9 +512,12 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
 .crow{display:flex;align-items:baseline;gap:8px}
 /* thẻ (tag) của hội thoại, hiện ngay dưới tên để dễ so sánh */
 .ctags{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+/* Pill mang TÊN thẻ (không còn là "#175") -> phải chặn tên dài làm vỡ cột:
+   cắt bằng ellipsis, tên đầy đủ vẫn xem được ở tooltip. */
 .ctag{font-size:10px;font-weight:700;line-height:1.7;padding:0 6px;border-radius:9px;
   color:var(--tc);border:1px solid var(--tc);
-  background:color-mix(in srgb,var(--tc) 13%,transparent)}
+  background:color-mix(in srgb,var(--tc) 13%,transparent);
+  max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 /* ---------- lưới danh sách page (tối đa 4 cột, giảm dần theo màn hình) ---------- */
 .pages-grid{list-style:none;margin:0;padding:0;display:grid;gap:12px;

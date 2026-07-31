@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from urllib.parse import urlencode
 
-from app.integrations.pancake.client import tag_color_override
+from app.integrations.pancake.client import tag_color_override, tag_label
 from app.web.shell import render_shell
 
 # Pancake trả thời gian theo UTC; cộng offset này để hiển thị GIỜ ĐỊA PHƯƠNG (VN=+7).
@@ -43,27 +43,33 @@ _TAG_COLORS = [
 def _tag_color(tag_id: int, meta: dict | None = None) -> str:
     """Màu 1 thẻ.
 
-    Ưu tiên: màu khai báo tay (TAG_OVERRIDES) > màu thật public API (`meta`)
-    > xám cho thẻ hệ thống (id<0) > màu ổn định theo ID.
+    Ưu tiên: màu THẬT của page (`meta` — public API hoặc kho) > màu khai báo tay
+    (TAG_OVERRIDES) > xám cho thẻ hệ thống (id<0) > màu ổn định theo ID.
+    Cùng thứ tự với `tag_label` để tên và màu không bao giờ đến từ 2 nguồn khác nhau.
     """
-    manual = tag_color_override(tag_id)
-    if manual:
-        return manual
     real = (meta.get(tag_id) or {}).get("color") if meta else ""
     if real:
         return real
+    manual = tag_color_override(tag_id)
+    if manual:
+        return manual
     if tag_id < 0:
         return "#6b7280"
     return _TAG_COLORS[tag_id % len(_TAG_COLORS)]
 
 
-def _conv_tags_html(tags: list[int]) -> str:
+def _conv_tags_html(tags: list[int], meta: dict | None = None) -> str:
     """Dãy pill thẻ nhỏ hiển thị dưới tên hội thoại (chỉ thẻ người dùng gắn, id>0).
+
+    `meta` = {tag_id: {'text','color'}} của ĐÚNG page chứa hội thoại này -> pill
+    hiện TÊN thẻ như trên Pancake. Không có tên (chưa lấy được quyền Admin) thì
+    `tag_label` tự lùi về "Thẻ #id" — vẫn đọc được, chỉ kém rõ.
 
     Thẻ hệ thống (id âm như -99, -3…) bỏ qua cho gọn. Dùng để nhìn nhanh & so sánh.
     """
     pills = "".join(
-        f'<span class="ctag" style="--tc:{_tag_color(tid)}">#{tid}</span>'
+        f'<span class="ctag" style="--tc:{_tag_color(tid, meta)}" '
+        f'title="Thẻ #{tid}">{escape(tag_label(tid, meta))}</span>'
         for tid in tags if tid > 0
     )
     return f'<div class="ctags">{pills}</div>' if pills else ""
@@ -243,13 +249,19 @@ def conv_href(conv: dict, page_id: str, mode: str = "pancake", tag: str = "") ->
 
 
 def _conv_card(
-    conv: dict, page_id: str, mode: str = "pancake", active: str = "", tag: str = ""
+    conv: dict, page_id: str, mode: str = "pancake", active: str = "", tag: str = "",
+    tags_by_page: dict | None = None,
 ) -> str:
     """Dựng 1 thẻ hội thoại (link bấm vào để mở trang chat), có avatar, tên,
     tin nhắn cuối, thời gian và badge số tin / chưa đọc.
 
     Cột thời gian hiện GIỜ cụ thể theo giờ VN (vd "16:17", khác ngày kèm ngày);
     tooltip là giờ + ngày đầy đủ.
+
+    `tags_by_page` = {page_id: {tag_id: {'text','color'}}}. Tra theo page THẬT
+    của hội thoại (hộp thư gộp mới có `page_id` trong từng dòng; xem 1 page thì
+    lùi về `page_id` đang xem) — thẻ là dữ liệu riêng của từng page nên tra
+    bằng mỗi `tag_id` sẽ dán nhầm tên của page khác.
     """
     name = escape(conv["name"])
     who = {"name": conv["name"], "id": conv.get("fb_id") or conv.get("conv_id", "0")}
@@ -262,6 +274,7 @@ def _conv_card(
         if unread else ""
     )
     cls = "card link on" if conv["conv_id"] == active else "card link"
+    tags_meta = (tags_by_page or {}).get(str(conv.get("page_id") or page_id)) or {}
     # Chỉ hộp thư GỘP mới kèm `page_name` -> hiện thêm dòng cho biết hội thoại
     # này của page nào; chế độ xem 1 page không có field này nên không đổi gì.
     page_html = (
@@ -288,7 +301,7 @@ def _conv_card(
               <span class="time" title="{abs_dt}">{shown_time}</span>
             </div>
             {page_html}
-            {_conv_tags_html(conv.get("tags") or [])}
+            {_conv_tags_html(conv.get("tags") or [], tags_meta)}
             <div class="snippet">{snippet}</div>
             <div class="badges">
               <span class="badge">{conv.get('message_count', 0)} tin nhắn</span>
@@ -308,15 +321,22 @@ def render_recent_list(
     active: str = "",
     tag: str = "",
     items_only: bool = False,
+    tags_by_page: dict | None = None,
 ) -> str:
     """Chỉ phần danh sách thẻ (dùng cho cả trang đầy đủ lẫn polling fragment).
 
     `items_only` — trả về CÁC THẺ `<li>` trần, không bọc `<ul>` và không có
     thông báo rỗng. Dùng cho "kéo xuống nạp thêm": JS nối thẳng chuỗi này vào
     cuối `<ul>` đang có, và hiểu chuỗi rỗng là "hết hội thoại cũ hơn".
+
+    `tags_by_page` — tên/màu thẻ theo từng page (xem `_conv_card`). Thiếu thì
+    pill thẻ hiện "Thẻ #id"; PHẢI truyền cả ở fragment, không thì mỗi nhịp tự
+    cập nhật lại thay tên thẻ bằng số.
     """
     kind = "nhắn tin" if msg_type == "INBOX" else "bình luận"
-    cards = "".join(_conv_card(c, page_id, mode, active, tag) for c in convs)
+    cards = "".join(
+        _conv_card(c, page_id, mode, active, tag, tags_by_page) for c in convs
+    )
     if items_only:
         return cards
     return (
@@ -327,7 +347,8 @@ def render_recent_list(
 
 
 def render_recent(
-    page_id: str, page: dict | None, convs: list[dict], msg_type: str, limit: int
+    page_id: str, page: dict | None, convs: list[dict], msg_type: str, limit: int,
+    tags_by_page: dict | None = None,
 ) -> str:
     """Trang: N người nhắn tin mới nhất của 1 page (danh sách 1 cột)."""
     page_name = escape((page or {}).get("name") or f"Page {page_id}")
@@ -340,7 +361,9 @@ def render_recent(
             f'<span class="live"><span class="dot"></span>tự cập nhật</span>',
         actions=f'<a class="btn" href="/tin-nhan?page_id={escape(str(page_id))}">'
                 f'Mở dạng 2 cột</a>',
-        body=f'<div id="feed">{render_recent_list(convs, page_id, msg_type)}</div>',
+        body=f'<div id="feed">'
+             f'{render_recent_list(convs, page_id, msg_type, tags_by_page=tags_by_page)}'
+             f'</div>',
         script=_POLL_JS.replace("__TARGET__", "feed").replace("__MS__", "10000"),
     )
 

@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.ai.brain import extract_qa_candidates, suggest_reply
 from app.core.config import settings
-from app.db.repositories import inbox_store
+from app.db.repositories import inbox_store, tag_store
 from app.db.backends import backend_name
 from app.db.repositories.queries import _count, insert_qa
 from app.integrations.pancake.client import (
@@ -27,12 +27,14 @@ from app.integrations.pancake.client import (
     list_conversations,
     list_pages,
     list_tags,
+    pages_cache_luc,
     send_message,
     token_owner,
 )
 from app.integrations.pancake.switches import disable_all, enable_all, toggle_page
 from app.web.views.pancake import _relative_time, render_recent_list, render_thread
 from app.web.views.main import (
+    quyen_page,
     render_customers,
     render_dashboard,
     render_error,
@@ -91,6 +93,23 @@ def _remember_page(resp, page_id: str) -> None:
             _PAGE_COOKIE, str(page_id),
             max_age=_PAGE_COOKIE_MAX_AGE, samesite="lax", path="/",
         )
+
+
+async def _tags_by_page(page_id: str) -> dict[str, dict[int, dict]]:
+    """Tên/màu thẻ để dán lên pill của từng hội thoại -> {page_id: {tag_id: {...}}}.
+
+    Hộp thư GỘP đọc thẳng KHO: mỗi dòng một page, gọi public API cho cả 22 page
+    mỗi lượt render là chắc chắn dính 429. Kho luôn có sẵn vì `list_tags` ghi
+    xuống mỗi lần lấy được, và worker nền cũng làm tươi định kỳ.
+
+    Xem 1 page thì đi đường 3 tầng của `list_tags` (RAM -> API -> kho).
+    """
+    if page_id == ALL_PAGES:
+        try:
+            return await asyncio.to_thread(tag_store.load_all_tags)
+        except Exception:  # noqa: BLE001 — kho hỏng thì pill lùi về "Thẻ #id"
+            return {}
+    return {str(page_id): await list_tags(page_id)}
 
 
 def _tag_facet(convs: list[dict]) -> list[tuple[int, int]]:
@@ -245,6 +264,30 @@ async def dashboard_page_switch_all(request: Request):
     return _switch_response(request, {"action": action})
 
 
+@router.post("/bang-dieu-khien/lam-moi-page")
+async def dashboard_lam_moi_page() -> JSONResponse:
+    """Hỏi lại Pancake danh sách page NGAY (bỏ qua cache) — nút bấm tay.
+
+    Danh sách page + vai trò (`role_in_page`) gần như không đổi nên cache để 15
+    phút cho đỡ tốn lượt gọi; nút này dành cho lúc vừa đổi thật (được nâng quyền
+    Admin, thêm/bớt page) mà không muốn ngồi chờ hết cache.
+    """
+    try:
+        pages = await list_pages(force=True)
+    except (PancakeError, httpx.HTTPError) as exc:
+        return JSONResponse({"ok": False, "loi": str(exc)}, status_code=502)
+    dem = Counter(quyen_page(p)[0] for p in pages)
+    luc = pages_cache_luc()
+    return JSONResponse({
+        "ok": True,
+        "tong": len(pages),
+        "du": dem["du"],
+        "thieu": dem["thieu"],
+        "vo_hieu": dem["vo_hieu"],
+        "luc": luc.strftime("%H:%M:%S %d/%m") if luc else "",
+    })
+
+
 # ------------------------------------------------------------------ tin nhắn
 @router.get("/tin-nhan", response_class=HTMLResponse)
 async def inbox(
@@ -280,7 +323,10 @@ async def inbox(
         if merged:
             pid, page_name = ALL_PAGES, f"Tất cả page ({on_count} đang BẬT)"
             convs = await _merged_convs(limit)
+            # Không có thanh lọc thẻ ở chế độ gộp, nhưng pill trên từng hội
+            # thoại vẫn hiện tên thật nhờ bản thẻ theo page đọc từ kho.
             facet, tags_meta = [], {}
+            tags_by_page = await _tags_by_page(ALL_PAGES)
             # Page thật của hội thoại đang mở (đến từ link ở cột trái).
             thread_pid = conv_page_id
         else:
@@ -299,6 +345,7 @@ async def inbox(
             facet = _tag_facet(convs)
             # Tên + màu thẻ thật (public API); không có page token -> {} -> fallback.
             tags_meta = await list_tags(pid)
+            tags_by_page = {str(pid): tags_meta}
             convs = _filter_by_tag(convs, tag)
             thread_pid = pid
         # Chỉ nạp thread khi đã chọn một hội thoại VÀ biết page thật của nó.
@@ -320,6 +367,7 @@ async def inbox(
             sent=bool(sent), error=error, tags_facet=facet, active_tag=tag,
             tags_meta=tags_meta, merged=merged, enabled_count=on_count,
             thread_page_id=thread_pid, thread_page_name=thread_page_name,
+            tags_by_page=tags_by_page,
         )
     )
     _remember_page(resp, pid)  # nhớ page vừa xem cho lần sau
@@ -357,7 +405,10 @@ async def inbox_list_fragment(
         # 502 -> JS bỏ qua nhịp này, giữ nguyên nội dung đang hiển thị.
         return HTMLResponse("", status_code=502)
     return HTMLResponse(
-        render_recent_list(convs, pid, "INBOX", mode="inbox", active=conv_id, tag=tag)
+        render_recent_list(
+            convs, pid, "INBOX", mode="inbox", active=conv_id, tag=tag,
+            tags_by_page=await _tags_by_page(pid),
+        )
     )
 
 
@@ -393,7 +444,7 @@ async def inbox_more_fragment(
     return HTMLResponse(
         render_recent_list(
             convs, page_id, "INBOX", mode="inbox", active=conv_id, tag=tag,
-            items_only=True,
+            items_only=True, tags_by_page=await _tags_by_page(page_id),
         )
     )
 

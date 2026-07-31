@@ -32,10 +32,18 @@ from datetime import datetime, timezone
 
 from app.core.config import settings
 from app.db.repositories import inbox_store
-from app.integrations.pancake.client import enabled_pages, fetch_conversations_fresh
+from app.integrations.pancake.client import (
+    enabled_pages,
+    fetch_conversations_fresh,
+    refresh_tags_all_pages,
+)
 
 # Số page gọi song song trong 1 lượt.
 _CONCURRENCY = 5
+
+# Làm tươi kho tên thẻ mỗi ngần này giây (chỉ vài page có quyền Admin -> vài lời
+# gọi/ngày, không đáng kể so với trần 429).
+_TAG_REFRESH = 6 * 60 * 60
 
 # Giữ tối đa ngần này mục chi tiết trong `last_run` (log thì in hết).
 _KEEP_DETAIL = 50
@@ -98,6 +106,33 @@ async def _nap_moc_tu_kho() -> None:
     _da_nap_moc = True
     _log(f"[poller] Nạp mốc từ kho cho {len(moc)} page — khỏi quét lại từ đầu.")
 
+
+# Mốc monotonic được phép làm tươi thẻ lần kế tiếp (0 = làm ngay lượt đầu).
+_the_ke_tiep = 0.0
+
+
+async def _lam_tuoi_the() -> None:
+    """Định kỳ gọi public API lấy tên/màu thẻ rồi ghi xuống kho `watcher.the_pancake`.
+
+    Vì sao cần ở đây: `list_tags` chỉ ghi kho khi có người MỞ màn Tin nhắn của
+    đúng page đó. Ai chỉ dùng hộp thư GỘP (chế độ đọc kho, không gọi Pancake) sẽ
+    không bao giờ có tên thẻ để hiện. Lượt này cũng bắt kịp việc đổi tên thẻ trên
+    Pancake mà không ai phải vào từng page.
+    """
+    global _the_ke_tiep
+    now = time.monotonic()
+    if now < _the_ke_tiep:
+        return
+    _the_ke_tiep = now + _TAG_REFRESH
+    try:
+        ket_qua = await refresh_tags_all_pages()
+    except Exception as err:  # noqa: BLE001 — thẻ hỏng không được cản việc poll tin
+        _log(f"[poller] Chưa làm tươi được thẻ: {type(err).__name__}: {err}")
+        return
+    if ket_qua:
+        tong = sum(ket_qua.values())
+        _log(f"[poller] Làm tươi thẻ: {tong} thẻ / {len(ket_qua)} page.")
+
 # Kết quả vòng chạy gần nhất — cho `GET /poller` và Bảng điều khiển.
 last_run: dict = {
     "luc": "", "page_toi_han": 0, "page_bo_qua": 0, "goi_api": 0,
@@ -136,6 +171,7 @@ async def poll_once() -> dict:
     """Chạy 1 lượt: chỉ hỏi những page TỚI HẠN, ghi DB nếu thật sự có gì mới."""
     t0 = time.monotonic()
     await _nap_moc_tu_kho()
+    await _lam_tuoi_the()
     pages = await enabled_pages()
     now = time.monotonic()
 
