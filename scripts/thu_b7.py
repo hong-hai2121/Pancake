@@ -64,14 +64,18 @@ def don_dep(conn) -> None:
                  "where pancake_status=17")
 
 
-def don_pos(pos_id: int, *, status: int = 0, phone: str, name: str,
+def don_pos(pos_id, *, status: int = 0, phone: str, name: str,
             total: float = 500000, inserted: str = "2026-07-30T10:00:00",
             updated: str | None = None, conv: str | None = None,
             page: str | None = None, fbid: str | None = None,
-            history: list | None = None) -> dict:
-    """Dựng 1 đơn POS giả đúng các trường mà pos_sync đọc."""
+            history: list | None = None, system_id=None) -> dict:
+    """Dựng 1 đơn POS giả đúng các trường mà pos_sync đọc.
+
+    `pos_id` nhận CẢ chuỗi: đơn nhập từ hệ thống cũ có id kiểu
+    'C430270742.88' — khoá thật nằm ở `system_id`."""
     return {
-        "id": pos_id, "shop_id": SHOP_GIA, "status": status,
+        "id": pos_id, "system_id": pos_id if system_id is None else system_id,
+        "shop_id": SHOP_GIA, "status": status,
         "bill_full_name": name, "bill_phone_number": phone,
         "total_price": total,
         "inserted_at": inserted, "updated_at": updated or inserted,
@@ -269,6 +273,33 @@ def main() -> None:
     ok("admin đổi ánh xạ (0 -> pending) -> lượt đồng bộ SAU ăn ngay",
        order_repo.find_by_pos(SHOP_GIA, 8)["status"] == "pending")
     order_service.update_mapping(0, {"crm_status": "draft"})   # trả về mặc định
+
+    # --- đơn nhập từ hệ thống cũ: id là CHUỖI, khoá thật là system_id ---
+    # 1.535/53.642 đơn của shop có dạng này; trước đây int(id) ném ValueError
+    # nên backfill mất sạch đơn trước ~06/2025.
+    p9 = don_pos("C430270742.88", phone="0911222009", name=f"{DAU}Pos IdChuoi",
+                 system_id=990088)
+    kq9 = pos_sync.sync_batch([p9])
+    ok("đơn id CHUỖI ('C430270742.88') vẫn đồng bộ được, không lỗi",
+       kq9["tao_moi"] == 1 and kq9["loi"] == 0, f"kq={kq9}")
+    ok("đơn id chuỗi lấy system_id làm khoá POS",
+       (order_repo.find_by_pos(SHOP_GIA, 990088) or {}).get("pos_order_id")
+       == 990088)
+
+    kq9b = pos_sync.sync_batch([p9])
+    ok("đồng bộ lại đơn id chuỗi -> bỏ qua, KHÔNG tạo trùng",
+       kq9b["bo_qua"] == 1 and kq9b["tao_moi"] == 0, f"kq={kq9b}")
+
+    p10 = don_pos(10, phone="0911222010", name=f"{DAU}Pos IdSo")
+    pos_sync.sync_batch([p10])
+    ok("đơn id SỐ (id == system_id) giữ nguyên khoá cũ, không bị nhân đôi",
+       (order_repo.find_by_pos(SHOP_GIA, 10) or {}).get("pos_order_id") == 10)
+
+    p11 = don_pos(None, phone="0911222011", name=f"{DAU}Pos IdHong",
+                  system_id=None)
+    kq11 = pos_sync.sync_batch([p11])
+    ok("đơn không có system_id lẫn id -> tính là LỖI, không nuốt im",
+       kq11["loi"] == 1 and kq11["tao_moi"] == 0, f"kq={kq11}")
 
     print("== 6. Tầng API + phân quyền (ORDER-001…011) ==")
     client = TestClient(app)

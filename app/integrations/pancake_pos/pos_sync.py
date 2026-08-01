@@ -46,6 +46,27 @@ def _tien(don_pos: dict):
     return 0
 
 
+def _pos_order_id(don_pos: dict) -> int:
+    """Khoá đơn phía POS. Dùng `system_id`, KHÔNG dùng `id`.
+
+    1.535/53.642 đơn (toàn bộ đơn trước ~06/2025, nhập từ hệ thống cũ) có
+    `id` dạng chuỗi 'C430270742.88' — `int()` thẳng là vỡ, backfill mất sạch
+    đơn cũ. Đã đối chiếu cả 53.642 đơn của shop (01/08):
+      * đơn nào cũng có `system_id` kiểu số;
+      * `id` là số thì LUÔN bằng `system_id` (0 đơn lệch) — đơn đã đồng bộ
+        trước đây giữ nguyên khoá, không bị nhân đôi;
+      * `system_id` của nhóm id-chuỗi KHÔNG đụng `id` của nhóm id-số (0 va chạm).
+    """
+    for khoa in ("system_id", "id"):
+        v = don_pos.get(khoa)
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            continue
+    raise ValueError(
+        f"Đơn POS không có system_id/id dạng số: id={don_pos.get('id')!r}")
+
+
 def _thoi_diem(chuoi) -> datetime | None:
     """Parse mốc thời gian POS ('2026-07-31T17:13:30.022951') — hỏng thì None."""
     if not chuoi:
@@ -127,7 +148,7 @@ def sync_row(don_pos: dict, anh_xa: dict[int, str],
     sinh phiếu bàn giao + việc onboarding thì CSKH ngập 53k việc ảo (FR-090
     chỉ dành cho đơn giao MỚI)."""
     shop_id = int(don_pos["shop_id"])
-    pos_order_id = int(don_pos["id"])
+    pos_order_id = _pos_order_id(don_pos)
     pos_status = don_pos.get("status")
     crm_status = anh_xa.get(pos_status, _TRANG_THAI_MAC_DINH)
     ly_do = "pos_sync" if pos_status in anh_xa else \
