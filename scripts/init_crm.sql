@@ -1,11 +1,15 @@
 -- ============================================================
--- CRM TIÊU HÓA — 60 bảng
+-- CRM TIÊU HÓA — 70 bảng
 --   56 bảng theo DANH-SACH-BANG-VA-QUAN-HE.md
 --   + handovers     (FR-090/091 · màn 24-25 · API HANDOVER-001…006)
 --   + audit_logs    (FR-180    · màn 77    · API AUDIT-001/002)
 --   + user_sessions (A2 — docs/A2-DANG-NHAP.md mục 2.2)
 --   + ref_codes     (danh mục dùng chung — màn 72 · BRD mục 14)
--- Bốn bảng cuối không có trong ERD nhưng đặc tả bắt buộc.
+--   + 5 bảng B5   : examinations · current_medications · previous_treatments ·
+--                   clinical_escalations · treatment_recommendations (B6)
+--   + order_status_mappings (B7 — ánh xạ mã POS, màn 23)
+--   + 4 bảng mục 4: integration_accounts · sync_logs · sync_errors · staff_mappings
+-- Các bảng sau 56 không có trong ERD nhưng đặc tả bắt buộc.
 --
 -- Chạy (idempotent, chạy lại nhiều lần không sao):
 --   docker exec -i pancakebot-pg psql -U postgres -d pancakebot < scripts/init_crm.sql
@@ -1525,6 +1529,304 @@ insert into order_status_mappings (pancake_status, pancake_status_name, crm_stat
     ( 6, 'Đã hủy',         'cancelled'),
     ( 7, 'Đã xóa',         'cancelled')
 on conflict (pancake_status) do nothing;
+
+
+-- ------------------------------------------------------------
+-- Bổ sung MỤC 4 BRD — TÍCH HỢP PANCAKE & NGUỒN QUẢNG CÁO
+--   "Đồng bộ khách, hội thoại, đơn hàng và nguồn quảng cáo về CRM mà
+--    không làm mất dữ liệu hoặc tạo trùng."
+--   4 bảng mới: integration_accounts · sync_logs · sync_errors · staff_mappings
+--   + cột lưu vết đồng bộ (source / external_updated_at / synced_at) theo đúng
+--     câu "Lưu external_id, source, page_id, updated_at_external, synced_at"
+--   + nới cây quảng cáo để nhận ad_id Pancake trả về khi CHƯA có cây campaign
+--     (Facebook Ads API là việc của C-MVP5 — lấp campaign/adset sau, không chặn)
+-- ------------------------------------------------------------
+
+-- Kết nối: MỘT dòng cho mỗi tài khoản/kênh nối vào (nhiều tài khoản Pancake +
+-- nhiều shop POS đều nằm chung bảng này, phân biệt bằng provider).
+-- ⚠️ KHÔNG lưu token thật ở DB — token nằm trong .env; ở đây chỉ giữ bản CHE
+-- (token_hint) + tình trạng để cảnh báo "token lỗi/hết hạn" theo luật mục 4.
+create table if not exists integration_accounts (
+    id               bigint generated always as identity primary key,
+    provider         text not null check (provider in ('pancake_pages','pancake_pos')),
+    name             text not null,
+    external_id      text not null default '',
+    status           text not null default 'active'
+                     check (status in ('active','paused','error','disconnected')),
+    token_status     text not null default 'unknown'
+                     check (token_status in ('unknown','ok','invalid','missing')),
+    token_hint       text,
+    token_checked_at timestamptz,
+    last_ok_at       timestamptz,
+    last_error       text,
+    last_error_at    timestamptz,
+    config           jsonb not null default '{}'::jsonb,
+    created_at       timestamptz not null default now(),
+    updated_at       timestamptz not null default now(),
+    unique (provider, external_id)
+);
+comment on table integration_accounts is
+    'Kết nối ngoài (mục 4): pancake_pages = tài khoản pages.fm (chat), '
+    'pancake_pos = shop POS (đơn). external_id = shop_id với POS, rỗng với pages.fm';
+comment on column integration_accounts.token_hint is
+    'Token ĐÃ CHE (4 ký tự cuối) chỉ để đối chiếu — token thật luôn ở .env';
+comment on column integration_accounts.token_status is
+    'Luật mục 4 "Token lỗi/hết hạn phải cảnh báo": invalid/missing -> màn Tích hợp báo đỏ';
+
+-- Page: gắn về tài khoản, bật/tắt đồng bộ từng page, giữ lỗi gần nhất
+alter table pages add column if not exists account_id bigint
+    references integration_accounts(id) on delete set null;
+alter table pages add column if not exists sync_enabled   boolean not null default true;
+alter table pages add column if not exists last_synced_at timestamptz;
+alter table pages add column if not exists last_error     text;
+alter table pages add column if not exists last_error_at  timestamptz;
+alter table pages add column if not exists external_shop_id text;
+comment on column pages.sync_enabled is
+    'Tắt = poller vẫn chạy cho bot nhưng KHÔNG đổ page này vào CRM (mục 4, màn Tích hợp)';
+comment on column pages.external_shop_id is 'Shop POS chứa page này — dùng để ánh xạ đơn về đúng page';
+
+-- Nhật ký đồng bộ (màn "Nhật ký đồng bộ"): mỗi LƯỢT chạy một dòng
+create table if not exists sync_logs (
+    id            bigint generated always as identity primary key,
+    provider      text not null check (provider in ('pancake_pages','pancake_pos')),
+    entity        text not null
+                  check (entity in ('conversation','order','customer','tag','page')),
+    scope         text,
+    run_type      text not null default 'poll'
+                  check (run_type in ('poll','manual','backfill','webhook','retry')),
+    status        text not null default 'running'
+                  check (status in ('running','success','partial','failed')),
+    started_at    timestamptz not null default now(),
+    finished_at   timestamptz,
+    duration_ms   integer,
+    created_count integer not null default 0,
+    updated_count integer not null default 0,
+    skipped_count integer not null default 0,
+    error_count   integer not null default 0,
+    message       text,
+    created_at    timestamptz not null default now()
+);
+comment on table sync_logs is
+    'Mỗi lượt đồng bộ 1 dòng (mục 4: "đồng bộ bù, retry queue và sync log"). '
+    'Bảng nhật ký, phình theo nhịp worker — dọn định kỳ bằng integration_service.don_log_cu';
+comment on column sync_logs.scope is 'Page ngoài (pancake_pages) hoặc shop_id (pancake_pos); rỗng = toàn bộ';
+
+create index if not exists idx_sync_logs_moi on sync_logs (started_at desc);
+create index if not exists idx_sync_logs_provider on sync_logs (provider, started_at desc);
+
+-- Hàng đợi lỗi (màn "Danh sách lỗi") — GIỮ NGUYÊN VĂN bản ghi để chạy lại được
+create table if not exists sync_errors (
+    id            bigint generated always as identity primary key,
+    provider      text not null check (provider in ('pancake_pages','pancake_pos')),
+    entity        text not null
+                  check (entity in ('conversation','order','customer','tag','page')),
+    external_id   text not null,
+    scope         text,
+    payload       jsonb not null default '{}'::jsonb,
+    error_type    text,
+    error_message text not null default '',
+    retry_count   integer not null default 0,
+    next_retry_at timestamptz not null default now(),
+    last_tried_at timestamptz,
+    status        text not null default 'pending'
+                  check (status in ('pending','resolved','given_up')),
+    sync_log_id   bigint references sync_logs(id) on delete set null,
+    resolved_at   timestamptz,
+    created_at    timestamptz not null default now(),
+    updated_at    timestamptz not null default now()
+);
+comment on table sync_errors is
+    'Retry queue mục 4: dòng nào đồng bộ hỏng thì nằm đây kèm payload gốc, '
+    'worker thử lại theo backoff; quá số lần thì given_up để người xử lý tay';
+comment on column sync_errors.payload is
+    'Nguyên văn bản ghi từ Pancake — chạy lại KHÔNG cần gọi lại API (dữ liệu cũ gọi lại cũng không còn)';
+
+-- Mỗi (nguồn, thực thể, id ngoài) chỉ 1 dòng ĐANG CHỜ — thử lại hỏng tiếp thì
+-- cộng retry_count vào chính dòng đó, không sinh hàng nghìn dòng trùng.
+create unique index if not exists uq_sync_errors_dang_cho
+    on sync_errors (provider, entity, external_id) where status = 'pending';
+create index if not exists idx_sync_errors_hang_doi
+    on sync_errors (next_retry_at) where status = 'pending';
+
+-- Ánh xạ nhân viên Pancake -> nhân viên CRM (màn "Ánh xạ Page/nhân viên/trạng thái đơn")
+create table if not exists staff_mappings (
+    id                bigint generated always as identity primary key,
+    provider          text not null check (provider in ('pancake_pages','pancake_pos')),
+    external_staff_id text not null,
+    external_name     text,
+    user_id           bigint references users(id) on delete set null,
+    role_hint         text,
+    last_seen_at      timestamptz,
+    created_at        timestamptz not null default now(),
+    updated_at        timestamptz not null default now(),
+    unique (provider, external_staff_id)
+);
+comment on table staff_mappings is
+    'Nhân viên xử lý bên Pancake (assignee_ids / assigning_seller_id / assigning_care_id) '
+    'ứng với ai trong CRM. Chưa ánh xạ thì user_id rỗng — vẫn ghi lại để Admin gán sau';
+comment on column staff_mappings.role_hint is 'seller / care / marketer / inbox — biết id này đến từ vai nào bên Pancake';
+
+-- Lưu vết đồng bộ trên chính dữ liệu (mục 4: external_id, source, page_id,
+-- updated_at_external, synced_at). external_id + page_id đã có sẵn từ B1/B2.
+alter table conversations add column if not exists source               text;
+alter table conversations add column if not exists external_updated_at  timestamptz;
+alter table conversations add column if not exists synced_at            timestamptz;
+alter table conversations add column if not exists assignee_external_id text;
+alter table conversations add column if not exists assignee_user_id     bigint
+    references users(id) on delete set null;
+alter table conversations add column if not exists external_tags jsonb not null default '[]'::jsonb;
+alter table conversations add column if not exists message_count integer;
+alter table conversations add column if not exists unread_count  integer;
+alter table conversations add column if not exists snippet       text;
+comment on column conversations.external_updated_at is
+    'updated_at BÊN PANCAKE ở lần đồng bộ cuối — so mốc này để biết có gì mới, '
+    'KHÔNG so updated_at của CRM (trigger tự đổi mỗi lần ghi)';
+comment on column conversations.synced_at is 'Lần cuối dòng này được đồng bộ về (mục 4)';
+comment on column conversations.external_tags is 'ID thẻ Pancake nguyên bản; bản dịch ra tên nằm ở crm.tags/customer_tags';
+
+alter table customers           add column if not exists synced_at timestamptz;
+alter table customer_identities add column if not exists synced_at timestamptz;
+alter table orders              add column if not exists synced_at timestamptz;
+
+-- Quảng cáo: Pancake CHỈ trả ad_id + post_id (không có cây campaign/adset), nên
+-- ad_set_id phải cho rỗng — nếu không thì mọi ad_id thật đều không lưu nổi.
+-- C-MVP5 kéo Facebook Ads API về sẽ lấp campaign/adset cho các dòng này.
+alter table ads alter column ad_set_id drop not null;
+alter table ads add column if not exists post_id  text;
+alter table ads add column if not exists platform text;
+alter table ads add column if not exists first_seen_at timestamptz;
+comment on column ads.ad_set_id is
+    'Rỗng = mới biết ad_id (từ đơn Pancake POS), chưa biết nó thuộc adset/campaign nào';
+
+alter table lead_attributions add column if not exists source         text;
+alter table lead_attributions add column if not exists external_ad_id text;
+alter table lead_attributions add column if not exists post_id        text;
+alter table lead_attributions add column if not exists utm  jsonb not null default '{}'::jsonb;
+comment on column lead_attributions.source is 'pancake_pos / pancake_pages / ads_api (C-MVP5)';
+comment on column lead_attributions.utm is 'p_utm_* của đơn POS: {source, medium, campaign, content, term, id}';
+
+-- first_touch / last_touch: mỗi khách đúng 1 dòng mỗi loại chạm (mục 4).
+-- Chạm hỗ trợ ('assisted') không bị ràng buộc này — cần bao nhiêu dòng cũng được.
+create unique index if not exists uq_lead_attributions_cham
+    on lead_attributions (customer_id, touch_type)
+    where customer_id is not null and touch_type in ('first','last');
+
+
+-- ------------------------------------------------------------
+-- Bổ sung MỤC 4 (phần NGUỒN QUẢNG CÁO) — cây quảng cáo thật + chi phí
+--   Nguồn: Pancake POS **Ads Manager** (pos.pages.fm/api/v1/shops/{id}/ads_manager/*)
+--   — dò 01/08: ad_accounts · campaigns_v2 · ad_sets_v2 · ads_v2, mỗi dòng kèm
+--   `insights` (spend, impressions, clicks, reach, cpc, cpm, ctr, frequency).
+--   Nhờ vậy KHÔNG cần Facebook Ads API riêng vẫn có chi phí để tính ROAS.
+--
+--   ⚠️ Chỉ ads của TÀI KHOẢN QUẢNG CÁO đã nối vào POS mới có chi phí. Ad nào
+--   thấy trên đơn (orders.pos_raw.ad_id) mà chưa nối tài khoản thì vẫn được lưu
+--   (biết doanh thu, chưa biết chi phí) — màn báo cáo hiện "—" ở cột chi phí.
+-- ------------------------------------------------------------
+alter table ad_campaigns add column if not exists external_account_id text;
+alter table ad_campaigns add column if not exists account_name        text;
+alter table ad_campaigns add column if not exists objective           text;
+alter table ad_campaigns add column if not exists effective_status    text;
+alter table ad_campaigns add column if not exists daily_budget        numeric(14,2);
+alter table ad_campaigns add column if not exists lifetime_budget     numeric(14,2);
+alter table ad_campaigns add column if not exists start_time          timestamptz;
+alter table ad_campaigns add column if not exists end_time            timestamptz;
+alter table ad_campaigns add column if not exists currency            text;
+alter table ad_campaigns add column if not exists synced_at           timestamptz;
+-- POS trả trạng thái Facebook (ACTIVE/PAUSED/ARCHIVED/DELETED, có cả
+-- CAMPAIGN_PAUSED, IN_PROCESS…) — CHECK cũ 4 giá trị chặn mất; hạ về chuẩn hoá
+-- trong code (ads_sync._trang_thai) rồi giữ CHECK cho giá trị đã chuẩn.
+alter table ad_campaigns drop constraint if exists ck_ad_campaigns_status;
+alter table ad_campaigns add constraint ck_ad_campaigns_status
+    check (status is null or status in ('active','paused','archived','deleted','other'));
+
+alter table ad_sets add column if not exists status            text;
+alter table ad_sets add column if not exists effective_status  text;
+alter table ad_sets add column if not exists optimization_goal text;
+alter table ad_sets add column if not exists destination_type  text;
+alter table ad_sets add column if not exists daily_budget      numeric(14,2);
+alter table ad_sets add column if not exists lifetime_budget   numeric(14,2);
+alter table ad_sets add column if not exists start_time        timestamptz;
+alter table ad_sets add column if not exists end_time          timestamptz;
+alter table ad_sets add column if not exists targeting         jsonb;
+alter table ad_sets add column if not exists synced_at         timestamptz;
+alter table ad_sets drop constraint if exists ck_ad_sets_status;
+alter table ad_sets add constraint ck_ad_sets_status
+    check (status is null or status in ('active','paused','archived','deleted','other'));
+-- Adset có thể biết trước ad (đồng bộ từ ads_v2) — cho phép chưa gắn campaign,
+-- lượt đồng bộ cây sau sẽ lấp. Cùng lý do với ads.ad_set_id ở trên.
+alter table ad_sets alter column campaign_id drop not null;
+
+alter table ads add column if not exists external_account_id text;
+alter table ads add column if not exists creative_name       text;
+alter table ads add column if not exists object_story_id     text;
+alter table ads add column if not exists effective_status    text;
+alter table ads add column if not exists created_time        timestamptz;
+alter table ads add column if not exists synced_at           timestamptz;
+alter table ads drop constraint if exists ck_ads_status;
+alter table ads add constraint ck_ads_status
+    check (status is null or status in ('active','paused','archived','deleted','other'));
+comment on column ads.object_story_id is
+    'Bài viết gốc của creative (dạng <page_id>_<post_id>) — nối được về post_id trên đơn POS';
+
+-- Chi phí + chỉ số THEO NGÀY. Vì sao theo ngày: API trả số ĐÃ TỔNG HỢP theo
+-- khoảng thời gian truyền vào, nên muốn phục vụ mọi cửa sổ (7/30/60/90 ngày của
+-- ADS-010) thì phải lưu hạt mịn nhất rồi tự cộng. Đồng bộ 1 lời gọi/ngày/cấp.
+create table if not exists ad_metrics_daily (
+    id          bigint generated always as identity primary key,
+    entity_type text not null check (entity_type in ('campaign','ad_set','ad')),
+    entity_id   bigint not null,
+    external_id text not null,
+    ngay        date not null,
+    spend       numeric(14,2) not null default 0,
+    impressions bigint not null default 0,
+    clicks      bigint not null default 0,
+    reach       bigint not null default 0,
+    cpc         numeric(14,2),
+    cpm         numeric(14,2),
+    ctr         numeric(10,4),
+    frequency   numeric(10,4),
+    currency    text,
+    source      text not null default 'pancake_pos',
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now(),
+    unique (entity_type, entity_id, ngay)
+);
+comment on table ad_metrics_daily is
+    'Chi phí/chỉ số quảng cáo theo NGÀY (Pancake POS Ads Manager). Quan hệ đa hình '
+    '(entity_type, entity_id) theo đúng quy ước NHÓM A mục 4 của file này — không FK. '
+    'Cộng theo cửa sổ để ra chi phí 7/30/60/90 ngày; ROAS = doanh thu quy nguồn / chi phí';
+
+create index if not exists idx_ad_metrics_ngay on ad_metrics_daily (ngay desc);
+create index if not exists idx_ad_metrics_entity
+    on ad_metrics_daily (entity_type, entity_id, ngay desc);
+
+-- ------------------------------------------------------------
+-- CÀI ĐẶT HỆ THỐNG chỉnh được trên web (màn 78 · SYSTEM-001/002)
+--   Chỉ lưu phần NGƯỜI ĐÃ ĐỔI. Mô tả/kiểu/khoảng hợp lệ/giá trị mặc định nằm
+--   trong CODE (app/core/runtime_config.py `MUC`) — thêm một cài đặt mới là
+--   thêm một dòng Python, KHÔNG phải chạy migration.
+--   Chưa có dòng nào ở đây = dùng đúng giá trị trong .env như trước giờ.
+-- ------------------------------------------------------------
+create table if not exists app_settings (
+    code       text primary key,
+    value      text not null,
+    updated_by bigint references users(id) on delete set null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+comment on table app_settings is
+    'Công tắc + nhịp chạy đổi được trên web, worker đọc lại mỗi vòng nên KHÔNG phải '
+    'khởi động lại server. Thiếu dòng nào thì lấy mặc định từ .env';
+
+
+-- Nhật ký/hàng đợi lỗi nhận thêm loại 'ad' (đồng bộ cây + chi phí quảng cáo)
+alter table sync_logs   drop constraint if exists sync_logs_entity_check;
+alter table sync_logs   add constraint sync_logs_entity_check
+    check (entity in ('conversation','order','customer','tag','page','ad'));
+alter table sync_errors drop constraint if exists sync_errors_entity_check;
+alter table sync_errors add constraint sync_errors_entity_check
+    check (entity in ('conversation','order','customer','tag','page','ad'));
 
 
 -- ============================================================

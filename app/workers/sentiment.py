@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 
 from app.ai import sentiment as sentiment_engine
 from app.integrations import telegram
+from app.core import runtime_config as cfg
 from app.core.config import settings
 from app.db.repositories import inbox_store, sentiment_log
 from app.workers import switch
@@ -126,12 +127,12 @@ async def sentiment_loop() -> None:
                 dang_bat = switch.is_on()
                 _log(f"[sentiment] {'BẬT lại' if dang_bat else 'TẮT'} theo công tắc giao diện")
             if not switch.is_on():
-                await asyncio.sleep(settings.sentiment_interval)
+                await asyncio.sleep(cfg.so("sentiment_interval", 8))
                 continue
             # Cách quét đi thẳng vào `analyze()` theo tham số (xem scan_once) —
             # bản cũ phải gán đè một biến module toàn cục, dễ lệch khi có 2 mẻ
             # chạy chồng nhau.
-            await scan_once(settings.sentiment_batch)
+            await scan_once(int(cfg.so("sentiment_batch", 10)))
         except Exception as err:  # noqa: BLE001
             _log(f"[sentiment] Lỗi vòng lặp: {type(err).__name__}: {err}")
-        await asyncio.sleep(settings.sentiment_interval)
+        await asyncio.sleep(cfg.so("sentiment_interval", 8))

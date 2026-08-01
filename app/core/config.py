@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # Các page (ID, phân tách bởi dấu phẩy) được phép TỰ SINH page_access_token
     # khi chưa có (cần token Pancake quyền Admin). Để trống = không tự sinh page nào.
     pancake_tag_page_ids: str = ""
+    # BRD mục 4 — "Nút mở đúng hội thoại Pancake từ hồ sơ CRM". Chỉ ghép chuỗi,
+    # KHÔNG gọi API. Pancake đổi đường dẫn thì sửa .env, không phải sửa code.
+    pancake_conversation_url: str = "https://pancake.vn/{page_id}?c_id={conversation_id}"
 
     # --- Pancake POS (Open API RIÊNG — không dùng chung JWT pages.fm ở trên) ---
     # api_key tạo trong POS: Cấu hình -> Nâng cao -> Tích hợp bên thứ 3 -> API Key.
@@ -39,6 +42,23 @@ class Settings(BaseSettings):
     # bật lên là đơn Pancake bắt đầu đổ về CRM thật. Backfill: scripts/backfill_don_pos.py
     pos_sync_enabled: bool = False
     pos_sync_interval: float = 300.0    # giây giữa 2 lượt kéo đơn mới cập nhật
+
+    # --- Quảng cáo (BRD mục 4 phần nguồn quảng cáo) ---
+    # Cây campaign/adset/ad + CHI PHÍ lấy từ Pancake POS Ads Manager (không cần
+    # Facebook Ads API riêng). Mặc định TẮT như các công tắc đồng bộ khác.
+    # Lịch sử: scripts/backfill_quang_cao.py
+    ads_sync_enabled: bool = False
+    ads_sync_interval: float = 21600.0   # 6 giờ — cấu trúc + chi phí đổi chậm
+    ads_sync_tree_days: int = 90         # cửa sổ kéo cây quảng cáo mỗi lượt
+
+    # --- Tích hợp (BRD mục 4): hàng đợi lỗi + cảnh báo token ---
+    # Worker chạy lại các bản ghi đồng bộ hỏng (crm.sync_errors) và định kỳ kiểm
+    # token còn sống không. Bật mặc định vì nó chỉ dọn dẹp: hàng đợi rỗng thì
+    # gần như không tốn gì; tắt thì lỗi tồn đọng không ai xử lý.
+    sync_retry_enabled: bool = True
+    sync_retry_interval: float = 300.0   # giây giữa 2 lượt quét hàng đợi
+    sync_retry_batch: int = 50           # số bản ghi thử lại mỗi lượt
+    sync_token_check_hours: float = 6.0  # cách mấy giờ thì kiểm token một lần
 
     # --- Facebook Messenger (luồng Graph cũ, hiện không dùng) ---
     fb_page_access_token: str = ""      # token page để gọi Send API

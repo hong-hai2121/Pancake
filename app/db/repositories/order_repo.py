@@ -15,6 +15,7 @@ _COT_DON = {
     "cskh_owner_id", "status", "total_amount", "delivered_at", "note", "source",
     "pos_shop_id", "pos_order_id", "pos_status", "pos_conversation_id",
     "pos_page_id", "pos_inserted_at", "pos_updated_at", "pos_raw",
+    "synced_at",   # mục 4: lần cuối dòng này được đồng bộ về
 }
 # jsonb phải đi qua json.dumps + ::jsonb (giống catalog_repo)
 _COT_JSONB = {"pos_raw"}

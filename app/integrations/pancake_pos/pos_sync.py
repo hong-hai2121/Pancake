@@ -21,11 +21,13 @@ KHÁC với UUID khách bên pages.fm mà B2 đang lưu — trộn vào là kh�
 """
 
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
-from app.db.repositories import order_repo
-from app.services import customer_service, order_service
+from app.db.repositories import attribution_repo, integration_repo, order_repo
+from app.services import customer_service, integration_service, order_service
 from app.integrations.pancake.crm_sync import _crm_page_id
+
+_PROVIDER = "pancake_pos"
 
 # Mã POS chưa có trong bảng ánh xạ (POS thêm trạng thái mới) -> nhận về 'draft'
 # kèm reason đánh dấu, KHÔNG bỏ rơi đơn; admin bổ sung ánh xạ rồi đồng bộ lại.
@@ -66,6 +68,57 @@ def _moc_giao_thanh_cong(don_pos: dict) -> datetime | None:
     return None
 
 
+def _quy_nguon(customer_id: int, don_pos: dict) -> None:
+    """Ghi nguồn quảng cáo của đơn (BRD mục 4: ad_id, creative, first/last touch).
+
+    Pancake trả `ad_id` + `post_id` + `p_utm_*` ngay trên đơn. Chạm ĐẦU lấy mốc
+    tạo đơn sớm nhất, chạm CUỐI lấy mốc muộn nhất — repo tự so mốc nên thứ tự
+    backfill (mới → cũ) không làm sai nhãn.
+    """
+    ad_ngoai = str(don_pos.get("ad_id") or "").strip()
+    post_id = str(don_pos.get("post_id") or "").strip()
+    if not (ad_ngoai or post_id):
+        return
+    moc = _thoi_diem(don_pos.get("inserted_at"))
+    utm = {
+        k[6:]: don_pos.get(k) for k in
+        ("p_utm_source", "p_utm_medium", "p_utm_campaign",
+         "p_utm_content", "p_utm_term", "p_utm_id")
+        if don_pos.get(k)
+    }
+    if don_pos.get("ads_source"):
+        utm["ads_source"] = don_pos["ads_source"]
+
+    ad = attribution_repo.upsert_ad(
+        external_ad_id=ad_ngoai, platform="facebook", post_id=post_id)
+    for loai in ("first", "last"):
+        attribution_repo.ghi_cham(
+            customer_id=customer_id, touch_type=loai, attributed_at=moc,
+            ad_id=(ad or {}).get("id"), external_ad_id=ad_ngoai, post_id=post_id,
+            source=_PROVIDER, utm=utm,
+        )
+
+
+def _nhan_vien_pos(don_pos: dict) -> None:
+    """Ghi nhận nhân viên POS (bán / chăm / marketer) vào bảng ánh xạ.
+
+    Chỉ GHI NHẬN để Admin gán ở màn Ánh xạ — KHÔNG tự phân công khách trong CRM:
+    ownership của CRM có luật riêng (FR-030…032, B1/B3), máy đồng bộ không được
+    tự ý đè lên.
+    """
+    for khoa, vai in (("assigning_seller_id", "seller"),
+                      ("assigning_care_id", "care"),
+                      ("marketer_id", "marketer")):
+        ngoai = str(don_pos.get(khoa) or "").strip()
+        if not ngoai:
+            continue
+        try:
+            integration_repo.upsert_staff(
+                provider=_PROVIDER, external_staff_id=ngoai, role_hint=vai)
+        except Exception:  # noqa: BLE001 — phụ trợ, không được chặn đồng bộ đơn
+            pass
+
+
 def sync_row(don_pos: dict, anh_xa: dict[int, str]) -> str:
     """Đồng bộ MỘT đơn POS. Trả 'tao_moi' | 'cap_nhat' | 'bo_qua'. Idempotent."""
     shop_id = int(don_pos["shop_id"])
@@ -76,6 +129,7 @@ def sync_row(don_pos: dict, anh_xa: dict[int, str]) -> str:
         f"pos_sync: mã POS {pos_status} chưa có ánh xạ — tạm nhận 'draft'"
 
     don_cu = order_repo.find_by_pos(shop_id, pos_order_id)
+    _nhan_vien_pos(don_pos)
 
     # ---------- đơn đã có: POS không đổi gì thì thôi, đổi thì cập nhật ----------
     if don_cu:
@@ -89,6 +143,7 @@ def sync_row(don_pos: dict, anh_xa: dict[int, str]) -> str:
             "pos_status": pos_status,
             "pos_updated_at": _thoi_diem(don_pos.get("updated_at")),
             "pos_raw": don_pos,
+            "synced_at": datetime.now(timezone.utc),
         })
         if don_cu["status"] != crm_status:
             # force: POS là nguồn sự thật — không bắt đơn POS đi đúng đường
@@ -98,6 +153,7 @@ def sync_row(don_pos: dict, anh_xa: dict[int, str]) -> str:
             moc = _moc_giao_thanh_cong(don_pos)
             if moc and crm_status in ("delivered", "collected"):
                 order_repo.set_delivered_at(don_cu["id"], moc)
+        _quy_nguon(don_cu["customer_id"], don_pos)
         return "cap_nhat"
 
     # ---------- đơn mới: khớp/tạo khách rồi tạo đơn ----------
@@ -140,19 +196,32 @@ def sync_row(don_pos: dict, anh_xa: dict[int, str]) -> str:
         "pos_inserted_at": pos_inserted_at,
         "pos_updated_at": _thoi_diem(don_pos.get("updated_at")),
         "pos_raw": don_pos,
+        "synced_at": datetime.now(timezone.utc),
         "_reason": ly_do,
     }
     order_repo.create_order(don, [])
+    _quy_nguon(kh["id"], don_pos)
     return "tao_moi"
 
 
-def sync_batch(dons: list[dict]) -> dict:
+def sync_batch(dons: list[dict], *, run_type: str = "poll") -> dict:
     """Đồng bộ một mẻ đơn POS. Nuốt lỗi từng row — không vỡ worker/backfill.
 
     Bảng ánh xạ đọc MỘT lần cho cả mẻ (đủ tươi: worker chạy lại mỗi vài phút).
+    Mẻ nào cũng ghi 1 dòng `crm.sync_logs`; đơn hỏng vào `crm.sync_errors` kèm
+    nguyên văn đơn để worker retry chạy lại mà không phải gọi lại POS (mục 4).
     """
     anh_xa = order_repo.load_mapping_dict()
     ket_qua = {"tao_moi": 0, "cap_nhat": 0, "bo_qua": 0, "loi": 0}
+    shop = str((dons[0].get("shop_id") if dons else "") or "")
+
+    log_id = None
+    try:
+        log_id = integration_service.mo_log(
+            _PROVIDER, "order", scope=shop, run_type=run_type)
+    except Exception as err:  # noqa: BLE001 — không có nhật ký vẫn phải đồng bộ
+        print(f"[pos_sync] không mở được nhật ký: {err}", file=sys.stderr)
+
     for don_pos in dons:
         try:
             ket_qua[sync_row(don_pos, anh_xa)] += 1
@@ -162,4 +231,14 @@ def sync_batch(dons: list[dict]) -> dict:
                 f"[pos_sync] loi don {don_pos.get('id')}: {type(err).__name__}: {err}",
                 file=sys.stderr,
             )
+            integration_service.ghi_loi(
+                _PROVIDER, "order", str(don_pos.get("id") or ""), err,
+                payload=don_pos, scope=shop, sync_log_id=log_id,
+            )
+
+    if log_id:
+        try:
+            integration_service.dong_log(log_id, ket_qua)
+        except Exception as err:  # noqa: BLE001
+            print(f"[pos_sync] không đóng được nhật ký: {err}", file=sys.stderr)
     return ket_qua

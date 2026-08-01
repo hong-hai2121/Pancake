@@ -66,7 +66,8 @@ async def main() -> int:
         )
         dons = [d for d in data.get("data") or [] if isinstance(d, dict)]
         # Trong 1 trang cũng phải cũ -> mới (POS xếp mới nhất trước)
-        ket_qua = await asyncio.to_thread(pos_sync.sync_batch, list(reversed(dons)))
+        ket_qua = await asyncio.to_thread(
+            pos_sync.sync_batch, list(reversed(dons)), run_type="backfill")
         for k in tong:
             tong[k] += ket_qua[k]
         print(f"  [{i}/{len(cac_trang)}] trang {trang}: {len(dons)} đơn -> {ket_qua} "

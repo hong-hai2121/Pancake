@@ -85,14 +85,27 @@ def list_customers(q: str = "", limit: int = 50) -> tuple[list[dict], int]:
     with pool.connection() as conn:
         rows = conn.execute(
             f"""
-            select id, customer_code, full_name, primary_phone, province, status, created_at
-              from crm.customers where {where}
-             order by id desc limit %s
+            select c.id, c.customer_code, c.full_name, c.primary_phone, c.province,
+                   c.status, c.created_at, c.synced_at,
+                   -- BRD mục 4: dữ liệu để dựng nút "mở đúng hội thoại Pancake";
+                   -- lấy hội thoại MỚI NHẤT của khách, đọc DB chứ không gọi API.
+                   hi.external_page_id, hi.external_conversation_id
+              from crm.customers c
+              left join lateral (
+                    select p.external_page_id, cv.external_conversation_id
+                      from crm.conversations cv
+                      join crm.pages p on p.id = cv.page_id
+                     where cv.customer_id = c.id
+                     order by cv.last_message_at desc nulls last
+                     limit 1
+              ) hi on true
+             where {where}
+             order by c.id desc limit %s
             """,
             (*ts, limit),
         ).fetchall()
         total = conn.execute(
-            f"select count(*) as n from crm.customers where {where}", ts or None
+            f"select count(*) as n from crm.customers c where {where}", ts or None
         ).fetchone()["n"]
     return rows, total
 

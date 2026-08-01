@@ -85,6 +85,58 @@ async def list_orders(
     return await _get(f"shops/{_shop_id(shop_id)}/orders", params)
 
 
+# --------------------------------------------------------------- Ads Manager
+# Cây quảng cáo + CHI PHÍ nằm ở đây, KHÔNG cần Facebook Ads API riêng (dò 01/08):
+#   ad_accounts · campaigns_v2 · ad_sets_v2 · ads_v2
+# Mỗi dòng kèm `insights` (spend/impressions/clicks/reach/cpc/cpm/ctr/frequency)
+# TỔNG HỢP theo khoảng start_time..end_time (unix giây) truyền vào — muốn số theo
+# ngày thì hỏi từng ngày một (xem ads_sync.dong_bo_chi_phi).
+async def list_ad_accounts(*, shop_id: str | int | None = None) -> list[dict]:
+    """Tài khoản quảng cáo ĐÃ NỐI vào shop POS. Chưa nối = không có chi phí."""
+    data = await _get(f"shops/{_shop_id(shop_id)}/ads_manager/ad_accounts",
+                      {"page": 1, "page_size": 100})
+    return [a for a in data.get("data") or [] if isinstance(a, dict)]
+
+
+async def _ads_manager(
+    duong: str, *, shop_id: str | int | None = None,
+    start_time: int | None = None, end_time: int | None = None,
+    page_size: int = 100, max_trang: int = 50,
+) -> list[dict]:
+    """Lật hết trang của một endpoint ads_manager, trả list dòng đã gộp."""
+    ra: list[dict] = []
+    trang = 1
+    while trang <= max_trang:
+        params: dict = {"page": trang, "page_size": min(page_size, 100)}
+        if start_time is not None:
+            params["start_time"] = int(start_time)
+        if end_time is not None:
+            params["end_time"] = int(end_time)
+        data = await _get(f"shops/{_shop_id(shop_id)}/ads_manager/{duong}", params)
+        mot_trang = [x for x in data.get("data") or [] if isinstance(x, dict)]
+        ra.extend(mot_trang)
+        if not mot_trang or trang >= int(data.get("total_pages") or 1):
+            break
+        trang += 1
+    return ra
+
+
+async def list_ad_campaigns(**kw) -> list[dict]:
+    """Chiến dịch + insights trong khoảng thời gian."""
+    return await _ads_manager("campaigns_v2", **kw)
+
+
+async def list_ad_sets(**kw) -> list[dict]:
+    """Nhóm quảng cáo + insights."""
+    return await _ads_manager("ad_sets_v2", **kw)
+
+
+async def list_ads(**kw) -> list[dict]:
+    """Quảng cáo + insights, KÈM ad_campaign / ad_set / ad_creative của từng ad —
+    một lời gọi này dựng được cả cây, không phải ghép tay 3 endpoint."""
+    return await _ads_manager("ads_v2", **kw)
+
+
 async def get_order(order_id: int | str, *, shop_id: str | int | None = None) -> dict:
     """Chi tiết 1 đơn theo id POS (id chạy theo shop, ví dụ 54307)."""
     data = await _get(f"shops/{_shop_id(shop_id)}/orders/{order_id}")

@@ -9,6 +9,7 @@ Nguyên tắc của bộ khung:
 
 from html import escape
 
+from app.integrations.pancake.links import link_hoi_thoai
 from app.web.shell import render_shell, stat
 
 
@@ -97,13 +98,22 @@ def render_tong_quan(data: dict, tieu_cuc: int | None) -> str:
 
 # ------------------------------------------------------------ Khách hàng (màn 8)
 def render_khach_hang(rows: list[dict], total: int, q: str) -> str:
-    dong = "".join(
-        f"<tr><td>{_e(r['customer_code'])}</td><td><b>{_e(r['full_name'])}</b></td>"
-        f"<td>{_e(r['primary_phone'])}</td><td>{_e(r['province'])}</td>"
-        f"<td><span class='pill'>{_e(r['status'])}</span></td>"
-        f"<td>{_dt(r['created_at'])}</td></tr>"
-        for r in rows
-    )
+    dong = ""
+    for r in rows:
+        # BRD mục 4 — "Nút mở đúng hội thoại Pancake từ hồ sơ CRM". Link ghép từ
+        # dữ liệu đã đồng bộ trong DB; khách chưa có hội thoại thì không hiện nút.
+        link = link_hoi_thoai(r.get("external_page_id") or "",
+                              r.get("external_conversation_id") or "")
+        nut = (
+            f'<a class="btn sm" href="{escape(link)}" target="_blank" rel="noopener"'
+            ' title="Mở hội thoại bên Pancake">💬 Pancake</a>' if link else "—"
+        )
+        dong += (
+            f"<tr><td>{_e(r['customer_code'])}</td><td><b>{_e(r['full_name'])}</b></td>"
+            f"<td>{_e(r['primary_phone'])}</td><td>{_e(r['province'])}</td>"
+            f"<td><span class='pill'>{_e(r['status'])}</span></td>"
+            f"<td>{_dt(r['created_at'])}</td><td>{nut}</td></tr>"
+        )
     body = (
         _ghi_chu("B1 (khách 360°) + B2 (đồng bộ Pancake)",
                  "hồ sơ khách tự tạo từ hội thoại, chống trùng, gộp khách, mở hồ sơ 360°")
@@ -112,7 +122,7 @@ def render_khach_hang(rows: list[dict], total: int, q: str) -> str:
           f'<label>Tìm (tên / SĐT / mã)<input type="text" name="q" value="{escape(q)}"></label>'
           '<label>&nbsp;<button class="btn primary">Tìm</button></label></div></form>'
         + _bang(
-            ["Mã", "Họ tên", "Điện thoại", "Tỉnh", "Trạng thái", "Tạo lúc"],
+            ["Mã", "Họ tên", "Điện thoại", "Tỉnh", "Trạng thái", "Tạo lúc", "Hội thoại"],
             dong, "Chưa có khách trong CRM — B2 nối poller Pancake sẽ tự đổ vào đây",
         )
         + f'<p class="note" style="margin-top:8px">Tổng: {total} khách</p>'

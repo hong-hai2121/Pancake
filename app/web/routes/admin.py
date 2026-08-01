@@ -14,12 +14,14 @@ from urllib.parse import quote
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from app.core import runtime_config
 from app.core.deps import co_quyen
 from app.core.errors import ApiError
 from app.db.repositories import audit_repo, org_repo, user_repo
-from app.services import org_service, user_service
+from app.services import cai_dat_service, org_service, user_service
 from app.web.views.admin import (
     render_403,
+    render_cai_dat,
     render_audit,
     render_roles,
     render_user_detail,
@@ -324,3 +326,49 @@ async def audit_page(
     return HTMLResponse(render_audit(
         rows, total, action=action, page=page, ok=ok, error=error,
     ))
+
+
+# ------------------------------------------------------------ cài đặt (màn 78)
+@router.get("/cai-dat", response_class=HTMLResponse)
+async def cai_dat_page(request: Request, ok: str = "", error: str = ""):
+    """Công tắc bật/tắt + nhịp chạy worker, đổi được ngay trên web (SYSTEM-001)."""
+    if (chan := _chan(request)):
+        return chan
+    return HTMLResponse(render_cai_dat(cai_dat_service.theo_nhom(), ok=ok, error=error))
+
+
+@router.post("/cai-dat")
+async def cai_dat_luu(request: Request):
+    """Lưu MỘT nhóm cài đặt (SYSTEM-002), hoặc trả cả nhóm về mặc định .env.
+
+    Checkbox không tick thì trình duyệt KHÔNG gửi ô đó lên — nên phải dựng lại
+    đủ danh sách công tắc của nhóm rồi coi ô vắng mặt là TẮT, nếu không thì tắt
+    công tắc sẽ chẳng bao giờ lưu được.
+    """
+    if (chan := _chan(request)):
+        return chan
+    form = await _form(request)
+    nhom = form.pop("nhom", "")
+    ve_mac_dinh = form.pop("mac_dinh", "") == "1"
+    ma_trong_nhom = [m["code"] for m in runtime_config.danh_sach()
+                     if m["nhom"] == nhom]
+    if not ma_trong_nhom:
+        return _back("/quan-tri/cai-dat", error="Nhóm cài đặt không hợp lệ")
+
+    try:
+        if ve_mac_dinh:
+            for code in ma_trong_nhom:
+                cai_dat_service.dat_lai_mac_dinh(code, actor=_user(request))
+            return _back("/quan-tri/cai-dat", ok="Đã trả nhóm này về mặc định .env")
+
+        du_lieu: dict = {}
+        for code in ma_trong_nhom:
+            muc = runtime_config.THEO_MA[code]
+            if muc.kieu == "bool":
+                du_lieu[code] = code in form          # vắng mặt = tắt
+            elif code in form and form[code] != "":
+                du_lieu[code] = form[code]
+        cai_dat_service.dat_nhieu(du_lieu, actor=_user(request))
+    except ApiError as err:
+        return _back("/quan-tri/cai-dat", error=err.message)
+    return _back("/quan-tri/cai-dat", ok="Đã lưu — worker dùng giá trị mới ở lượt kế")

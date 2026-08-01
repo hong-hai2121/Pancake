@@ -32,32 +32,38 @@ async def lifespan(_app: FastAPI):
     """Bật 2 worker nền lúc khởi động, dọn tài nguyên khi tắt server.
 
     Worker (xem app/workers/) chạy suốt vòng đời server — poll hội thoại về kho
-    và quét cảm xúc — nên hoạt động cả khi KHÔNG ai mở trình duyệt. Tắt từng cái
-    bằng `INBOX_POLL_ENABLED` / `SENTIMENT_ENABLED` trong .env.
+    và quét cảm xúc — nên hoạt động cả khi KHÔNG ai mở trình duyệt.
+
+    MỌI vòng lặp đều được TẠO ở đây, kể cả khi công tắc đang tắt: từng worker tự
+    đọc công tắc mỗi vòng (`app/core/runtime_config.py`), nên bật/tắt trên màn
+    **Cài đặt** có tác dụng ngay mà không phải khởi động lại server. Chỉ hai
+    worker POS là còn điều kiện, và đó là điều kiện CẤU HÌNH chứ không phải công
+    tắc: chưa có api_key/shop_id thì có bật cũng không gọi được gì.
 
     Client HTTP tới Pancake được dùng CHUNG cho cả vòng đời app (giữ keep-alive,
     đỡ bắt tay TLS mỗi request — xem app/integrations/pancake/client.py) nên phải tự đóng lại
     ở đây, không còn `async with` tự đóng sau mỗi lời gọi nữa.
     """
     tasks: list[asyncio.Task] = []
-    if settings.inbox_poll_enabled:
-        from app.workers import poll_loop
+    from app.workers import (
+        poll_loop,
+        sentiment_loop,
+        sync_retry_loop,
+        task_escalation_loop,
+    )
 
-        tasks.append(asyncio.create_task(poll_loop(), name="inbox-poller"))
-    # Worker cảm xúc LUÔN được tạo; quét hay không do công tắc ở trang /cam-xuc
-    # quyết định (mặc định lấy theo SENTIMENT_ENABLED trong .env). Nhờ vậy bật
-    # lại từ giao diện là chạy ngay, không phải khởi động lại server.
-    from app.workers import sentiment_loop, task_escalation_loop
-
+    tasks.append(asyncio.create_task(poll_loop(), name="inbox-poller"))
     tasks.append(asyncio.create_task(sentiment_loop(), name="sentiment"))
     # B4: 5 phút một lần đánh dấu việc quá hạn + audit "báo quản lý" (mục 19).
     tasks.append(asyncio.create_task(task_escalation_loop(), name="tasks-qua-han"))
-    # B7: kéo đơn Pancake POS về crm.orders. Task chỉ tạo khi ĐÃ cấu hình POS;
-    # kéo hay không do POS_SYNC_ENABLED quyết (kiểm mỗi vòng trong loop).
+    # Mục 4: dọn hàng đợi lỗi đồng bộ + canh token hết hạn.
+    tasks.append(asyncio.create_task(sync_retry_loop(), name="sync-retry"))
+    # B7 + mục 4 (quảng cáo): cần cấu hình POS mới tạo được task.
     if settings.pancake_pos_api_key and settings.pancake_pos_shop_id:
-        from app.workers import pos_orders_loop
+        from app.workers import ads_cost_loop, pos_orders_loop
 
         tasks.append(asyncio.create_task(pos_orders_loop(), name="pos-orders"))
+        tasks.append(asyncio.create_task(ads_cost_loop(), name="ads-cost"))
 
     yield
 
@@ -217,6 +223,7 @@ app.include_router(auth_api_router)
 
 # A4 + A5: API nhân viên / vai trò / nhóm / nhật ký + khu web Quản trị.
 from app.api.v1.audit import router as audit_api_router  # noqa: E402
+from app.api.v1.cai_dat import router as settings_api_router  # noqa: E402
 from app.api.v1.roles import router as roles_api_router  # noqa: E402
 from app.api.v1.users import router as users_api_router  # noqa: E402
 from app.web.routes.admin import router as web_admin_router  # noqa: E402
@@ -224,6 +231,8 @@ from app.web.routes.admin import router as web_admin_router  # noqa: E402
 app.include_router(users_api_router)
 app.include_router(roles_api_router)
 app.include_router(audit_api_router)
+# Màn 78 · SYSTEM-001/002: công tắc + nhịp worker chỉnh trên web (không restart).
+app.include_router(settings_api_router)
 app.include_router(web_admin_router)
 
 # B3: API lead & pipeline Sale (PIPELINE-001…004, LEAD-001…011) — luật nằm ở
@@ -262,6 +271,20 @@ app.include_router(treatments_api_router)
 from app.api.v1.orders import router as orders_api_router  # noqa: E402
 
 app.include_router(orders_api_router)
+
+# BRD mục 4: API + màn Tích hợp Pancake (kết nối, nhật ký/lỗi đồng bộ, ánh xạ
+# page & nhân viên, quy nguồn quảng cáo) — luật ở services/integration_service.py.
+from app.api.v1.integrations import router as integrations_api_router  # noqa: E402
+from app.web.routes.integration import router as web_integration_router  # noqa: E402
+
+app.include_router(integrations_api_router)
+app.include_router(web_integration_router)
+
+# Mục 4 phần NGUỒN QUẢNG CÁO: cây campaign/adset/ad + chi phí (Pancake POS Ads
+# Manager) ghép với doanh thu quy nguồn -> ROAS/LTV. API ADS-002…010 + ATTRIBUTION.
+from app.api.v1.ads import router as ads_api_router  # noqa: E402
+
+app.include_router(ads_api_router)
 
 # Bộ màn CRM tạm (khung): /crm/* — cấu trúc theo danh sách màn hình, số liệu
 # thật từ schema crm; lát cắt B1…B11 làm đầy dần (xem app/web/views/crm.py).

@@ -30,6 +30,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from app.core import runtime_config as cfg
 from app.core.config import settings
 from app.db.repositories import inbox_store
 from app.integrations.pancake.client import (
@@ -201,7 +202,7 @@ async def poll_once() -> dict:
                 # B2: đổ thêm vào CRM (khách + định danh + hội thoại + lead —
                 # FR-011). Công tắc CRM_SYNC_ENABLED, mặc định TẮT. sync_batch
                 # tự nuốt lỗi từng dòng — CRM hỏng không được vỡ luồng bot.
-                if settings.crm_sync_enabled:
+                if cfg.bat("crm_sync_enabled"):
                     from app.integrations.pancake import crm_sync
 
                     await asyncio.to_thread(
@@ -213,10 +214,10 @@ async def poll_once() -> dict:
             st.loi_lien_tiep, st.loi_cuoi = 0, ""
             # Có tin mới -> quay lại nhịp nhanh nhất; im lặng -> giãn gấp đôi.
             st.nhip = (
-                settings.inbox_poll_interval if moi
+                cfg.so("inbox_poll_interval", 20) if moi
                 else min(
-                    max(st.nhip * 2, settings.inbox_poll_interval),
-                    settings.inbox_poll_max_interval,
+                    max(st.nhip * 2, cfg.so("inbox_poll_interval", 20)),
+                    cfg.so("inbox_poll_max_interval", 300),
                 )
             )
             st.ke_tiep = time.monotonic() + st.nhip
@@ -224,12 +225,12 @@ async def poll_once() -> dict:
         except Exception as err:  # noqa: BLE001 — 1 page hỏng không được làm hỏng lượt
             st.loi_lien_tiep += 1
             st.loi_cuoi = f"{type(err).__name__}: {err}"
-            if st.loi_lien_tiep >= settings.inbox_poll_error_threshold:
-                st.nhip = settings.inbox_poll_error_backoff      # ngắt mạch
+            if st.loi_lien_tiep >= cfg.so("inbox_poll_error_threshold", 3):
+                st.nhip = cfg.so("inbox_poll_error_backoff", 1800)      # ngắt mạch
             else:
                 st.nhip = min(
-                    max(st.nhip * 2, settings.inbox_poll_interval),
-                    settings.inbox_poll_max_interval,
+                    max(st.nhip * 2, cfg.so("inbox_poll_interval", 20)),
+                    cfg.so("inbox_poll_max_interval", 300),
                 )
             st.ke_tiep = time.monotonic() + st.nhip
             return {"page": st.ten, "loi": st.loi_cuoi, "lan": st.loi_lien_tiep,
@@ -310,7 +311,7 @@ def page_loi() -> dict[str, dict]:
         pid: {
             "lan": st.loi_lien_tiep,
             "loi": st.loi_cuoi,
-            "ngat_mach": st.loi_lien_tiep >= settings.inbox_poll_error_threshold,
+            "ngat_mach": st.loi_lien_tiep >= cfg.so("inbox_poll_error_threshold", 3),
             "hoi_lai_sau_giay": max(0, round(st.ke_tiep - now)),
         }
         for pid, st in _state.items()
@@ -319,9 +320,17 @@ def page_loi() -> dict[str, dict]:
 
 
 async def poll_loop() -> None:
-    """Vòng lặp vô hạn — tích tắc mỗi `_TICK` giây rồi hỏi các page tới hạn."""
+    """Vòng lặp vô hạn — tích tắc mỗi `_TICK` giây rồi hỏi các page tới hạn.
+
+    Công tắc `inbox_poll_enabled` đọc lại MỖI vòng (màn Cài đặt đổi được lúc đang
+    chạy): TẮT thì vòng lặp vẫn sống nhưng không hỏi Pancake, bật lại là chạy tiếp
+    — giống cách worker cảm xúc làm.
+    """
     while True:
         try:
+            if not cfg.bat("inbox_poll_enabled"):
+                await asyncio.sleep(_TICK)
+                continue
             await poll_once()
         except Exception as err:  # noqa: BLE001 — không để 1 lỗi giết cả vòng lặp
             _log(f"[poller] Lỗi vòng lặp: {type(err).__name__}: {err}")

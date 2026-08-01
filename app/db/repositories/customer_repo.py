@@ -6,6 +6,8 @@ Mọi câu ghi rõ `crm.` (crm.customers ≠ watcher.customers — xem .env).
 Quy ước "khách sống" = deleted_at is null AND status <> 'merged'.
 """
 
+import json
+
 from app.db.client import get_pg_pool
 
 _SONG = "c.deleted_at is null and c.status <> 'merged'"
@@ -239,25 +241,71 @@ def add_identity(
 def upsert_conversation(
     *, customer_id: int, page_id: int, external_conversation_id: str,
     last_message_at: str | None,
+    source: str = "pancake",
+    external_updated_at: str | None = None,
+    assignee_external_id: str | None = None,
+    assignee_user_id: int | None = None,
+    external_tags: list | None = None,
+    snippet: str | None = None,
+    message_count: int | None = None,
+    unread_count: int | None = None,
 ) -> dict:
     """1 hội thoại 1 dòng theo (page, external id). Hội thoại cũ chưa định danh
-    được khách (customer_id null) thì lần đồng bộ sau bồi vào."""
+    được khách (customer_id null) thì lần đồng bộ sau bồi vào.
+
+    Phần lưu vết đồng bộ (BRD mục 4): `source` · `external_updated_at` = mốc
+    updated_at BÊN PANCAKE · `synced_at` = now() mỗi lần chạm tới. Nhân viên xử
+    lý bên Pancake giữ cả bản gốc (assignee_external_id) lẫn bản đã ánh xạ về
+    CRM (assignee_user_id) — chưa ánh xạ thì để rỗng, KHÔNG chặn đồng bộ.
+    """
     pool = get_pg_pool()
     with pool.connection() as conn:
         return conn.execute(
             """
             insert into crm.conversations
-                   (customer_id, page_id, external_conversation_id, last_message_at)
-            values (%s, %s, %s, %s::timestamptz)
+                   (customer_id, page_id, external_conversation_id, last_message_at,
+                    source, external_updated_at, synced_at, assignee_external_id,
+                    assignee_user_id, external_tags, snippet, message_count, unread_count)
+            values (%s, %s, %s, %s::timestamptz, %s, %s::timestamptz, now(), %s, %s,
+                    %s::jsonb, %s, %s, %s)
             on conflict (page_id, external_conversation_id) do update set
                 customer_id     = coalesce(crm.conversations.customer_id, excluded.customer_id),
                 last_message_at = greatest(
                     coalesce(crm.conversations.last_message_at, excluded.last_message_at),
-                    excluded.last_message_at)
+                    excluded.last_message_at),
+                source              = coalesce(excluded.source, crm.conversations.source),
+                external_updated_at = greatest(
+                    coalesce(crm.conversations.external_updated_at, excluded.external_updated_at),
+                    excluded.external_updated_at),
+                synced_at            = now(),
+                assignee_external_id = coalesce(excluded.assignee_external_id,
+                                                crm.conversations.assignee_external_id),
+                assignee_user_id     = coalesce(excluded.assignee_user_id,
+                                                crm.conversations.assignee_user_id),
+                external_tags        = excluded.external_tags,
+                snippet              = coalesce(excluded.snippet, crm.conversations.snippet),
+                message_count        = coalesce(excluded.message_count,
+                                                crm.conversations.message_count),
+                unread_count         = coalesce(excluded.unread_count,
+                                                crm.conversations.unread_count)
             returning *
             """,
-            (customer_id, page_id, external_conversation_id, last_message_at),
+            (
+                customer_id, page_id, external_conversation_id, last_message_at,
+                source, external_updated_at, assignee_external_id, assignee_user_id,
+                json.dumps(external_tags or [], ensure_ascii=False),
+                snippet, message_count, unread_count,
+            ),
         ).fetchone()
+
+
+def danh_dau_dong_bo(customer_id: int) -> None:
+    """Đóng dấu `synced_at` cho khách (mục 4 — biết dữ liệu tươi tới đâu)."""
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        conn.execute(
+            "update crm.customers set synced_at = now() where id = %s", (customer_id,)
+        )
 
 
 # ------------------------------------------------------------------ tags

@@ -77,8 +77,12 @@ MENU_GROUPS: list[tuple[str, list[tuple[str, str, str, str, str]]]] = [
         # "Chăm sóc" + "Mua lại" nằm trong mục xổ xuống "Chăm sóc khách hàng"
         # (_dept_cskh — kiểu Kallet, kèm số đếm), không còn là mục phẳng.
         ("/crm/san-pham", "Sản phẩm", "crm-products", "products", ""),
+        # BRD mục 4 (nguồn quảng cáo) — màn 7 + 53-55: chi phí · ROAS · LTV
+        ("/crm/quang-cao", "Nguồn quảng cáo", "crm-ads", "sentiment", "ads.view"),
         ("/quan-tri/nhan-vien", "Quản trị", "admin", "admin",
          "user.manage|user.manage_team"),
+        # BRD mục 4 — khu Tích hợp Pancake (kết nối, nhật ký/lỗi đồng bộ, ánh xạ)
+        ("/quan-tri/tich-hop", "Tích hợp", "tich-hop", "data", "integration.manage"),
     ]),
     # Cả nhóm đòi bot.view (chỉ Chủ DN/Admin có) — middleware trong app/main.py
     # chặn thật theo tiền tố _KHU_BOT, đây chỉ ẩn menu.
@@ -538,7 +542,26 @@ a{color:var(--accent)}
   border:1px solid color-mix(in srgb,var(--ok) 25%,transparent)}
 .flash.err{background:var(--err-bg);color:var(--err);
   border:1px solid color-mix(in srgb,var(--err) 25%,transparent)}
+.flash.warn{background:var(--warn-bg);color:var(--warn);
+  border:1px solid color-mix(in srgb,var(--warn) 25%,transparent)}
 .note{color:var(--sub);font-size:12px;margin:10px 0 0}
+/* Công tắc gạt ở màn Cài đặt: ô checkbox thật (form gửi được) + phần nhìn là
+   hai khối span, nên không cần JS nào cả. */
+.sw{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.sw input{position:absolute;opacity:0;width:0;height:0}
+.sw>span{width:38px;height:21px;border-radius:20px;background:var(--border);
+  position:relative;transition:background .15s}
+.sw>span::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;
+  border-radius:50%;background:#fff;transition:transform .15s}
+.sw input:checked+span{background:var(--ok)}
+.sw input:checked+span::after{transform:translateX(17px)}
+.sw input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.sw b{font-size:12px;color:var(--sub);font-weight:600}
+/* Bảng số liệu (màn Nguồn quảng cáo): cột số canh phải cho dễ so hàng dọc */
+td.num,th.num{text-align:right;white-space:nowrap}
+/* Thanh tỷ lệ trong phễu quảng cáo */
+.bar{background:var(--bg);border-radius:6px;height:8px;min-width:80px;overflow:hidden}
+.bar>span{display:block;height:100%;background:var(--accent);border-radius:6px}
 code{font-family:ui-monospace,Consolas,monospace;font-size:12px;background:var(--bg);
   padding:1px 5px;border-radius:5px}
 .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);
@@ -639,6 +662,11 @@ a.stat.link:hover::after{color:var(--accent)}
   color:var(--sub)}
 .pill.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent)}
 .pill.err{color:var(--err);border-color:color-mix(in srgb,var(--err) 40%,transparent)}
+.pill.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent)}
+/* Form gọn nằm ngay trong ô bảng (khu Tích hợp: chọn rồi bấm Lưu từng dòng) */
+.inline{display:flex;gap:6px;align-items:center}
+.inline select{min-width:150px}
+.err-txt{color:var(--err)}
 .links{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
 /* Danh sách page hiện ngay trên bảng điều khiển: ẩn, bấm ô stat (#ds-page) mới mở */
 .ds-page{display:none;margin-top:12px}

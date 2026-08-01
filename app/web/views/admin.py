@@ -8,6 +8,7 @@ from app.web.shell import flash, render_shell, tabs_bar
 _TABS = [
     ("/quan-tri/nhan-vien", "Nhân viên", "nhan-vien"),
     ("/quan-tri/phan-quyen", "Vai trò & quyền", "phan-quyen"),
+    ("/quan-tri/cai-dat", "Cài đặt", "cai-dat"),
     ("/quan-tri/nhat-ky", "Nhật ký", "nhat-ky"),
 ]
 
@@ -452,3 +453,86 @@ def render_403(message: str = "", heading: str = "Quản trị") -> str:
         f'<div class="card"><h3>⛔ Không có quyền truy cập</h3>{ruot}</div>',
         heading=heading,
     )
+
+
+# ------------------------------------------------------------ màn 78: cài đặt
+def render_cai_dat(nhom: list[dict], *, ok: str = "", error: str = "") -> str:
+    """Công tắc bật/tắt + nhịp chạy của worker — đổi ngay, không restart server.
+
+    Mỗi nhóm là một form riêng: bấm Lưu ở nhóm nào chỉ gửi các ô của nhóm đó,
+    nên sửa một chỗ không kéo theo rủi ro ghi đè chỗ khác đang mở ở tab kia.
+    """
+    khoi = ""
+    for g in nhom:
+        hang = ""
+        for m in g["muc"]:
+            gt = m["gia_tri"]
+            if m["kieu"] == "bool":
+                dieu_khien = (
+                    f'<label class="sw"><input type="checkbox" name="{escape(m["code"])}"'
+                    f'{" checked" if gt else ""}><span></span>'
+                    f'<b>{"Bật" if gt else "Tắt"}</b></label>'
+                )
+            elif m["chon"]:
+                chon = "".join(
+                    f'<option value="{escape(c)}"'
+                    f'{" selected" if str(gt) == c else ""}>{escape(c)}</option>'
+                    for c in m["chon"]
+                )
+                dieu_khien = f'<select name="{escape(m["code"])}">{chon}</select>'
+            else:
+                buoc = "1" if m["kieu"] == "int" else "any"
+                gioi_han = ""
+                if m["nho_nhat"] is not None:
+                    gioi_han += f' min="{m["nho_nhat"]:g}"'
+                if m["lon_nhat"] is not None:
+                    gioi_han += f' max="{m["lon_nhat"]:g}"'
+                dieu_khien = (
+                    f'<input type="number" step="{buoc}"{gioi_han} '
+                    f'name="{escape(m["code"])}" value="{escape(str(gt))}" '
+                    'style="max-width:150px">'
+                    + (f' <span class="note">{escape(m["don_vi"])}</span>'
+                       if m["don_vi"] else "")
+                )
+
+            dau = ""
+            if m["rieng"]:
+                dau = ' <span class="pill">công tắc riêng</span>'
+            elif m["da_doi"]:
+                dau = (f' <span class="pill warn" title="Mặc định trong .env: '
+                       f'{escape(str(m["mac_dinh"]))}">đã đổi</span>')
+            hang += (
+                f'<tr><td><b>{escape(m["ten"])}</b>{dau}'
+                f'<div class="note">{escape(m["mo_ta"])}'
+                f'{" · " if m["mo_ta"] else ""}<code>{escape(m["code"].upper())}</code></div></td>'
+                f'<td>{dieu_khien}</td>'
+                f'<td class="note">{escape(str(m["mac_dinh"])) if m["mac_dinh"] is not None else "—"}</td>'
+                "</tr>"
+            )
+        khoi += f"""
+<form class="card" method="post" action="/quan-tri/cai-dat" style="margin-bottom:14px">
+  <input type="hidden" name="nhom" value="{escape(g['ma'])}">
+  <h3>{escape(g['ten'])}</h3>
+  <div class="tblwrap"><table class="tbl">
+  <thead><tr><th>Cài đặt</th><th>Giá trị</th><th>Mặc định (.env)</th></tr></thead>
+  <tbody>{hang}</tbody></table></div>
+  <div style="margin-top:10px;display:flex;gap:8px">
+    <button class="btn primary">Lưu nhóm này</button>
+    <button class="btn" name="mac_dinh" value="1"
+            title="Bỏ mọi thay đổi của nhóm, quay về giá trị trong .env">Trả về mặc định</button>
+  </div>
+</form>"""
+
+    body = f"""
+<div class="card" style="margin-bottom:14px">
+  <p class="note" style="margin:0">Đổi ở đây có tác dụng <b>ngay ở lượt chạy kế tiếp</b>
+  của worker (chậm nhất khoảng 10 giây) — không phải khởi động lại server. Cột
+  <b>Mặc định</b> là giá trị đang khai trong <code>.env</code>; ô nào không đổi thì
+  hệ thống dùng đúng giá trị đó. Mọi thay đổi đều vào <a href="/quan-tri/nhat-ky">Nhật ký</a>.</p>
+  <p class="note">Token, mật khẩu và chuỗi kết nối <b>cố ý không</b> nằm ở đây — chúng
+  chỉ có trong <code>.env</code> trên máy chủ.</p>
+</div>
+{khoi}
+"""
+    return _shell("Cài đặt hệ thống", "cai-dat", body, ok, error,
+                  sub="Công tắc đồng bộ và nhịp chạy của worker (màn 78)")

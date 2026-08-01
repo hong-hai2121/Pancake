@@ -44,6 +44,10 @@ PERMISSIONS: list[tuple[str, str]] = [
     ("commission.edit", "Sửa hoa hồng"),
     ("content.approve", "Duyệt nội dung"),
     ("integration.manage", "Quản lý tích hợp"),
+    # BRD mục 4 (nguồn quảng cáo) — báo cáo chi phí/ROAS/LTV theo campaign·adset·ad
+    # (màn 7, 53-56, 62). Marketing sống bằng màn này nên phải có quyền riêng,
+    # không gộp vào revenue.view (doanh thu toàn công ty).
+    ("ads.view", "Xem báo cáo quảng cáo (chi phí, ROAS, LTV)"),
     # B7 — đơn hàng (màn 21-23): xem tách khỏi sửa vì Kế toán/Marketing chỉ cần đọc
     ("order.view", "Xem đơn hàng"),
     ("order.edit", "Tạo/sửa đơn & chuyển trạng thái"),
@@ -74,7 +78,8 @@ ROLE_PERMS: dict[str, list[str]] = {
     # CSKH có order.edit vì bước CS01 là "Xác nhận đơn" (đổi trạng thái đơn)
     "CSKH": ["customer.view", "customer.edit", "customer.view_phone", "health.view",
              "order.view", "order.edit"],
-    "Marketing": ["customer.view"],
+    # Marketing: xem khách (chất lượng lead) + báo cáo quảng cáo (mục 4)
+    "Marketing": ["customer.view", "ads.view"],
     "Kế toán": ["customer.view", "revenue.view", "data.export", "order.view"],
     "Người chuyên môn": ["customer.view", "health.view", "treatment.edit",
                           "content.approve"],

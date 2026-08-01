@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from app.core.config import settings
 from app.services import auth_service
 from app.services.auth_service import AuthError
-from app.web.views.auth import render_login
+from app.web.views.auth import THONG_BAO, render_login
 
 router = APIRouter(tags=["web-auth"])
 
@@ -43,11 +43,18 @@ def dat_cookie_dang_nhap(resp: Response, data: dict, remember: bool) -> None:
 
 
 @router.get("/dang-nhap", response_class=HTMLResponse)
-async def trang_dang_nhap(request: Request, next: str = "") -> HTMLResponse:
+async def trang_dang_nhap(
+    request: Request, next: str = "", thongbao: str = ""
+) -> HTMLResponse:
     # Đã đăng nhập rồi mà mở /dang-nhap -> đưa thẳng vào trong
     if getattr(request.state, "user", None):
         return RedirectResponse(_an_toan(next or "/"), status_code=302)
-    return HTMLResponse(render_login(next_url=next))
+    # Bị middleware đá về đây (có ?next=) thì nói rõ vì sao, đừng để màn trắng trơn
+    if not thongbao and next:
+        thongbao = "het-phien" if request.cookies.get("refresh_token") else "can-dang-nhap"
+    return HTMLResponse(
+        render_login(next_url=next, notice=THONG_BAO.get(thongbao, ""))
+    )
 
 
 @router.post("/dang-nhap")
@@ -65,7 +72,10 @@ async def dang_nhap(request: Request):
     except AuthError as err:
         # 401 (không phải 200) để fail2ban/log bên ngoài còn đếm được
         return HTMLResponse(
-            render_login(error=err.message, next_url=next_url, username=username),
+            render_login(
+                error=err.message, code=err.code,
+                next_url=next_url, username=username,
+            ),
             status_code=401,
         )
 
@@ -84,7 +94,7 @@ async def dang_xuat(request: Request) -> RedirectResponse:
         ip=ip,
         user_agent=request.headers.get("user-agent", "")[:300],
     )
-    resp = RedirectResponse("/dang-nhap", status_code=303)
+    resp = RedirectResponse("/dang-nhap?thongbao=dang-xuat", status_code=303)
     resp.delete_cookie("access_token")
     resp.delete_cookie("refresh_token")
     return resp

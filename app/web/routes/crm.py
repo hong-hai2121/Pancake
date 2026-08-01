@@ -8,8 +8,13 @@ cho /crm/khach-hang) cùng lúc với form thao tác.
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
+from app.core.deps import co_quyen
+from app.core.errors import ApiError
 from app.db.repositories import crm_screens_repo as repo
+from app.services import ads_service
+from app.web.views import ads as views_ads
 from app.web.views import crm as views
+from app.web.views.admin import render_403
 
 router = APIRouter(prefix="/crm", tags=["web-crm"])
 
@@ -77,3 +82,48 @@ async def mua_lai() -> HTMLResponse:
 async def san_pham() -> HTMLResponse:
     """Màn 42 + 44 (khung) — danh mục sản phẩm & mẫu liệu trình."""
     return HTMLResponse(views.render_san_pham(repo.products_treatments()))
+
+
+# ------------------------------------------------------------ nguồn quảng cáo
+@router.get("/quang-cao", response_class=HTMLResponse)
+async def quang_cao(
+    request: Request, cap: str = "ad", tu: str = "", den: str = "",
+) -> HTMLResponse:
+    """Màn 7 + 53-55 — hiệu quả quảng cáo theo chiến dịch / nhóm / quảng cáo.
+
+    Quyền `ads.view` (Marketing + Chủ DN + Admin): màn này bày chi phí và doanh
+    thu, không phải ai đăng nhập cũng được xem.
+    """
+    if not co_quyen(getattr(request.state, "user", None), "ads.view"):
+        return HTMLResponse(
+            render_403("Màn Nguồn quảng cáo cần quyền ads.view",
+                       heading="Nguồn quảng cáo"),
+            status_code=403,
+        )
+    if cap not in ("campaign", "ad_set", "ad"):
+        cap = "ad"
+    if not (tu or den):
+        tu, den = ads_service.ky_mac_dinh(30)
+    return HTMLResponse(views_ads.render_quang_cao(
+        cap, ads_service.bao_cao(cap, tu, den), ads_service.tong_quan(tu, den),
+        tu=tu, den=den,
+    ))
+
+
+@router.get("/quang-cao/{external_ad_id}", response_class=HTMLResponse)
+async def quang_cao_chi_tiet(
+    request: Request, external_ad_id: str, window: int = 30,
+) -> HTMLResponse:
+    """Màn 56 — phiếu sức khỏe 1 quảng cáo (phễu · lý do chưa chốt · khách)."""
+    if not co_quyen(getattr(request.state, "user", None), "ads.view"):
+        return HTMLResponse(
+            render_403("Màn Nguồn quảng cáo cần quyền ads.view",
+                       heading="Nguồn quảng cáo"),
+            status_code=403,
+        )
+    try:
+        data = ads_service.chi_tiet_ad(external_ad_id, window)
+    except ApiError as err:
+        return HTMLResponse(
+            render_403(err.message, heading="Nguồn quảng cáo"), status_code=404)
+    return HTMLResponse(views_ads.render_chi_tiet_ad(data, window=window))

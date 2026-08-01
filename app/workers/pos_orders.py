@@ -18,7 +18,7 @@ import asyncio
 import logging
 import time
 
-from app.core.config import settings
+from app.core import runtime_config as cfg
 
 log = logging.getLogger(__name__)
 
@@ -30,11 +30,11 @@ async def pos_orders_loop() -> None:
     from app.integrations.pancake_pos import client, pos_sync
 
     # Vòng đầu kéo lùi 1 chu kỳ cho ấm máy; lịch sử xa hơn là việc của backfill.
-    moc_truoc = time.time() - settings.pos_sync_interval
+    moc_truoc = time.time() - cfg.so("pos_sync_interval", 300)
 
     while True:
-        await asyncio.sleep(settings.pos_sync_interval)
-        if not settings.pos_sync_enabled:
+        await asyncio.sleep(cfg.so("pos_sync_interval", 300))
+        if not cfg.bat("pos_sync_enabled"):
             continue
         try:
             since = int(moc_truoc - 120)   # đè 120s — thà trùng (tự bỏ qua) còn hơn lọt
