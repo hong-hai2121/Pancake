@@ -97,6 +97,17 @@ class Settings(BaseSettings):
     # + lead tự động — FR-011). Mặc định TẮT: bật lên là CRM bắt đầu sinh
     # khách/lead từ dữ liệu Pancake thật. Backfill kho cũ: scripts/backfill_crm_tu_watcher.py
     crm_sync_enabled: bool = False
+    # FR-012: worker riêng kéo NỘI DUNG tin nhắn về crm.messages (crm_sync chỉ
+    # có snippet). Tốn 1 lời gọi Pancake/hội thoại nên có nhịp + trần mẻ riêng.
+    # Lịch sử cũ: scripts/backfill_tin_nhan.py
+    msg_sync_enabled: bool = False
+    msg_sync_interval: float = 120.0     # giây giữa 2 vòng quét hội thoại có tin mới
+    msg_sync_batch: int = 20             # số hội thoại kéo mỗi vòng
+    # Màn 3 — trung tâm thông báo: worker quét 11 nguồn trong DB. BẬT mặc định
+    # (chỉ nhặt sự việc đã có sẵn, không sinh dữ liệu nghiệp vụ).
+    notify_scan_enabled: bool = True
+    notify_scan_interval: float = 300.0  # giây giữa 2 lượt quét
+    notify_keep_days: int = 60           # xoá thông báo ĐÃ ĐỌC cũ hơn ngần này
     # NHỊP THÍCH ỨNG theo từng page: page vừa có tin mới -> hỏi lại sau
     # `inbox_poll_interval` giây; im lặng thì giãn GẤP ĐÔI mỗi lượt cho tới trần
     # `inbox_poll_max_interval`. Nhờ vậy page bận vẫn nhanh mà page ế không đốt

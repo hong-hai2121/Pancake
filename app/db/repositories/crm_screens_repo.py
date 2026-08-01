@@ -35,6 +35,293 @@ def sale_menu(ttl: float = 15.0) -> list[dict]:
     return rows
 
 
+# ------------------------------------------------------------ Trang chủ (màn 2)
+def _quan_cua_toi(conn, user_id: int) -> list[int]:
+    """Trưởng nhóm: id mọi thành viên các đội mình quản (kể cả chính mình).
+    Tra DB teams.manager_id — KHÔNG tin token (cùng nếp user_service.pham_vi_doi)."""
+    rows = conn.execute(
+        "select u.id from crm.users u join crm.teams t on t.id = u.team_id "
+        "where t.manager_id = %s",
+        (user_id,),
+    ).fetchall()
+    ids = {r["id"] for r in rows}
+    ids.add(user_id)
+    return list(ids)
+
+
+def _viec_cua(conn, scope: list[int]) -> dict:
+    """Đếm việc hôm nay / quá hạn của một nhóm người (B4)."""
+    return conn.execute(
+        """
+        select
+          count(*) filter (where due_at::date = current_date and due_at >= now()) as hom_nay,
+          count(*) filter (where due_at < now())                                  as qua_han
+          from crm.tasks
+         where status in ('open','in_progress') and assigned_to = any(%s)
+        """,
+        (scope,),
+    ).fetchone()
+
+
+def trang_chu(nhom: str, user_id: int) -> dict:
+    """Màn 2 — Trang chủ theo vai trò: mỗi nhóm vai trò một bộ số riêng.
+
+    `nhom` ∈ chu_dn · admin · sale · sale_tn · cskh · cskh_tn · marketing ·
+    ke_toan · chuyen_mon · khac (vai trò lạ — chỉ hiện việc của tôi).
+    Số nào phụ thuộc lát cắt chưa chạy (B8/B9…) thì trung thực ra 0."""
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        scope = (
+            _quan_cua_toi(conn, user_id)
+            if nhom in ("sale_tn", "cskh_tn") else [user_id]
+        )
+        data: dict = {"viec": _viec_cua(conn, scope)}
+
+        if nhom in ("sale", "sale_tn"):
+            data["lead"] = conn.execute(
+                """
+                select
+                  count(*) filter (where closed_at is null)                       as mo,
+                  count(*) filter (where closed_at is null
+                                     and created_at::date = current_date)        as moi_hom_nay,
+                  count(*) filter (where closed_at is null
+                                     and temperature = 'nong')                   as nong,
+                  count(*) filter (where closed_at is null
+                                     and first_contact_at is null
+                                     and sla_due_at < now())                     as qua_sla,
+                  count(*) filter (where closed_at is null
+                                     and next_action_at < now())                 as hen_tre
+                  from crm.leads where owner_id = any(%s)
+                """,
+                (scope,),
+            ).fetchone()
+            data["don"] = conn.execute(
+                """
+                select
+                  count(*) filter (where created_at >= date_trunc('month', now())) as don_thang,
+                  coalesce(sum(total_amount) filter (where status = 'delivered'
+                       and delivered_at >= date_trunc('month', now())), 0)         as doanh_thu_thang
+                  from crm.orders where sale_owner_id = any(%s)
+                """,
+                (scope,),
+            ).fetchone()
+            data["can_lam"] = conn.execute(
+                """
+                select l.id, c.full_name, s.name as stage, l.temperature,
+                       l.next_action_at, u.name as nguoi
+                  from crm.leads l
+                  join crm.customers c on c.id = l.customer_id
+                  join crm.pipeline_stages s on s.id = l.stage_id
+                  left join crm.users u on u.id = l.owner_id
+                 where l.owner_id = any(%s) and l.closed_at is null
+                 order by coalesce(l.next_action_at, l.sla_due_at) nulls last, l.id
+                 limit 10
+                """,
+                (scope,),
+            ).fetchall()
+            if nhom == "sale_tn":
+                data["hang_doi"] = conn.execute(
+                    "select count(*) as n from crm.leads "
+                    "where owner_id is null and closed_at is null"
+                ).fetchone()["n"]
+                data["theo_nv"] = conn.execute(
+                    """
+                    select u.name,
+                           count(l.id) filter (where l.closed_at is null)      as mo,
+                           count(l.id) filter (where l.closed_at is null
+                                                 and l.next_action_at < now()) as tre,
+                           count(l.id) filter (where l.closed_at is null
+                                                 and l.temperature = 'nong')   as nong
+                      from crm.users u
+                      left join crm.leads l on l.owner_id = u.id
+                     where u.id = any(%s) and u.status = 'active'
+                     group by u.id, u.name order by u.name
+                    """,
+                    (scope,),
+                ).fetchall()
+
+        elif nhom in ("cskh", "cskh_tn"):
+            # Đơn 'pending' là bước CS01 "xác nhận đơn" — B8 mới gán cskh_owner
+            # nên đếm toàn hệ thống (đơn chưa có người nhận cũng phải thấy).
+            data["so"] = conn.execute(
+                """
+                select
+                  (select count(*) from crm.orders where status = 'pending')   as don_cho_xn,
+                  (select count(*) from crm.care_plan_steps s
+                     join crm.care_plans p on p.id = s.care_plan_id
+                    where s.status not in ('done','skipped')
+                      and s.planned_at::date <= current_date
+                      and (p.owner_id = any(%(scope)s) or p.owner_id is null)) as moc_den_han,
+                  (select count(*) from crm.repurchase_opportunities
+                    where stage not in ('won','lost')
+                      and (owner_id = any(%(scope)s) or owner_id is null))     as mua_lai
+                """,
+                {"scope": scope},
+            ).fetchone()
+            data["moc"] = conn.execute(
+                """
+                select s.step_code, s.planned_at, s.status, c.full_name as khach
+                  from crm.care_plan_steps s
+                  join crm.care_plans p on p.id = s.care_plan_id
+                  join crm.customers c on c.id = p.customer_id
+                 where s.status not in ('done','skipped')
+                   and (p.owner_id = any(%s) or p.owner_id is null)
+                 order by s.planned_at limit 10
+                """,
+                (scope,),
+            ).fetchall()
+            if nhom == "cskh_tn":
+                data["theo_nv"] = conn.execute(
+                    """
+                    select u.name,
+                           count(t.id)                                      as dang_mo,
+                           count(t.id) filter (where t.due_at < now())      as qua_han
+                      from crm.users u
+                      left join crm.tasks t on t.assigned_to = u.id
+                           and t.status in ('open','in_progress')
+                     where u.id = any(%s) and u.status = 'active'
+                     group by u.id, u.name order by u.name
+                    """,
+                    (scope,),
+                ).fetchall()
+
+        elif nhom == "marketing":
+            data["ads"] = conn.execute(
+                """
+                select
+                  coalesce(sum(spend) filter (where ngay >= current_date - 6), 0)  as chi_7n,
+                  coalesce(sum(spend), 0)                                          as chi_30n,
+                  count(distinct external_id) filter (where spend > 0)             as ad_co_chi
+                  from crm.ad_metrics_daily
+                 where entity_type = 'ad' and ngay >= current_date - 29
+                """
+            ).fetchone()
+            data["moi"] = conn.execute(
+                """
+                select
+                  (select count(*) from crm.leads
+                    where created_at >= now() - interval '7 days')     as lead_7n,
+                  (select count(*) from crm.customers
+                    where created_at >= now() - interval '7 days')     as khach_7n,
+                  (select coalesce(sum(total_amount), 0) from crm.orders
+                    where status = 'delivered'
+                      and delivered_at >= now() - interval '30 days')  as doanh_thu_30n
+                """
+            ).fetchone()
+
+        elif nhom == "ke_toan":
+            data["theo_tt"] = {
+                r["status"]: r for r in conn.execute(
+                    "select status, count(*) as n, coalesce(sum(total_amount),0) "
+                    "as tien from crm.orders group by status"
+                ).fetchall()
+            }
+            data["thang"] = conn.execute(
+                """
+                select
+                  coalesce(sum(total_amount) filter (where status = 'delivered'
+                       and delivered_at >= date_trunc('month', now())), 0) as doanh_thu_thang,
+                  coalesce(sum(total_amount) filter (where status = 'delivered'
+                       and delivered_at::date = current_date), 0)          as doanh_thu_hom_nay
+                  from crm.orders
+                """
+            ).fetchone()
+            data["rows"] = conn.execute(
+                """
+                select o.id, o.external_order_id, o.status, o.total_amount,
+                       o.created_at, c.full_name as khach
+                  from crm.orders o
+                  left join crm.customers c on c.id = o.customer_id
+                 order by o.id desc limit 10
+                """
+            ).fetchall()
+
+        elif nhom == "chuyen_mon":
+            data["so"] = conn.execute(
+                """
+                select
+                  (select count(*) from crm.clinical_escalations
+                    where status = 'pending')                          as ca_cho,
+                  (select count(*) from crm.clinical_escalations
+                    where status = 'pending' and assigned_to = %s)     as ca_cua_toi,
+                  (select count(*) from crm.treatment_recommendations
+                    where status = 'pending_approval')                 as de_xuat_cho,
+                  (select count(*) from crm.products
+                    where approval_status = 'pending')                 as sp_cho_duyet,
+                  (select count(*) from crm.customers
+                    where safety_flag = 'red')                         as khach_do,
+                  (select count(*) from crm.customers
+                    where safety_flag = 'yellow')                      as khach_vang
+                """,
+                (user_id,),
+            ).fetchone()
+            data["ca"] = conn.execute(
+                """
+                select e.reason, e.risk_level, e.created_at,
+                       c.full_name as khach, u.name as giao_cho
+                  from crm.clinical_escalations e
+                  join crm.customers c on c.id = e.customer_id
+                  left join crm.users u on u.id = e.assigned_to
+                 where e.status = 'pending'
+                 order by e.created_at desc limit 10
+                """
+            ).fetchall()
+
+        elif nhom == "admin":
+            data["so"] = conn.execute(
+                """
+                select
+                  (select count(*) from crm.users where status = 'active')  as nv_active,
+                  (select count(*) from crm.user_sessions
+                    where created_at::date = current_date)                  as phien_hom_nay,
+                  (select count(*) from crm.sync_errors
+                    where status = 'pending')                               as loi_cho,
+                  (select count(*) from crm.sync_errors
+                    where status = 'given_up')                              as loi_bo_cuoc,
+                  (select count(*) from crm.audit_logs
+                    where created_at::date = current_date)                  as thao_tac_hom_nay
+                """
+            ).fetchone()
+            data["audit_moi"] = conn.execute(
+                """
+                select a.action, a.object_type, a.created_at, u.name as user_name
+                  from crm.audit_logs a left join crm.users u on u.id = a.user_id
+                 order by a.id desc limit 8
+                """
+            ).fetchall()
+
+        elif nhom == "chu_dn":
+            data["so"] = conn.execute(
+                """
+                select
+                  (select count(*) from crm.customers)                          as khach,
+                  (select count(*) from crm.leads where closed_at is null)      as lead_mo,
+                  (select count(*) from crm.tasks
+                    where status in ('open','in_progress') and due_at < now())  as viec_qua_han,
+                  (select count(*) from crm.orders
+                    where created_at >= date_trunc('month', now()))             as don_thang,
+                  (select coalesce(sum(total_amount),0) from crm.orders
+                    where status = 'delivered'
+                      and delivered_at >= date_trunc('month', now()))           as doanh_thu_thang,
+                  (select count(*) from crm.repurchase_opportunities
+                    where stage not in ('won','lost'))                          as co_hoi_mua_lai
+                """
+            ).fetchone()
+            data["ads"] = conn.execute(
+                """
+                select
+                  coalesce(sum(spend), 0) as chi_30n,
+                  (select coalesce(sum(total_amount), 0) from crm.orders
+                    where status = 'delivered'
+                      and delivered_at >= now() - interval '30 days') as doanh_thu_30n
+                  from crm.ad_metrics_daily
+                 where entity_type = 'ad' and ngay >= current_date - 29
+                """
+            ).fetchone()
+
+    return data
+
+
 def dashboard() -> dict:
     """Màn Tổng quan: các con số đếm thẳng từ DB — bảng trống thì ra 0, trung thực."""
     pool = get_pg_pool()
@@ -225,32 +512,62 @@ def orders_summary() -> dict:
 
 
 def care_board() -> dict:
-    """Màn Chăm sóc (màn 26-27, khung): cột C01-C09 từ ref_codes + mốc chăm đến hạn."""
+    """Màn Chăm sóc (màn 27 — B9 đổ dữ liệu THẬT): cột C01-C09 đếm từ
+    care_plans.cskh_state + mốc chờ làm + danh sách kế hoạch đang chạy."""
     pool = get_pg_pool()
     with pool.connection() as conn:
         cot = conn.execute(
-            "select code, name from crm.ref_codes "
-            "where group_code = 'cskh_state' and status = 'active' order by sort_order"
+            """
+            select r.code, r.name, count(p.id) as n
+              from crm.ref_codes r
+              left join crm.care_plans p on p.cskh_state = r.code
+                   and p.status = 'active'
+             where r.group_code = 'cskh_state' and r.status = 'active'
+             group by r.code, r.name, r.sort_order
+             order by r.sort_order
+            """
         ).fetchall()
         so = conn.execute(
             """
             select
               (select count(*) from crm.care_plans where status = 'active') as ke_hoach_chay,
-              (select count(*) from crm.care_plan_steps
-                 where status not in ('done','skipped') and planned_at::date <= current_date) as moc_den_han
+              (select count(*) from crm.care_plan_steps s
+                 join crm.care_plans p on p.id = s.care_plan_id
+                where s.status in ('pending','due')
+                  and s.planned_at::date <= current_date
+                  and p.status = 'active')                                   as moc_den_han,
+              (select count(*) from crm.customers where do_not_contact)      as ngung_lien_he
             """
         ).fetchone()
         moc = conn.execute(
             """
-            select s.step_code, s.planned_at, s.status, c.full_name as khach
+            select s.step_code, s.planned_at, s.status, s.care_plan_id,
+                   c.full_name as khach, u.name as phu_trach
               from crm.care_plan_steps s
               join crm.care_plans p on p.id = s.care_plan_id
               join crm.customers c on c.id = p.customer_id
-             where s.status not in ('done','skipped')
+              left join crm.users u on u.id = p.owner_id
+             where s.status in ('pending','due') and p.status = 'active'
+               and not c.do_not_contact
              order by s.planned_at limit 30
             """
         ).fetchall()
-    return {"cot": cot, "so": so, "moc": moc}
+        ke_hoach = conn.execute(
+            """
+            select p.id, p.cskh_state, p.cycle_no, p.actual_start_date,
+                   c.full_name as khach, u.name as phu_trach,
+                   (select count(*) from crm.care_plan_steps s
+                     where s.care_plan_id = p.id and s.status = 'done') as moc_xong,
+                   (select count(*) from crm.care_plan_steps s
+                     where s.care_plan_id = p.id)                       as moc_tong
+              from crm.care_plans p
+              join crm.customers c on c.id = p.customer_id
+              left join crm.users u on u.id = p.owner_id
+             where p.status = 'active'
+             order by p.id desc limit 50
+            """
+        ).fetchall()
+    return {"cot": cot, "so": so, "moc": moc, "ke_hoach": ke_hoach}
 
 
 def repurchase_summary() -> dict:
@@ -274,15 +591,15 @@ def repurchase_summary() -> dict:
 
 
 def products_treatments() -> dict:
-    """Màn Sản phẩm & liệu trình (màn 42/44, khung)."""
+    """Màn Sản phẩm & liệu trình (màn 42/44) — `id` để bấm sang chi tiết 43/45."""
     pool = get_pg_pool()
     with pool.connection() as conn:
         san_pham = conn.execute(
-            "select product_code, name, product_type, price, status, approval_status "
-            "from crm.products order by name limit 100"
+            "select id, product_code, name, product_type, price, status, "
+            "approval_status from crm.products order by name limit 100"
         ).fetchall()
         lieu_trinh = conn.execute(
-            "select template_code, name, problem_group, level, base_price, "
+            "select id, template_code, name, problem_group, level, base_price, "
             "duration_days, status from crm.treatment_templates order by name limit 100"
         ).fetchall()
     return {"san_pham": san_pham, "lieu_trinh": lieu_trinh}

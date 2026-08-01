@@ -318,7 +318,9 @@ def main() -> None:
     ok("nhân viên POS (người bán) tự vào bảng ánh xạ",
        any(s["external_staff_id"] == NV_PANCAKE
            for s in integration_repo.list_staff("pancake_pos")))
-    top = attribution_repo.thong_ke_nguon(5)
+    # limit lớn: DB thật (POS_SYNC bật) có quy nguồn thật doanh thu cao hơn —
+    # top 5 không còn chỗ cho ad giả của test
+    top = attribution_repo.thong_ke_nguon(1000)
     ok("thống kê nguồn ra được số khách + doanh thu theo quảng cáo",
        any(r["ad_id"] == AD_GIA and r["so_khach"] >= 1 for r in top), str(top[:2]))
 

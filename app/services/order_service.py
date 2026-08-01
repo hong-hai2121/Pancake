@@ -183,11 +183,13 @@ def change_status(
     actor: dict | None = None,
     reason: str | None = None,
     force: bool = False,
+    ban_giao: bool = True,
 ) -> dict:
     """ORDER-005 — chuyển trạng thái theo luật TRANSITIONS, ghi lịch sử.
 
     `force=True` chỉ dành cho đồng bộ POS: bỏ qua luật chuyển (thực tế bên POS
     là nguồn sự thật) nhưng LỊCH SỬ vẫn ghi đầy đủ — truy vết được mọi bước.
+    `ban_giao=False` khi backfill lịch sử — không sinh phiếu bàn giao B8.
     """
     if to_status not in ORDER_STATUSES:
         raise ApiError("VALIDATION_ERROR", f"Trạng thái lạ: {to_status}",
@@ -207,6 +209,19 @@ def change_status(
     _audit(actor, action="update_status", object_id=order_id,
            old_value={"status": don["status"]},
            new_value={"status": to_status}, reason=reason)
+
+    # B8/FR-090: giao thành công -> tự sinh phiếu bàn giao + hồ sơ chăm.
+    # Hook TỰ NUỐT lỗi (luồng bồi) và idempotent (uq_handovers_order) nên gọi
+    # thoải mái cả từ chuyển tay lẫn đồng bộ POS (force=True).
+    if ban_giao and to_status in ("delivered", "collected"):
+        from app.services import handover_service
+
+        handover_service.hook_giao_thanh_cong(order_id)
+        # B10/FR-122: có đơn mới = "Đã mua" — cơ hội mua lại đang mở tự chốt
+        # won + đánh dấu chuyển đổi chiến dịch tái kích hoạt (đo doanh thu).
+        from app.services import repurchase_service
+
+        repurchase_service.hook_don_giao_thanh_cong(don["customer_id"])
     return row
 
 

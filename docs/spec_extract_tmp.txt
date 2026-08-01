@@ -1,0 +1,1735 @@
+--- TRANG 1 ---
+ĐẶC TẢ CHỨC NĂNG PHẦN MỀM CRM
+Công ty kinh doanh liệu trình dạ dày – tiêu hóa
+I. QUY ƯỚC ĐẶC TẢ
+Mỗi chức năng gồm:
+Mã chức năng
+Tên chức năng
+Mục tiêu
+Người sử dụng
+Điều kiện trước
+Dữ liệu đầu vào
+Luồng chính
+Luồng ngoại lệ
+Dữ liệu đầu ra
+Luật nghiệp vụ
+Tiêu chí nghiệm thu
+II. NHÓM CHỨC NĂNG TÀI KHOẢN VÀ PHÂN
+QUYỀN
+FR-001 – Đăng nhập hệ thống
+Mục tiêu: Cho phép người dùng truy cập CRM đúng quyền.
+Người sử dụng: Tất cả người dùng.
+Điều kiện trước:
+Tài khoản đã được tạo.
+Tài khoản đang hoạt động.
+Dữ liệu đầu vào:
+Tên đăng nhập.
+Mật khẩu.
+Luồng chính:
+Người dùng nhập tài khoản và mật khẩu.
+Hệ thống kiểm tra thông tin.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+1
+--- TRANG 2 ---
+Hệ thống kiểm tra trạng thái tài khoản.
+Hệ thống xác định vai trò và quyền.
+Người dùng được chuyển tới dashboard theo vai trò.
+Hệ thống ghi nhật ký đăng nhập.
+Luồng ngoại lệ:
+Sai mật khẩu → báo lỗi.
+Tài khoản bị khóa → không cho truy cập.
+Sai quá số lần quy định → khóa tạm thời.
+Tài khoản nghỉ việc → từ chối truy cập.
+Đầu ra:
+Phiên đăng nhập.
+Quyền truy cập.
+Nhật ký đăng nhập.
+Tiêu chí nghiệm thu:
+Người dùng đúng tài khoản đăng nhập thành công.
+Người dùng chỉ thấy chức năng được cấp quyền.
+Có log thời gian và thiết bị đăng nhập.
+FR-002 – Quản lý người dùng
+Mục tiêu: Tạo và quản lý nhân viên sử dụng CRM.
+Người sử dụng: Admin.
+Chức năng:
+Tạo tài khoản.
+Sửa thông tin.
+Gán bộ phận.
+Gán nhóm.
+Gán vai trò.
+Khóa/mở khóa.
+Đặt lại mật khẩu.
+Chuyển toàn bộ khách khi nhân viên nghỉ việc.
+Luật nghiệp vụ:
+Không xóa cứng tài khoản đã có dữ liệu.
+Nhân viên nghỉ việc phải chuyển khách trước khi khóa.
+Mọi thay đổi quyền phải có audit log.
+Tiêu chí nghiệm thu:
+Admin tạo được tài khoản.
+3. 
+4. 
+5. 
+6. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+2
+--- TRANG 3 ---
+Nhân viên bị khóa không đăng nhập được.
+Dữ liệu cũ vẫn giữ nguyên người tạo và người xử lý.
+FR-003 – Quản lý vai trò và quyền
+Mục tiêu: Phân quyền linh hoạt.
+Đối tượng quyền:
+Xem khách.
+Sửa khách.
+Xem số điện thoại.
+Xuất dữ liệu.
+Nghe ghi âm.
+Xem hồ sơ tình trạng khách.
+Xem doanh thu.
+Sửa đơn.
+Chọn liệu trình.
+Duyệt nội dung.
+Quản lý quảng cáo.
+Quản lý tích hợp.
+Luật nghiệp vụ:
+Quyền được gán theo vai trò và có thể bổ sung theo cá nhân.
+Quyền cá nhân không được vượt quyền cấp cao nhất cho phép.
+Sale mặc định chỉ xem khách của mình.
+Trưởng nhóm xem khách trong nhóm.
+Chủ doanh nghiệp xem toàn bộ.
+III. TÍCH HỢP PANCAKE
+FR-010 – Kết nối tài khoản Pancake
+Mục tiêu: Kết nối Page và dữ liệu Pancake với CRM.
+Người sử dụng: Admin.
+Dữ liệu đầu vào:
+Token.
+Tài khoản Pancake.
+Danh sách Page.
+Quyền truy cập.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+3
+--- TRANG 4 ---
+Luồng chính:
+Admin nhập hoặc xác thực token.
+Hệ thống gọi API kiểm tra.
+Hệ thống lấy danh sách Page.
+Admin chọn Page cần đồng bộ.
+Hệ thống lưu cấu hình.
+Hệ thống chạy đồng bộ lần đầu.
+Ngoại lệ:
+Token không hợp lệ.
+Token hết hạn.
+Không đủ quyền Page.
+API giới hạn request.
+Đầu ra:
+Danh sách Page kết nối.
+Trạng thái kết nối.
+Nhật ký đồng bộ.
+FR-011 – Đồng bộ khách hàng từ Pancake
+Mục tiêu: Tạo hoặc cập nhật khách CRM từ hội thoại Pancake.
+Dữ liệu đầu vào:
+Page ID.
+Customer ID.
+Conversation ID.
+Tên khách.
+Số điện thoại.
+Facebook ID/PSID.
+Tag.
+Ghi chú.
+Nhân viên phụ trách.
+Luồng chính:
+CRM nhận dữ liệu mới.
+Chuẩn hóa số điện thoại.
+Kiểm tra khách đã tồn tại.
+Nếu chưa có → tạo khách mới.
+Nếu có → cập nhật danh tính/hội thoại.
+Lưu nguồn Pancake.
+Tạo lead nếu khách chưa có pipeline.
+Luật chống trùng:
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+7. 
+4
+--- TRANG 5 ---
+Ưu tiên:
+External customer ID.
+PSID.
+Số điện thoại chuẩn hóa.
+Page + Conversation ID.
+Tiêu chí nghiệm thu:
+Đồng bộ lại không tạo bản ghi trùng.
+Khách nhiều hội thoại vẫn thuộc một hồ sơ khi đủ điều kiện gộp.
+Có log nguồn dữ liệu.
+FR-012 – Đồng bộ hội thoại
+Mục tiêu: Hiển thị lịch sử tin nhắn trong CRM.
+Dữ liệu lưu:
+Message ID.
+Người gửi.
+Nội dung.
+Thời gian.
+Loại tin nhắn.
+File/ảnh/video.
+Page.
+Conversation.
+Nhân viên trả lời.
+Luật:
+Không chỉnh sửa nội dung gốc.
+Tin nhắn phải gắn đúng khách.
+Có nút mở hội thoại trên Pancake.
+Nếu đồng bộ lỗi phải retry.
+FR-013 – Đồng bộ đơn Pancake
+Mục tiêu: Lấy đơn hàng về CRM.
+Dữ liệu:
+Mã đơn ngoài.
+Khách.
+Sản phẩm.
+Số lượng.
+Giá.
+Nhân viên.
+1. 
+2. 
+3. 
+4. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+5
+--- TRANG 6 ---
+Trạng thái.
+Ngày tạo.
+Ngày giao.
+COD/Thanh toán.
+Luật:
+External order ID là duy nhất.
+Trạng thái Pancake phải map sang trạng thái CRM.
+Không xóa lịch sử trạng thái cũ.
+IV. QUẢN LÝ KHÁCH HÀNG
+FR-020 – Tạo khách hàng thủ công
+Người sử dụng: Sale, CSKH, Admin.
+Dữ liệu bắt buộc:
+Họ tên hoặc tên nhận diện.
+Số điện thoại hoặc định danh mạng xã hội.
+Nguồn khách.
+Người phụ trách.
+Luồng chính:
+Người dùng nhập thông tin.
+CRM kiểm tra trùng.
+Nếu nghi trùng → cảnh báo.
+Người dùng chọn dùng hồ sơ cũ hoặc tạo mới.
+CRM tạo hồ sơ.
+CRM ghi audit log.
+FR-021 – Xem hồ sơ khách 360°
+Mục tiêu: Hiển thị toàn bộ vòng đời khách.
+Các tab:
+Tổng quan.
+Hội thoại.
+Cuộc gọi.
+Hồ sơ tư vấn.
+Liệu trình.
+Đơn hàng.
+Chăm sóc.
+Công việc.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+6
+--- TRANG 7 ---
+Marketing.
+Lịch sử.
+Luật:
+Nội dung hiển thị theo quyền.
+Marketing không tự động thấy dữ liệu chuyên môn không cần thiết.
+Sale không sửa dữ liệu CSKH đã khóa.
+Mọi thay đổi có lịch sử.
+FR-022 – Hợp nhất khách trùng
+Người sử dụng: Admin, quản lý có quyền.
+Luồng chính:
+Chọn hai hoặc nhiều hồ sơ.
+Hệ thống so sánh:
+Số điện thoại.
+Facebook ID.
+Địa chỉ.
+Đơn hàng.
+Hội thoại.
+Người dùng chọn hồ sơ chính.
+Chọn dữ liệu được giữ.
+CRM chuyển toàn bộ hội thoại, đơn, cuộc gọi, chăm sóc.
+Hồ sơ phụ chuyển trạng thái đã gộp.
+Luật:
+Không mất lịch sử.
+External ID không được trùng sau hợp nhất.
+Có log người thực hiện.
+FR-023 – Gắn tag khách hàng
+Mục tiêu: Phân nhóm nhanh.
+Chức năng:
+Gắn nhiều tag.
+Gỡ tag.
+Lọc theo tag.
+Tạo tag tự động theo luật.
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+7. 
+8. 
+9. 
+10. 
+11. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+7
+--- TRANG 8 ---
+Luật:
+Tag không thay thế trạng thái pipeline.
+Tag cũ không tự xóa trừ khi automation quy định.
+V. CHIA VÀ SỞ HỮU KHÁCH
+FR-030 – Chia lead tự động
+Cách chia hỗ trợ:
+Vòng tròn.
+Theo Page.
+Theo ca.
+Theo nhóm.
+Theo chiến dịch.
+Theo khu vực.
+Theo tải công việc.
+Luồng chính:
+Lead mới được tạo.
+Hệ thống xác định nhóm đủ điều kiện.
+Loại nhân viên nghỉ/khóa/quá tải.
+Gán nhân viên.
+Tạo thời hạn phản hồi.
+Gửi thông báo.
+Ngoại lệ:
+Không có nhân viên phù hợp → đưa vào hàng đợi chung.
+Nhân viên không nhận trong SLA → chuyển hoặc cảnh báo.
+FR-031 – Chuyển khách giữa nhân viên
+Dữ liệu bắt buộc:
+Người cũ.
+Người mới.
+Lý do.
+Ngày hiệu lực.
+Luật:
+Chỉ quản lý hoặc người có quyền được chuyển.
+Công việc chưa hoàn thành phải chuyển theo.
+Sale cũ vẫn lưu trong lịch sử.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+8
+--- TRANG 9 ---
+FR-032 – Quản lý hàng đợi lead
+Chức năng:
+Xem lead chưa có người nhận.
+Nhận lead.
+Gán tay.
+Tự chia lại.
+Cảnh báo lead tồn quá lâu.
+VI. PIPELINE SALE
+FR-040 – Quản lý pipeline Sale
+Các trạng thái:
+Lead mới.
+Chưa liên hệ.
+Đã kết nối.
+Đang khai thác.
+Đã tư vấn.
+Đã báo giá.
+Đang cân nhắc.
+Hẹn gọi lại.
+Cần bám đuổi.
+Đã chốt.
+Không phù hợp.
+Từ chối.
+Mất liên lạc.
+Chức năng:
+Kéo thả thẻ.
+Lọc theo nhân viên.
+Lọc theo Page.
+Lọc theo nguồn.
+Xem số ngày ở trạng thái.
+Xem công việc tiếp theo.
+Luật bắt buộc:
+Chuyển “đang cân nhắc” phải có lý do và lịch hẹn.
+Chuyển “đã báo giá” phải có liệu trình và giá.
+Chuyển “đã chốt” phải có đơn.
+Chuyển “từ chối” phải có lý do.
+Chuyển “không phù hợp” phải có nguyên nhân.
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+7. 
+8. 
+9. 
+10. 
+11. 
+12. 
+13. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+9
+--- TRANG 10 ---
+FR-041 – Ghi lịch sử trạng thái lead
+Mỗi thay đổi lưu:
+Trạng thái cũ.
+Trạng thái mới.
+Người thực hiện.
+Thời gian.
+Lý do.
+Ghi chú.
+FR-042 – Quản lý SLA phản hồi
+Ví dụ:
+Lead mới phải nhận trong 5 phút.
+Phải có tương tác đầu trong 15 phút.
+Báo giá xong phải tạo follow-up.
+Automation:
+Gần quá hạn → nhắc.
+Quá hạn → cảnh báo.
+Quá lâu → báo trưởng nhóm.
+VII. HỒ SƠ TƯ VẤN
+FR-050 – Nhập triệu chứng
+Dữ liệu:
+Triệu chứng.
+Mức độ 0–10.
+Tần suất.
+Thời gian mắc.
+Thời điểm xuất hiện.
+Liên quan bữa ăn.
+Triệu chứng chính/phụ.
+Luật:
+Không dùng ghi chú tự do thay toàn bộ dữ liệu cấu trúc.
+Có thể nhập thêm ghi chú.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+10
+--- TRANG 11 ---
+FR-051 – Nhập kết quả khám
+Dữ liệu:
+Loại khám.
+Ngày khám.
+Cơ sở.
+Kết luận khách cung cấp.
+File ảnh/PDF.
+HP .
+Nội soi.
+FR-052 – Nhập thuốc và điều trị đang dùng
+Dữ liệu:
+Tên thuốc/sản phẩm.
+Liều.
+Thời gian dùng.
+Còn đang dùng không.
+Hiệu quả.
+Phản ứng.
+Luật:
+Nhân viên không được tự khuyên dừng hoặc đổi thuốc nếu không có quyền chuyên môn.
+Trường hợp rủi ro phải chuyển chuyên môn.
+FR-053 – Sàng lọc an toàn
+Danh mục:
+Bệnh nền.
+Dị ứng.
+Thai kỳ/cho con bú.
+Thuốc chống đông.
+Gan/thận.
+Nôn máu.
+Phân đen.
+Nuốt nghẹn.
+Đau ngực.
+Khó thở.
+Sụt cân không chủ ý.
+Luồng:
+Nhân viên nhập dữ liệu.
+Rule engine kiểm tra.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+11
+--- TRANG 12 ---
+Nếu có dấu hiệu cảnh báo:
+Gắn cảnh báo đỏ.
+Chặn đề xuất tự động.
+Tạo việc chuyển chuyên môn.
+Lưu người xử lý.
+VIII. SẢN PHẨM VÀ LIỆU TRÌNH
+FR-060 – Quản lý sản phẩm
+Dữ liệu:
+Mã sản phẩm.
+Tên.
+Giá.
+Quy cách.
+Cách dùng.
+Số ngày dùng.
+Thành phần.
+Vai trò.
+Nội dung tư vấn.
+Trạng thái bán.
+Trạng thái duyệt.
+Luật:
+Không xóa sản phẩm đã có đơn.
+Thay đổi giá tạo phiên bản mới.
+Nội dung chưa duyệt không được AI dùng.
+FR-061 – Quản lý mẫu liệu trình
+Dữ liệu:
+Mã.
+Tên.
+Nhóm vấn đề.
+Sản phẩm.
+Số lượng.
+Cách dùng.
+Giá.
+Thời gian.
+Điều kiện phù hợp.
+Điều kiện loại trừ.
+Mốc chăm.
+3. 
+4. 
+5. 
+6. 
+7. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+12
+--- TRANG 13 ---
+Trạng thái duyệt.
+FR-062 – Đề xuất liệu trình
+Người sử dụng: Sale, người chuyên môn.
+Luồng chính:
+CRM đọc hồ sơ khách.
+Kiểm tra thông tin bắt buộc.
+Kiểm tra điều kiện loại trừ.
+Chạy rule engine.
+Hiển thị:
+Liệu trình có thể cân nhắc.
+Lý do.
+Cảnh báo.
+Thông tin còn thiếu.
+Nhân viên chọn phương án.
+Nếu cần → gửi chuyên môn duyệt.
+Lưu phiên bản đề xuất.
+Luật:
+AI không tự tạo liệu trình.
+Rule engine quyết định liệu trình nào được hiển thị.
+Người dùng không đủ quyền không thể bỏ qua cảnh báo.
+IX. BÁM ĐUỔI KHÁCH CHƯA MUA
+FR-070 – Tạo chuỗi follow-up
+Các mốc mặc định:
+Ngày 0.
+Ngày 1.
+Ngày 3.
+Ngày 7.
+Ngày 14.
+Ngày 30.
+Dữ liệu mỗi bước:
+Thời gian.
+Kênh.
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+7. 
+8. 
+9. 
+10. 
+11. 
+12. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+13
+--- TRANG 14 ---
+Mục tiêu.
+Nội dung.
+Người thực hiện.
+Điều kiện dừng.
+FR-071 – Ghi lý do chưa mua
+Lý do chính:
+Giá.
+Chưa tin tưởng.
+Muốn hỏi người nhà.
+Sợ tác dụng phụ.
+Đang dùng thuốc khác.
+Chưa có tiền.
+Không nghe máy.
+Không phản hồi.
+Không đúng đối tượng.
+Dữ liệu thêm:
+Lý do phụ.
+Bằng chứng chat/call.
+Mức chắc chắn.
+Hành động tiếp theo.
+FR-072 – Quản lý follow-up quá hạn
+Luồng:
+Việc đến hạn.
+Hệ thống nhắc nhân viên.
+Quá hạn → chuyển màu đỏ.
+Quá thời gian cấu hình → báo quản lý.
+Quản lý có thể chuyển nhân viên khác.
+FR-073 – Dừng chuỗi bám đuổi
+Điều kiện dừng:
+Đã mua.
+Không phù hợp.
+Yêu cầu ngừng liên hệ.
+Đã chuyển chuyên môn.
+Kết thúc cơ hội.
+Khách mất liên lạc theo quy định.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+• 
+• 
+• 
+• 
+• 
+• 
+14
+--- TRANG 15 ---
+X. ĐƠN HÀNG
+FR-080 – Tạo đơn hàng
+Dữ liệu:
+Khách.
+Liệu trình.
+Sản phẩm.
+Số lượng.
+Giá.
+Khuyến mãi.
+Địa chỉ.
+Thanh toán.
+Người tạo.
+Nguồn quảng cáo.
+Luật:
+Không tạo đơn nếu thiếu khách hoặc địa chỉ cần thiết.
+Tự phân loại đơn đầu/mua lại.
+Lưu giá tại thời điểm tạo đơn.
+FR-081 – Cập nhật trạng thái đơn
+Trạng thái chuẩn:
+Nháp.
+Chờ xác nhận.
+Đã xác nhận.
+Đang xử lý.
+Đang giao.
+Giao thành công.
+Giao thất bại.
+Đang hoàn.
+Đã hoàn.
+Hủy.
+Đổi hàng.
+Luật:
+Giao thành công có thể kích hoạt bàn giao CSKH.
+Đã hoàn trừ doanh thu theo quy định.
+Không xóa lịch sử trạng thái.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+15
+--- TRANG 16 ---
+FR-082 – Phân loại đơn mua lại
+Luật:
+Đơn đầu: khách chưa từng có đơn giao thành công.
+Mua lại: khách đã có ít nhất một đơn giao thành công trước đó.
+Đơn đổi không mặc định tính là mua lại.
+Đơn 0 đồng theo cấu hình riêng.
+XI. BÀN GIAO SALE SANG CSKH
+FR-090 – Tạo hồ sơ bàn giao
+Kích hoạt: Đơn giao thành công hoặc trạng thái được cấu hình.
+Hệ thống tự động:
+Gán CSKH.
+Tạo hồ sơ chăm.
+Sao chép thông tin liệu trình.
+Tạo công việc xác nhận/onboarding.
+Tính ngày dự kiến bắt đầu.
+Ghi Sale chốt.
+FR-091 – Kiểm tra hồ sơ bàn giao
+Thông tin bắt buộc:
+Tình trạng khách.
+Liệu trình.
+Cách dùng.
+Lưu ý.
+Bệnh nền.
+Thuốc đang dùng.
+Băn khoăn.
+Điều cần theo dõi.
+Luật:
+Hồ sơ thiếu → đánh dấu chưa hoàn tất.
+CSKH có thể trả lại Sale bổ sung.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+16
+--- TRANG 17 ---
+XII. QUY TRÌNH CHĂM SÓC SAU BÁN
+FR-100 – Xác nhận đơn
+Thời điểm: Ngay sau khi Sale chốt.
+Checklist:
+Xác nhận khách.
+Xác nhận liệu trình.
+Xác nhận số tiền.
+Xác nhận địa chỉ.
+Xác nhận số điện thoại.
+Ghi ngày kiểm tra nhận hàng.
+Ngoại lệ:
+Gọi 3 lần không được → báo Sale và quản lý.
+FR-101 – Onboarding sau nhận hàng
+Điều kiện: Khách xác nhận đã nhận hàng.
+Checklist:
+Nhận đủ hàng.
+Kết nối Zalo.
+Gửi hướng dẫn.
+Gửi chế độ ăn.
+Xác nhận cách dùng.
+Ghi ngày dự kiến bắt đầu.
+FR-102 – Xác nhận ngày bắt đầu sử dụng
+Dữ liệu:
+Ngày thực tế bắt đầu.
+Đã dùng hay chưa.
+Lý do chưa dùng.
+Ngày hẹn bắt đầu.
+Luật:
+Các mốc chăm ngày 4, 10, 15, 20, 25 tính từ ngày bắt đầu thực tế.
+Nếu chưa bắt đầu, chưa sinh mốc đánh giá đáp ứng.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+17
+--- TRANG 18 ---
+FR-103 – Chăm ngày 4
+Mục tiêu: Kiểm tra dung nạp và cá thể hóa.
+Dữ liệu bắt buộc:
+Dùng đều không.
+Có phản ứng không.
+Triệu chứng hiện tại.
+Thời điểm xuất hiện.
+Liên quan bữa ăn.
+Tình trạng phân.
+Chế độ ăn.
+Nội dung đã gửi.
+Điều chỉnh đã tư vấn.
+Luật:
+Có phản ứng → tạo cảnh báo.
+Có dấu hiệu nguy hiểm → chuyển chuyên môn.
+FR-104 – Chăm ngày 10
+Mục tiêu: Kiểm tra tuân thủ.
+Dữ liệu:
+Dùng đúng liều.
+Thực hiện chế độ ăn.
+Có vấn đề phát sinh.
+Triệu chứng thay đổi.
+Kết quả tổng thể.
+Kết quả chuẩn:
+Dùng đúng.
+Dùng chưa đúng.
+Không liên hệ được.
+Có phản ứng.
+Cần hỗ trợ.
+FR-105 – Đánh giá ngày 15
+Mục tiêu: Đánh giá đáp ứng.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+18
+--- TRANG 19 ---
+Dữ liệu:
+Mức triệu chứng trước.
+Mức hiện tại.
+Điểm thay đổi.
+Mức cải thiện.
+Tuân thủ.
+Phản ứng.
+Kết luận.
+Cần chuyên môn.
+Kết quả chuẩn:
+Tốt.
+Một phần.
+Chưa rõ.
+Không cải thiện.
+Nặng hơn.
+Không đủ dữ liệu.
+FR-106 – Chăm ngày 20
+Mục tiêu: Chuẩn bị cơ hội mua lại.
+Dữ liệu:
+Số sản phẩm còn.
+Ngày dự kiến hết.
+Mức sẵn sàng.
+Băn khoăn.
+Liệu trình tiếp theo.
+Giá trị dự kiến.
+Ngày dự kiến chốt.
+Đầu ra:
+Cơ hội mua lại.
+FR-107 – Chăm ngày 25
+Mục tiêu: Tổng kết và đề xuất liệu trình tiếp theo.
+Dữ liệu:
+Tổng kết kết quả.
+Liệu trình đề xuất.
+Giá.
+Khách đồng ý/chưa đồng ý.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+19
+--- TRANG 20 ---
+Lý do.
+Hành động tiếp theo.
+Luật:
+Chưa mua → bắt buộc chọn lý do.
+Nếu còn tiềm năng → tạo việc ngày 28.
+FR-108 – Xử lý ngày 28
+Mục tiêu: Xử lý cơ hội chưa chốt.
+Dữ liệu:
+Lý do chưa mua.
+Cách xử lý.
+Kết quả.
+Ngày chốt dự kiến.
+Tiếp tục/kết thúc.
+FR-109 – Chăm liệu trình 2 và 3
+Luồng:
+Xác nhận nhận hàng.
+Xác nhận bắt đầu.
+Tạo mốc chăm phù hợp.
+Đánh giá đáp ứng.
+Tạo cơ hội mua tiếp.
+Chuyển trạng thái duy trì.
+FR-110 – Xử lý không phản hồi
+Chuỗi chuẩn:
+Nhắn lần 1.
+Gọi lần 1.
+Nhắn lần 2.
+Gọi lần 2.
+Tạm mất liên lạc.
+Đưa vào tái kích hoạt.
+Luật:
+Khách yêu cầu dừng → kết thúc ngay.
+Không nhắn ngoài giới hạn tần suất cấu hình.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+• 
+• 
+20
+--- TRANG 21 ---
+XIII. MUA LẠI
+FR-120 – Tính ngày dự kiến hết
+Công thức nghiệp vụ:
+Ngày bắt đầu + thời gian sử dụng theo số lượng và liều.
+Điều chỉnh theo:
+Bắt đầu muộn.
+Dùng thiếu liều.
+Tạm dừng.
+Còn hàng cũ.
+Thay đổi liệu trình.
+FR-121 – Tạo cơ hội mua lại
+Dữ liệu:
+Khách.
+Liệu trình hiện tại.
+Ngày hết.
+Liệu trình tiếp theo.
+Giá trị dự kiến.
+Mức sẵn sàng.
+Người phụ trách.
+FR-122 – Quản lý pipeline mua lại
+Trạng thái:
+Chưa đến hạn.
+Sắp đến hạn.
+Đến hạn.
+Đang tư vấn.
+Chờ quyết định.
+Đã mua.
+Chưa mua.
+Quá hạn.
+Khách ngủ.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+21
+--- TRANG 22 ---
+FR-123 – Quản lý khách ngủ
+Luật cấu hình:
+30/60/90/180 ngày chưa mua.
+Theo nhóm sản phẩm.
+Theo giá trị khách.
+Chức năng:
+Lọc khách.
+Gán chiến dịch.
+Tạo nhiệm vụ.
+Đo doanh thu tái kích hoạt.
+XIV. QUẢN LÝ CUỘC GỌI VÀ AI
+FR-130 – Đồng bộ cuộc gọi
+Dữ liệu:
+Call ID.
+Nhân viên.
+Khách.
+Số điện thoại.
+Thời gian.
+Thời lượng.
+Trạng thái.
+File ghi âm.
+FR-131 – Chuyển ghi âm thành văn bản
+Luồng:
+Nhận file.
+Xử lý speech-to-text.
+Tách người nói.
+Lưu transcript.
+Gắn timestamp.
+Đánh dấu độ tin cậy.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+22
+--- TRANG 23 ---
+FR-132 – AI chấm cuộc gọi
+Nhóm điểm:
+Mở đầu.
+Khai thác.
+Lắng nghe.
+Tư vấn.
+Xử lý phản đối.
+Chốt.
+Tuân thủ.
+Đầu ra:
+Điểm tổng.
+Điểm từng nhóm.
+Điểm tốt.
+Điểm yếu.
+Vi phạm.
+Bằng chứng.
+Gợi ý sửa.
+Luật:
+AI không tự quyết định kỷ luật.
+Vi phạm nghiêm trọng cần quản lý xác nhận.
+FR-133 – Quản lý duyệt điểm AI
+Chức năng:
+Xác nhận.
+Sửa điểm.
+Ghi lý do.
+Đánh dấu AI sai.
+Tạo nội dung huấn luyện.
+XV. KHO KIẾN THỨC VÀ AI CHAT
+FR-140 – Quản lý tài liệu kiến thức
+Dữ liệu:
+Tiêu đề.
+Nhóm.
+Nội dung.
+Nguồn.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+23
+--- TRANG 24 ---
+Phiên bản.
+Người duyệt.
+Trạng thái.
+Quyền AI.
+Ngày hiệu lực.
+FR-141 – Tìm kiếm kiến thức
+Cơ chế:
+Từ khóa.
+Metadata.
+Vector .
+Trạng thái hiệu lực.
+Luật:
+Không trả nội dung hết hiệu lực.
+Ưu tiên tài liệu đã duyệt.
+Hiển thị nguồn.
+FR-142 – AI gợi ý trả lời
+Luồng:
+Đọc hội thoại.
+Tóm tắt.
+Trích dữ liệu.
+Tìm nội dung phù hợp.
+Soạn câu trả lời.
+Kiểm tra từ cấm.
+Hiển thị cho nhân viên duyệt.
+FR-143 – Chặn nội dung rủi ro
+Ví dụ:
+Cam kết khỏi.
+Điều trị dứt điểm.
+Không tác dụng phụ.
+Khuyên ngừng thuốc.
+Khuyên thay thuốc.
+Dọa ung thư.
+Chẩn đoán chắc chắn.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+7. 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+24
+--- TRANG 25 ---
+Hành động:
+Cảnh báo.
+Không cho gửi tự động.
+Yêu cầu duyệt.
+Ghi log.
+XVI. MARKETING VÀ QUẢNG CÁO
+FR-150 – Đồng bộ dữ liệu quảng cáo
+Dữ liệu:
+Campaign.
+Adset.
+Ad.
+Creative.
+Chi phí.
+Reach.
+Impression.
+Click.
+Inbox.
+FR-151 – Gắn nguồn quảng cáo cho khách
+Lưu:
+First touch.
+Last touch.
+Campaign ID.
+Adset ID.
+Ad ID.
+Creative ID.
+Thời điểm.
+FR-152 – Xây phễu chuyển đổi
+Sự kiện:
+Lead created.
+Phone collected.
+Contacted.
+Qualified.
+Consulted.
+Quoted.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+25
+--- TRANG 26 ---
+Order created.
+Delivered.
+Returned.
+Repurchased.
+FR-153 – Phân tích lý do chưa chốt
+Đầu ra:
+Theo quảng cáo.
+Theo Sale.
+Theo Page.
+Theo sản phẩm.
+Theo thời gian.
+FR-154 – Phiếu sức khỏe quảng cáo
+Hiển thị:
+Chi phí.
+Inbox.
+Lead thật.
+Lead phù hợp.
+Đơn.
+Giao thành công.
+Hoàn.
+Mua lại.
+Lý do chưa chốt.
+Băn khoăn.
+ROAS.
+LTV.
+Khuyến nghị.
+XVII. CÔNG VIỆC VÀ AUTOMATION
+FR-160 – Quản lý công việc
+Dữ liệu:
+Khách.
+Nhân viên.
+Loại việc.
+Hạn.
+Ưu tiên.
+Trạng thái.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+26
+--- TRANG 27 ---
+Kết quả.
+Liên kết đối tượng.
+FR-161 – Tạo automation
+Cấu trúc:
+text id="fc7g2d"
+KHI
+NẾU
+THÌ
+Ví dụ:
+Khi lead mới → chia Sale.
+Khi quá SLA → cảnh báo.
+Khi giao thành công → tạo chăm.
+Khi bắt đầu dùng → sinh mốc chăm.
+Khi ngày 25 chưa mua → tạo ngày 28.
+Khi có từ cấm → chặn.
+Khi khách dừng liên hệ → ngắt chuỗi.
+FR-162 – Quản lý lỗi automation
+Chức năng:
+Xem lỗi.
+Retry.
+Tạm dừng luật.
+Gửi cảnh báo admin.
+Lưu log.
+XVIII. BÁO CÁO
+FR-170 – Báo cáo Sale
+Lead.
+SLA.
+Liên hệ.
+Tư vấn.
+Báo giá.
+Chốt.
+Giao thành công.
+Hoàn.
+Doanh thu.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+27
+--- TRANG 28 ---
+Điểm AI.
+FR-171 – Báo cáo CSKH
+Khách phụ trách.
+Mốc đúng hạn.
+Mốc quá hạn.
+Đánh giá đầy đủ.
+Tỷ lệ cải thiện.
+Mua liệu trình 2.
+Mua liệu trình 3.
+Doanh thu mua lại.
+Khách ngủ.
+FR-172 – Báo cáo Marketing
+Chi phí.
+Inbox.
+Lead thật.
+Lead phù hợp.
+Tỷ lệ chốt.
+Hoàn.
+ROAS.
+LTV.
+Lý do chưa chốt.
+Băn khoăn.
+FR-173 – Drill-down báo cáo
+Luật:
+Mỗi số liệu phải mở được danh sách chi tiết.
+Danh sách chi tiết phải dùng cùng điều kiện lọc với số tổng.
+Có quyền xem dữ liệu theo vai trò.
+XIX. NHẬT KÝ VÀ BẢO MẬT
+FR-180 – Audit log
+Lưu:
+Người dùng.
+Hành động.
+Đối tượng.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+28
+--- TRANG 29 ---
+Giá trị cũ.
+Giá trị mới.
+Thời gian.
+Lý do.
+FR-181 – Xuất dữ liệu
+Luật:
+Chỉ người có quyền.
+Có log.
+Có thể ẩn số điện thoại.
+Giới hạn số dòng.
+Có cảnh báo dữ liệu nhạy cảm.
+FR-182 – Sao lưu
+Chức năng:
+Sao lưu theo lịch.
+Lưu nhiều phiên bản.
+Kiểm tra trạng thái.
+Phục hồi có quyền.
+Ghi log phục hồi.
+XX. TIÊU CHÍ NGHIỆM THU TỔNG THỂ
+Hệ thống đạt khi:
+Lead Pancake đồng bộ đúng và không trùng.
+Mỗi lead có người phụ trách.
+Lead quá hạn được cảnh báo.
+Sale không thể đóng lead nếu thiếu dữ liệu bắt buộc.
+Liệu trình chỉ được đề xuất theo rule.
+Đơn giao thành công tự tạo hồ sơ chăm.
+Mốc chăm tính theo ngày bắt đầu thực tế.
+Ngày 15 có đánh giá trước/sau.
+Ngày 20 tự tạo cơ hội mua lại.
+Ngày 25 chưa mua bắt buộc có lý do.
+Ngày 28 được tạo đúng điều kiện.
+Cuộc gọi có ghi âm, transcript và điểm AI.
+Nội dung rủi ro bị chặn.
+Quảng cáo được đánh giá tới đơn giao và mua lại.
+Mọi số liệu báo cáo drill-down được.
+Mọi chỉnh sửa quan trọng có audit log.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+7. 
+8. 
+9. 
+10. 
+11. 
+12. 
+13. 
+14. 
+15. 
+16. 
+29

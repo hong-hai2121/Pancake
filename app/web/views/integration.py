@@ -52,6 +52,10 @@ def _fmt_dt(v) -> str:
     return v.strftime("%d/%m %H:%M:%S") if v else "—"
 
 
+def _o_loi(n) -> str:
+    return f'<b class="err-txt">{n}</b>' if n else "0"
+
+
 def _shell(title: str, tab: str, body: str, ok: str = "", error: str = "") -> str:
     return render_shell(
         title, "tich-hop", flash(ok, error) + body,
@@ -94,13 +98,15 @@ def render_ket_noi(tt: dict, pages: list[dict], *, ok: str = "", error: str = ""
 
     dong_kn = ""
     for k in tt["ket_noi"]:
+        # Python 3.11 chưa cho backslash trong biểu thức f-string → tách ra biến
+        thieu_token = "" if k["co_token"] else '<div class="note">chưa có trong .env</div>'
         dong_kn += (
             "<tr>"
             f"<td><b>{_e(k['name'])}</b>"
             f"<div class=\"note\">{_e(_NGUON.get(k['provider'], k['provider']))}"
             f"{' · shop ' + _e(k['external_id']) if k['external_id'] else ''}</div></td>"
             f"<td>{_TOKEN.get(k['token_status'], '')}"
-            f"{'' if k['co_token'] else '<div class=\"note\">chưa có trong .env</div>'}</td>"
+            f"{thieu_token}</td>"
             f"<td>{_e(k['token_hint'])}</td>"
             f"<td>{_fmt_dt(k['token_checked_at'])}</td>"
             f"<td>{k['so_page_bat']}/{k['so_page']}</td>"
@@ -119,10 +125,12 @@ def render_ket_noi(tt: dict, pages: list[dict], *, ok: str = "", error: str = ""
             f'<button class="btn sm{"" if p["sync_enabled"] else " primary"}">'
             f'{"Tắt" if p["sync_enabled"] else "Bật"}</button></form>'
         )
+        pill_bat = ('<span class="pill ok">bật</span>' if p["sync_enabled"]
+                    else '<span class="pill">tắt</span>')
         dong_page += (
             "<tr>"
             f"<td><b>{_e(p['name'])}</b><div class=\"note\">{_e(p['external_page_id'])}</div></td>"
-            f"<td>{'<span class=\"pill ok\">bật</span>' if p['sync_enabled'] else '<span class=\"pill\">tắt</span>'}</td>"
+            f"<td>{pill_bat}</td>"
             f"<td>{p['so_hoi_thoai']}</td>"
             f"<td>{_fmt_dt(p['last_synced_at'])}</td>"
             f"<td class=\"note\">{_e((p['last_error'] or '')[:80])}</td>"
@@ -193,7 +201,7 @@ def render_nhat_ky(
         f"<td><span class='pill'>{_e(r['run_type'])}</span></td>"
         f"<td>{r['created_count']}</td><td>{r['updated_count']}</td>"
         f"<td>{r['skipped_count']}</td>"
-        f"<td>{'<b class=\"err-txt\">' + str(r['error_count']) + '</b>' if r['error_count'] else 0}</td>"
+        f"<td>{_o_loi(r['error_count'])}</td>"
         f"<td>{r['duration_ms'] or 0} ms</td>"
         f"<td>{_TRANG_THAI_LOG.get(r['status'], _e(r['status']))}</td>"
         "</tr>"

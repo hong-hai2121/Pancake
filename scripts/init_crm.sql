@@ -1821,12 +1821,196 @@ comment on table app_settings is
 
 
 -- Nhật ký/hàng đợi lỗi nhận thêm loại 'ad' (đồng bộ cây + chi phí quảng cáo)
+-- và 'message' (FR-012 — đồng bộ nội dung tin nhắn về crm.messages)
 alter table sync_logs   drop constraint if exists sync_logs_entity_check;
 alter table sync_logs   add constraint sync_logs_entity_check
-    check (entity in ('conversation','order','customer','tag','page','ad'));
+    check (entity in ('conversation','order','customer','tag','page','ad','message'));
 alter table sync_errors drop constraint if exists sync_errors_entity_check;
 alter table sync_errors add constraint sync_errors_entity_check
-    check (entity in ('conversation','order','customer','tag','page','ad'));
+    check (entity in ('conversation','order','customer','tag','page','ad','message'));
+
+
+-- ------------------------------------------------------------
+-- FR-012 (CONV-001…006) — nội dung tin nhắn đầy đủ về crm.messages
+--   Khối nâng-cấp-DB-cũ: bảng messages/conversations tạo ở MODULE trên,
+--   các cột dưới đây bồi thêm cho DB đã chạy trước bản này.
+-- ------------------------------------------------------------
+-- Tin nhắn giữ NGUYÊN VĂN từ Pancake: người gửi bản gốc (id + tên hiển thị),
+-- loại tin, file/ảnh/video đính kèm. KHÔNG bao giờ update content (luật FR-012
+-- "không chỉnh sửa nội dung gốc" — on conflict do nothing ở tầng repo).
+alter table messages add column if not exists sender_external_id text;
+alter table messages add column if not exists sender_name        text;
+alter table messages add column if not exists msg_type           text;
+alter table messages add column if not exists attachments        jsonb;
+comment on column messages.sender_external_id is
+    'from.id bên Pancake — khách là PSID, page trả lời thì trùng page_id';
+comment on column messages.attachments is
+    'Danh sách file/ảnh/video [{type,url}] — url là link Pancake, không tải về';
+
+-- Idempotent theo (hội thoại, id tin bên Pancake): đồng bộ lại không nhân đôi.
+-- Partial index vì tin hệ thống/tay có thể không mang external id.
+create unique index if not exists uq_messages_conv_external
+    on messages (conversation_id, external_message_id)
+    where external_message_id is not null;
+
+-- Mốc lần cuối kéo TIN NHẮN (khác synced_at = lần cuối chạm HỘI THOẠI):
+-- worker chỉ kéo hội thoại có external_updated_at mới hơn mốc này.
+alter table conversations add column if not exists messages_synced_at timestamptz;
+create index if not exists idx_conversations_msg_stale
+    on conversations (external_updated_at desc)
+    where external_conversation_id is not null;
+
+
+-- ------------------------------------------------------------
+-- TRUNG TÂM THÔNG BÁO (màn 3 · NOTIFY-001…004)
+--   11 loại theo danh sách màn hình. Thông báo KHÔNG tự sinh trong service
+--   nghiệp vụ mà do worker `notifications` QUÉT DB định kỳ rồi đẩy vào đây —
+--   nhờ vậy thêm/bớt loại thông báo không phải sửa luật B1…B8.
+--   `dedupe_key` chặn trùng: quét lại 5 phút/lần vẫn chỉ một dòng cho mỗi
+--   (người nhận, sự việc). Đã đọc rồi thì KHÔNG sinh lại (xem repo.day).
+-- ------------------------------------------------------------
+create table if not exists notifications (
+    id           bigint generated always as identity primary key,
+    user_id      bigint not null references users(id) on delete cascade,
+    type         text not null,
+    title        text not null,
+    body         text,
+    link         text,
+    priority     text not null default 'normal'
+                 check (priority in ('low','normal','high','urgent')),
+    related_type text,
+    related_id   bigint,
+    dedupe_key   text not null,
+    read_at      timestamptz,
+    created_at   timestamptz not null default now()
+);
+comment on column notifications.dedupe_key is
+    'Khoá chống trùng do nguồn quét đặt, vd "viec_qua_han:123" — worker chạy lại không đẻ dòng mới';
+comment on column notifications.link is
+    'Đường dẫn mở thẳng màn liên quan (bấm vào dòng thông báo là tới nơi)';
+
+create unique index if not exists uq_notifications_dedupe
+    on notifications (user_id, dedupe_key);
+create index if not exists idx_notifications_user_moi
+    on notifications (user_id, created_at desc);
+create index if not exists idx_notifications_chua_doc
+    on notifications (user_id) where read_at is null;
+
+-- NOTIFY-004: mỗi người tự tắt loại mình không muốn nhận. Thiếu dòng = BẬT
+-- (mặc định nhận hết) — bảng chỉ giữ phần người đã đổi, giống app_settings.
+create table if not exists notification_settings (
+    user_id    bigint not null references users(id) on delete cascade,
+    type       text not null,
+    enabled    boolean not null default true,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    primary key (user_id, type)
+);
+
+
+-- ============================================================
+-- B9 — CHĂM SÓC 11 BƯỚC (FR-100…110 · CARE/ASSESSMENT/NORESPONSE)
+--   * care_plans: ngày bắt đầu THẬT (mốc 4/10/15/20/25 tính từ đây — FR-102),
+--     trạng thái pipeline CSKH C01-C09 (màn 27), chu kỳ liệu trình 1/2/3
+--   * care_plan_steps: phiếu chăm dạng jsonb (trường bắt buộc + bộ giá trị
+--     nằm ở ref_codes nhóm care_step / 7 bộ giá trị — bảng 18-19 BRD)
+--   * customers: cờ "yêu cầu ngừng liên hệ" (NORESPONSE-004, AU11)
+--   * 2 bảng mới: chuỗi không phản hồi (FR-110) — DB 74→76 bảng
+-- ============================================================
+alter table care_plans add column if not exists actual_start_date date;
+alter table care_plans add column if not exists cskh_state text not null default 'C01';
+alter table care_plans add column if not exists cycle_no   integer not null default 1
+    check (cycle_no between 1 and 9);
+comment on column care_plans.actual_start_date is
+    'FR-102: ngày BẮT ĐẦU DÙNG THẬT (CS03 ghi) — mốc CS04-08 tính từ đây, '
+    'KHÔNG phải ngày giao. Chưa có = chưa sinh mốc đánh giá';
+comment on column care_plans.cskh_state is
+    'Pipeline CSKH C01-C09 (ref_codes nhóm cskh_state, BRD bảng 17) — màn 27. '
+    'Không đặt CHECK cứng: danh mục nằm ở ref_codes, service tự kiểm';
+comment on column care_plans.cycle_no is
+    'Chu kỳ liệu trình: 1 = LT đầu, 2/3 = mua lại (CS10/CS11 — FR-109)';
+create index if not exists idx_care_plans_state on care_plans (cskh_state)
+    where status = 'active';
+
+alter table care_plan_steps add column if not exists data jsonb not null default '{}'::jsonb;
+alter table care_plan_steps add column if not exists note text;
+alter table care_plan_steps add column if not exists completed_by bigint
+    references users(id) on delete set null;
+comment on column care_plan_steps.data is
+    'Phiếu chăm của mốc (FR-103…108): trường bắt buộc theo ref_codes '
+    'care_step.attrs.du_lieu_bat_buoc, giá trị chuẩn theo 7 bộ giá trị (bảng 19)';
+-- Mỗi kế hoạch mỗi mã mốc chỉ 1 dòng (CS10/CS11 chu kỳ sau nằm ở plan mới);
+-- mốc phát sinh dùng step_code='khac' nên được phép lặp
+create unique index if not exists uq_care_plan_steps_ma
+    on care_plan_steps (care_plan_id, step_code) where step_code <> 'khac';
+
+alter table customers add column if not exists do_not_contact boolean not null default false;
+alter table customers add column if not exists do_not_contact_at timestamptz;
+alter table customers add column if not exists do_not_contact_reason text;
+comment on column customers.do_not_contact is
+    'FR-110/NORESPONSE-004 + AU11: khách yêu cầu NGỪNG liên hệ — mọi automation '
+    'chăm sóc/bám đuổi phải bỏ qua khách này; chỉ mở lại khi có đồng ý mới (C09)';
+
+-- FR-110 — chuỗi không phản hồi chuẩn: nhắn 1 → gọi 1 → nhắn 2 → gọi 2
+-- → tạm mất liên lạc (C08) → đưa vào tái kích hoạt (B10)
+create table if not exists no_response_sequences (
+    id                bigint generated always as identity primary key,
+    customer_id       bigint not null references customers(id) on delete cascade,
+    care_plan_step_id bigint references care_plan_steps(id) on delete set null,
+    status            text not null default 'active'
+                      check (status in ('active','closed')),
+    outcome           text check (outcome is null or outcome in
+                      ('responded','lost_contact','do_not_contact')),
+    started_by        bigint references users(id) on delete set null,
+    close_reason      text,
+    closed_by         bigint references users(id) on delete set null,
+    closed_at         timestamptz,
+    created_at        timestamptz not null default now(),
+    updated_at        timestamptz not null default now()
+);
+comment on table no_response_sequences is
+    'FR-110: mỗi lần khách im lặng mở 1 chuỗi; 4 lần chạm đủ mà im → '
+    'lost_contact + care_plans.cskh_state=C08; khách lên tiếng → responded';
+-- 1 khách chỉ 1 chuỗi ĐANG CHẠY (mở chuỗi mới khi cái cũ chưa đóng là lỗi luật)
+create unique index if not exists uq_no_response_dang_chay
+    on no_response_sequences (customer_id) where status = 'active';
+
+create table if not exists no_response_attempts (
+    id           bigint generated always as identity primary key,
+    sequence_id  bigint not null references no_response_sequences(id) on delete cascade,
+    attempt_no   integer not null check (attempt_no between 1 and 4),
+    channel      text not null check (channel in ('message','call')),
+    result       text,
+    note         text,
+    attempted_by bigint references users(id) on delete set null,
+    attempted_at timestamptz not null default now(),
+    created_at   timestamptz not null default now(),
+    unique (sequence_id, attempt_no)
+);
+comment on column no_response_attempts.attempt_no is
+    'Thứ tự chuẩn FR-110: 1=nhắn · 2=gọi · 3=nhắn · 4=gọi — service ép đúng kênh';
+comment on column no_response_attempts.result is
+    'Bộ giá trị contact_result (ref_codes): Kết nối/Không nghe/Sai số/Hẹn lại/Từ chối';
+
+
+-- ============================================================
+-- B10 — MUA LẠI & KHÁCH NGỦ (FR-120…123 · REPURCHASE-001…010)
+--   Bảng repurchase_opportunities + reactivation_* có sẵn từ đầu; ở đây chỉ
+--   thêm cột phiếu FR-121. 9 trạng thái màn 40 (chưa/sắp/đến hạn/quá hạn…)
+--   KHÔNG lưu cột riêng — suy từ stage + expected_close_date lúc đọc
+--   (service `trang_thai_hien_thi`), khỏi cần worker chạy đêm đổi trạng thái.
+-- ============================================================
+alter table repurchase_opportunities add column if not exists readiness text;
+alter table repurchase_opportunities add column if not exists lost_note text;
+alter table repurchase_opportunities add column if not exists stage_moved_at timestamptz;
+comment on column repurchase_opportunities.readiness is
+    'FR-121 mức sẵn sàng — bộ giá trị repurchase_readiness trong ref_codes '
+    '(Sẵn sàng/Cân nhắc/Chưa sẵn sàng/Từ chối)';
+comment on column repurchase_opportunities.lost_note is
+    'FR-122/REPURCHASE-006: lý do CHUẨN nằm ở lost_reason_id (lead_reasons '
+    '9 mã BRD); cột này giữ diễn giải thêm + bằng chứng chat/call';
+comment on column repurchase_opportunities.stage_moved_at is
+    'Mốc vào stage hiện tại — màn 40 hiện "ở trạng thái bao lâu"';
 
 
 -- ============================================================

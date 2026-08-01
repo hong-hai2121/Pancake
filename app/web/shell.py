@@ -16,12 +16,15 @@ phần thân HTML rồi bọc lại bằng `render_shell`.
 Bố cục tự co theo bề rộng: dưới 900px sidebar chuyển thành thanh ngang trên đầu.
 """
 
+import time
 from html import escape
 
 from app.core.request_context import current_user
 
 # --- Icon dạng SVG inline (dùng currentColor nên tự đổi màu theo trạng thái) ---
 _ICONS = {
+    "home": '<path d="M3 10.5 12 3l9 7.5"/>'
+            '<path d="M5 9.5V21h5v-6h4v6h5V9.5"/>',
     "dashboard": '<rect x="3" y="3" width="7" height="9" rx="1"/>'
                  '<rect x="14" y="3" width="7" height="5" rx="1"/>'
                  '<rect x="14" y="12" width="7" height="9" rx="1"/>'
@@ -56,6 +59,8 @@ _ICONS = {
              'a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56h0a1.7 1.7 0 0 0 1.87-.34l.06-.06'
              'a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v0'
              'a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/>',
+    "bell": '<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>'
+            '<path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
     "data": '<path d="M12 2a3 3 0 0 0-3 3v.4A3.2 3.2 0 0 0 7 11a3 3 0 0 0 2 5.6V18'
             'a3 3 0 0 0 6 0v-1.4A3 3 0 0 0 17 11a3.2 3.2 0 0 0-2-5.6V5a3 3 0 0 0-3-3z"/>'
             '<path d="M12 2v20"/>',
@@ -69,14 +74,24 @@ _ICONS = {
 # Nhóm CRM là các màn khung (xem app/web/views/crm.py) — lát cắt B1…B11 làm đầy.
 MENU_GROUPS: list[tuple[str, list[tuple[str, str, str, str, str]]]] = [
     ("CRM", [
+        # Màn 2 — trang chủ theo vai trò (đăng nhập xong vào đây, "/" trỏ về đây)
+        ("/crm/trang-chu", "Trang chủ", "crm-home", "home", ""),
+        # Màn 3 — trung tâm thông báo (chuông ở góc phải cũng trỏ về đây)
+        ("/crm/thong-bao", "Thông báo", "crm-notify", "bell", ""),
         ("/crm/tong-quan", "Tổng quan", "crm-overview", "dashboard", ""),
+        # B11 — màn 60-64 + drill-down FR-173 (màn 5-6 vào từ đây/trang chủ)
+        ("/crm/bao-cao", "Báo cáo", "crm-reports", "sentiment", ""),
         ("/crm/khach-hang", "Khách hàng", "crm-customers", "customers", ""),
         ("/crm/pipeline", "Pipeline Sale", "crm-pipeline", "pipeline", ""),
         ("/crm/cong-viec", "Công việc", "crm-tasks", "tasks", ""),
         ("/crm/don-hang", "Đơn hàng", "crm-orders", "orders", ""),
+        # B8 — màn 24-25: đơn giao thành công tự sinh phiếu, CSKH nhận/trả lại
+        ("/crm/ban-giao", "Bàn giao", "crm-handover", "care", ""),
         # "Chăm sóc" + "Mua lại" nằm trong mục xổ xuống "Chăm sóc khách hàng"
         # (_dept_cskh — kiểu Kallet, kèm số đếm), không còn là mục phẳng.
         ("/crm/san-pham", "Sản phẩm", "crm-products", "products", ""),
+        # Màn 69 + 71 — bảng theo dõi automation đang chạy (không phải builder)
+        ("/crm/automation", "Automation", "crm-automation", "tasks", ""),
         # BRD mục 4 (nguồn quảng cáo) — màn 7 + 53-55: chi phí · ROAS · LTV
         ("/crm/quang-cao", "Nguồn quảng cáo", "crm-ads", "sentiment", "ads.view"),
         ("/quan-tri/nhan-vien", "Quản trị", "admin", "admin",
@@ -196,6 +211,7 @@ def _dept_cskh(active: str) -> str:
         '<div class="sm-group">Chăm &amp; mua lại</div>'
         f'<a class="sm-link" href="/crm/cham-soc">💚 Chăm sóc C01-C09{n("cham_soc")}</a>'
         f'<a class="sm-link" href="/crm/mua-lai">🔄 Cơ hội mua lại{n("mua_lai")}</a>'
+        '<a class="sm-link" href="/crm/khach-ngu">😴 Khách ngủ (màn 41)</a>'
         "</div></details>"
     )
 
@@ -248,11 +264,43 @@ def _user_box() -> str:
     vai_tro = escape(user.get("role") or "")
     return (
         '<div class="top-user">'
-        f'<div class="su-info"><div class="su-name" title="{ten}">{ten}</div>'
+        + _chuong(user)
+        + f'<div class="su-info"><div class="su-name" title="{ten}">{ten}</div>'
         f'<div class="su-role">{vai_tro}</div></div>'
         '<form method="post" action="/dang-xuat" class="su-form" data-native>'
         '<button class="su-out" title="Đăng xuất">Đăng xuất</button></form>'
         "</div>"
+    )
+
+
+# Số thông báo chưa đọc bày trên MỌI trang -> cache ngắn theo từng người,
+# khỏi bắn một câu đếm mỗi lần vẽ trang (cùng cách làm với _sale_dept).
+_chuong_cache: dict[int, tuple[float, int]] = {}
+_CHUONG_TTL = 20.0
+
+
+def _chuong(user: dict) -> str:
+    """Chuông thông báo (màn 3) + huy hiệu số chưa đọc."""
+    try:
+        uid = int(user.get("sub") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if not uid:
+        return ""
+    luc, so = _chuong_cache.get(uid, (0.0, 0))
+    if time.monotonic() - luc > _CHUONG_TTL:
+        try:
+            from app.db.repositories import notification_repo
+
+            so = notification_repo.dem_chua_doc(uid)["tong"]
+        except Exception:  # noqa: BLE001 — DB lỗi thì chuông im, không vỡ trang
+            so = 0
+        _chuong_cache[uid] = (time.monotonic(), so)
+    huy_hieu = (f'<span class="bell-dot">{so if so < 100 else "99+"}</span>'
+                if so else "")
+    return (
+        f'<a class="bell" href="/crm/thong-bao" title="Thông báo ({so} chưa đọc)">'
+        f'{_icon("bell")}{huy_hieu}</a>'
     )
 
 
@@ -493,6 +541,14 @@ a{color:var(--accent)}
 .su-out{border:1px solid var(--border);background:transparent;color:var(--sub);
   font-size:11px;padding:4px 8px;border-radius:8px;cursor:pointer;white-space:nowrap}
 .su-out:hover{border-color:var(--err);color:var(--err);background:var(--err-bg)}
+/* chuông thông báo (màn 3) — huy hiệu số chưa đọc đè góc trên phải */
+.bell{position:relative;display:inline-flex;align-items:center;justify-content:center;
+  width:32px;height:32px;border-radius:9px;color:var(--sub);border:1px solid transparent}
+.bell:hover{color:var(--text);border-color:var(--border);background:var(--card)}
+.bell svg{width:17px;height:17px}
+.bell-dot{position:absolute;top:-1px;right:-1px;min-width:16px;height:16px;padding:0 4px;
+  border-radius:9px;background:var(--err);color:#fff;font-size:10px;font-weight:700;
+  line-height:16px;text-align:center}
 
 /* ---------- khung phải ---------- */
 .main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh}

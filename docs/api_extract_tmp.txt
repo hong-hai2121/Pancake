@@ -1,0 +1,949 @@
+--- TRANG 1 ---
+DANH SÁCH API PHẦN MỀM CRM
+I. Quy ước chung
+Base URL:
+/api/v1
+Định dạng dữ liệu:
+Content-Type: application/json
+Xác thực:
+Authorization: Bearer <access_token>
+Cấu trúc phản hồi thành công:
+{
+"success": true,
+"data": {},
+"message": "Thành công"
+}
+Cấu trúc phản hồi lỗi:
+{
+"success": false,
+"error_code": "VALIDATION_ERROR",
+"message": "Dữ liệu không hợp lệ",
+"errors": {}
+}
+Phân trang:
+?page=1&per_page=20
+Sắp xếp:
+?sort_by=created_at&sort_order=desc
+1
+--- TRANG 2 ---
+Lọc ngày:
+?from_date=2026-07-01&to_date=2026-07-31
+II. API xác thực và tài khoản
+AUTH-001 – Đăng nhập
+POST /auth/login
+Dữ liệu gửi:
+{
+"username": "sale01",
+"password": "******"
+}
+Kết quả:
+Access token.
+Refresh token.
+Thông tin người dùng.
+Vai trò.
+Quyền.
+AUTH-002 – Làm mới token
+POST /auth/refresh
+AUTH-003 – Đăng xuất
+POST /auth/logout
+• 
+• 
+• 
+• 
+• 
+2
+--- TRANG 3 ---
+AUTH-004 – Thông tin tài khoản hiện tại
+GET /auth/me
+AUTH-005 – Đổi mật khẩu
+POST /auth/change-password
+AUTH-006 – Quên mật khẩu
+POST /auth/forgot-password
+III. API người dùng và phân quyền
+USER-001 – Danh sách người dùng
+GET /users
+Bộ lọc:
+Department.
+Team.
+Role.
+Status.
+Keyword.
+USER-002 – Chi tiết người dùng
+GET /users/{user_id}
+USER-003 – Tạo người dùng
+POST /users
+• 
+• 
+• 
+• 
+• 
+3
+--- TRANG 4 ---
+USER-004 – Cập nhật người dùng
+PUT /users/{user_id}
+USER-005 – Khóa hoặc mở tài khoản
+PATCH /users/{user_id}/status
+USER-006 – Chuyển khách khi nhân viên nghỉ
+POST /users/{user_id}/transfer-customers
+Dữ liệu:
+{
+"new_owner_id": 25,
+"transfer_open_tasks": true,
+"transfer_leads": true,
+"transfer_care_plans": true
+}
+ROLE-001 – Danh sách vai trò
+GET /roles
+ROLE-002 – Tạo vai trò
+POST /roles
+ROLE-003 – Cập nhật vai trò
+PUT /roles/{role_id}
+4
+--- TRANG 5 ---
+ROLE-004 – Gán quyền cho vai trò
+PUT /roles/{role_id}/permissions
+PERMISSION-001 – Danh sách quyền
+GET /permissions
+TEAM-001 – Danh sách nhóm
+GET /teams
+TEAM-002 – Tạo nhóm
+POST /teams
+TEAM-003 – Gán nhân viên vào nhóm
+POST /teams/{team_id}/members
+IV. API khách hàng
+CUSTOMER-001 – Danh sách khách hàng
+GET /customers
+Bộ lọc:
+Owner .
+Sale.
+CSKH.
+Page.
+• 
+• 
+• 
+• 
+5
+--- TRANG 6 ---
+Source.
+Status.
+Has_order .
+Has_warning.
+Repurchase_due.
+Sleeping_customer .
+Keyword.
+CUSTOMER-002 – Chi tiết khách hàng
+GET /customers/{customer_id}
+CUSTOMER-003 – Tạo khách hàng
+POST /customers
+CUSTOMER-004 – Cập nhật khách hàng
+PUT /customers/{customer_id}
+CUSTOMER-005 – Xóa mềm khách hàng
+DELETE /customers/{customer_id}
+CUSTOMER-006 – Tìm khách nghi trùng
+GET /customers/duplicates
+CUSTOMER-007 – Hợp nhất khách hàng
+POST /customers/merge
+Dữ liệu:
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+6
+--- TRANG 7 ---
+{
+"primary_customer_id": 1001,
+"duplicate_customer_ids": [1002, 1003]
+}
+CUSTOMER-008 – Lịch sử khách hàng
+GET /customers/{customer_id}/timeline
+Trả về:
+Tin nhắn.
+Cuộc gọi.
+Trạng thái lead.
+Đơn hàng.
+Chăm sóc.
+Công việc.
+Mua lại.
+CUSTOMER-009 – Gắn tag
+POST /customers/{customer_id}/tags
+CUSTOMER-010 – Gỡ tag
+DELETE /customers/{customer_id}/tags/{tag_id}
+CUSTOMER-011 – Chuyển người phụ trách
+POST /customers/{customer_id}/assign
+CUSTOMER-012 – Danh sách người từng phụ trách
+GET /customers/{customer_id}/assignment-history
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+7
+--- TRANG 8 ---
+V. API định danh và nguồn khách
+IDENTITY-001 – Danh sách định danh khách
+GET /customers/{customer_id}/identities
+IDENTITY-002 – Thêm định danh
+POST /customers/{customer_id}/identities
+Ví dụ:
+Facebook PSID.
+Pancake customer ID.
+Zalo ID.
+Số điện thoại phụ.
+ATTRIBUTION-001 – Gắn nguồn quảng cáo
+POST /customers/{customer_id}/attributions
+ATTRIBUTION-002 – Xem nguồn khách
+GET /customers/{customer_id}/attributions
+VI. API Pancake
+PANCAKE-001 – Kết nối Pancake
+POST /integrations/pancake/connect
+• 
+• 
+• 
+• 
+8
+--- TRANG 9 ---
+PANCAKE-002 – Danh sách Page Pancake
+GET /integrations/pancake/pages
+PANCAKE-003 – Lưu Page cần đồng bộ
+POST /integrations/pancake/pages/sync-settings
+PANCAKE-004 – Kiểm tra token
+POST /integrations/pancake/test-connection
+PANCAKE-005 – Đồng bộ khách hàng
+POST /integrations/pancake/sync/customers
+PANCAKE-006 – Đồng bộ hội thoại
+POST /integrations/pancake/sync/conversations
+PANCAKE-007 – Đồng bộ đơn hàng
+POST /integrations/pancake/sync/orders
+PANCAKE-008 – Lịch sử đồng bộ
+GET /integrations/pancake/sync-logs
+9
+--- TRANG 10 ---
+PANCAKE-009 – Đồng bộ lại bản ghi lỗi
+POST /integrations/pancake/retry
+PANCAKE-010 – Mở liên kết hội thoại Pancake
+GET /conversations/{conversation_id}/external-link
+PANCAKE-WH-001 – Webhook nhận tin nhắn
+POST /webhooks/pancake/messages
+PANCAKE-WH-002 – Webhook nhận cập nhật khách
+POST /webhooks/pancake/customers
+PANCAKE-WH-003 – Webhook nhận cập nhật đơn
+POST /webhooks/pancake/orders
+VII. API hội thoại và tin nhắn
+CONV-001 – Danh sách hội thoại
+GET /conversations
+CONV-002 – Chi tiết hội thoại
+GET /conversations/{conversation_id}
+10
+--- TRANG 11 ---
+CONV-003 – Danh sách tin nhắn
+GET /conversations/{conversation_id}/messages
+CONV-004 – Gắn hội thoại vào khách
+POST /conversations/{conversation_id}/attach-customer
+CONV-005 – Gán nhân viên phụ trách
+POST /conversations/{conversation_id}/assign
+CONV-006 – Gửi tin nhắn
+POST /conversations/{conversation_id}/messages
+Chỉ dùng nếu Pancake cho phép và quyền đã được cấp.
+CONV-007 – Lấy gợi ý AI
+POST /conversations/{conversation_id}/ai-suggestion
+CONV-008 – Kiểm tra nội dung trước gửi
+POST /content/compliance-check
+Dữ liệu:
+{
+"content": "Nội dung cần kiểm tra",
+"channel": "pancake",
+"customer_id": 1001
+}
+11
+--- TRANG 12 ---
+VIII. API pipeline Sale
+PIPELINE-001 – Danh sách pipeline
+GET /pipelines
+PIPELINE-002 – Tạo pipeline
+POST /pipelines
+PIPELINE-003 – Danh sách trạng thái
+GET /pipelines/{pipeline_id}/stages
+PIPELINE-004 – Cập nhật trạng thái pipeline
+PUT /pipelines/{pipeline_id}/stages
+LEAD-001 – Danh sách lead
+GET /leads
+LEAD-002 – Chi tiết lead
+GET /leads/{lead_id}
+LEAD-003 – Tạo lead
+POST /leads
+12
+--- TRANG 13 ---
+LEAD-004 – Cập nhật lead
+PUT /leads/{lead_id}
+LEAD-005 – Chuyển trạng thái lead
+POST /leads/{lead_id}/move-stage
+Dữ liệu:
+{
+"stage_id": 6,
+"reason": "Đã báo giá",
+"next_action_at": "2026-08-01T10:00:00+07:00"
+}
+LEAD-006 – Lịch sử trạng thái
+GET /leads/{lead_id}/stage-history
+LEAD-007 – Gán Sale
+POST /leads/{lead_id}/assign
+LEAD-008 – Danh sách lead quá hạn
+GET /leads/overdue
+LEAD-009 – Danh sách lead nóng
+GET /leads/hot
+13
+--- TRANG 14 ---
+LEAD-010 – Ghi lý do chưa mua
+POST /leads/{lead_id}/lost-reasons
+LEAD-011 – Kết thúc lead
+POST /leads/{lead_id}/close
+IX. API tư vấn và hồ sơ tình trạng khách
+CONSULT-001 – Tạo phiên tư vấn
+POST /consultation-sessions
+CONSULT-002 – Chi tiết phiên tư vấn
+GET /consultation-sessions/{session_id}
+CONSULT-003 – Lưu câu trả lời tư vấn
+POST /consultation-sessions/{session_id}/answers
+CONSULT-004 – Hoàn tất phiên tư vấn
+POST /consultation-sessions/{session_id}/complete
+CONSULT-005 – Dữ liệu còn thiếu
+GET /consultation-sessions/{session_id}/missing-fields
+14
+--- TRANG 15 ---
+SYMPTOM-001 – Danh mục triệu chứng
+GET /symptoms
+SYMPTOM-002 – Lưu triệu chứng khách
+POST /customers/{customer_id}/symptoms
+SYMPTOM-003 – Cập nhật triệu chứng
+PUT /customers/{customer_id}/symptoms/{customer_symptom_id}
+MEDICAL-001 – Lưu kết quả khám
+POST /customers/{customer_id}/examinations
+MEDICAL-002 – Danh sách kết quả khám
+GET /customers/{customer_id}/examinations
+MEDICAL-003 – Lưu thuốc đang dùng
+POST /customers/{customer_id}/current-medications
+MEDICAL-004 – Lưu điều trị trước đây
+POST /customers/{customer_id}/previous-treatments
+15
+--- TRANG 16 ---
+SAFETY-001 – Lưu phiếu sàng lọc
+POST /customers/{customer_id}/safety-screenings
+SAFETY-002 – Chạy kiểm tra rủi ro
+POST /customers/{customer_id}/safety-check
+SAFETY-003 – Chuyển chuyên môn
+POST /customers/{customer_id}/clinical-escalations
+SAFETY-004 – Danh sách ca chờ chuyên môn
+GET /clinical-escalations
+SAFETY-005 – Người chuyên môn xử lý
+POST /clinical-escalations/{escalation_id}/resolve
+X. API sản phẩm
+PRODUCT-001 – Danh sách sản phẩm
+GET /products
+PRODUCT-002 – Chi tiết sản phẩm
+GET /products/{product_id}
+16
+--- TRANG 17 ---
+PRODUCT-003 – Tạo sản phẩm
+POST /products
+PRODUCT-004 – Cập nhật sản phẩm
+PUT /products/{product_id}
+PRODUCT-005 – Tạo phiên bản sản phẩm
+POST /products/{product_id}/versions
+PRODUCT-006 – Duyệt nội dung sản phẩm
+POST /products/{product_id}/approve
+PRODUCT-007 – Khóa sản phẩm
+PATCH /products/{product_id}/status
+PRODUCT-008 – Lịch sử thay đổi sản phẩm
+GET /products/{product_id}/history
+XI. API liệu trình
+TREATMENT-001 – Danh sách mẫu liệu trình
+GET /treatment-templates
+17
+--- TRANG 18 ---
+TREATMENT-002 – Chi tiết mẫu liệu trình
+GET /treatment-templates/{template_id}
+TREATMENT-003 – Tạo mẫu liệu trình
+POST /treatment-templates
+TREATMENT-004 – Cập nhật mẫu liệu trình
+PUT /treatment-templates/{template_id}
+TREATMENT-005 – Thêm sản phẩm vào liệu trình
+POST /treatment-templates/{template_id}/items
+TREATMENT-006 – Cập nhật sản phẩm trong liệu trình
+PUT /treatment-templates/{template_id}/items/{item_id}
+TREATMENT-007 – Tạo luật liệu trình
+POST /treatment-templates/{template_id}/rules
+TREATMENT-008 – Danh sách luật liệu trình
+GET /treatment-templates/{template_id}/rules
+18
+--- TRANG 19 ---
+TREATMENT-009 – Kiểm tra khách có phù hợp
+POST /treatment-templates/{template_id}/eligibility-check
+Dữ liệu:
+{
+"customer_id": 1001
+}
+TREATMENT-010 – Gợi ý liệu trình
+POST /customers/{customer_id}/treatment-recommendations
+TREATMENT-011 – Duyệt đề xuất liệu trình
+POST /treatment-recommendations/{recommendation_id}/approve
+TREATMENT-012 – Tạo liệu trình thực tế cho khách
+POST /customers/{customer_id}/treatments
+TREATMENT-013 – Chi tiết liệu trình khách
+GET /customer-treatments/{customer_treatment_id}
+TREATMENT-014 – Điều chỉnh liệu trình khách
+POST /customer-treatments/{customer_treatment_id}/adjustments
+19
+--- TRANG 20 ---
+XII. API đơn hàng
+ORDER-001 – Danh sách đơn hàng
+GET /orders
+ORDER-002 – Chi tiết đơn hàng
+GET /orders/{order_id}
+ORDER-003 – Tạo đơn hàng
+POST /orders
+ORDER-004 – Cập nhật đơn hàng
+PUT /orders/{order_id}
+ORDER-005 – Cập nhật trạng thái đơn
+POST /orders/{order_id}/status
+ORDER-006 – Lịch sử trạng thái đơn
+GET /orders/{order_id}/status-history
+ORDER-007 – Hủy đơn
+POST /orders/{order_id}/cancel
+20
+--- TRANG 21 ---
+ORDER-008 – Tạo đơn đổi
+POST /orders/{order_id}/exchange
+ORDER-009 – Tạo yêu cầu hoàn
+POST /orders/{order_id}/return
+ORDER-010 – Phân loại đơn đầu/mua lại
+GET /orders/{order_id}/classification
+ORDER-011 – Ánh xạ trạng thái ngoài
+GET /order-status-mappings
+PUT /order-status-mappings
+XIII. API bàn giao Sale sang CSKH
+HANDOVER-001 – Danh sách chờ bàn giao
+GET /handovers/pending
+HANDOVER-002 – Tạo bàn giao
+POST /handovers
+21
+--- TRANG 22 ---
+HANDOVER-003 – Chi tiết bàn giao
+GET /handovers/{handover_id}
+HANDOVER-004 – CSKH nhận bàn giao
+POST /handovers/{handover_id}/accept
+HANDOVER-005 – Trả lại Sale bổ sung
+POST /handovers/{handover_id}/return
+HANDOVER-006 – Gán CSKH
+POST /handovers/{handover_id}/assign
+XIV. API kế hoạch chăm sóc
+CARE-001 – Danh sách kế hoạch chăm
+GET /care-plans
+CARE-002 – Chi tiết kế hoạch chăm
+GET /care-plans/{care_plan_id}
+CARE-003 – Tạo kế hoạch chăm
+POST /care-plans
+22
+--- TRANG 23 ---
+CARE-004 – Tạo các mốc chăm
+POST /care-plans/{care_plan_id}/generate-steps
+CARE-005 – Danh sách mốc chăm
+GET /care-plans/{care_plan_id}/steps
+CARE-006 – Hoàn thành một mốc chăm
+POST /care-plan-steps/{step_id}/complete
+CARE-007 – Dời lịch mốc chăm
+POST /care-plan-steps/{step_id}/reschedule
+CARE-008 – Bỏ qua mốc chăm
+POST /care-plan-steps/{step_id}/skip
+Phải có lý do.
+CARE-009 – Danh sách việc chăm hôm nay
+GET /care-tasks/today
+CARE-010 – Danh sách việc chăm quá hạn
+GET /care-tasks/overdue
+23
+--- TRANG 24 ---
+XV. API từng mốc chăm sóc
+CARE-STEP-001 – Phiếu xác nhận đơn
+POST /care/customers/{customer_id}/order-confirmation
+CARE-STEP-002 – Phiếu onboarding
+POST /care/customers/{customer_id}/onboarding
+CARE-STEP-003 – Xác nhận ngày bắt đầu sử dụng
+POST /care/customers/{customer_id}/start-usage
+Dữ liệu:
+{
+"actual_start_date": "2026-08-01",
+"started": true,
+"delay_reason": null
+}
+CARE-STEP-004 – Phiếu chăm ngày 4
+POST /care/customers/{customer_id}/day-4
+CARE-STEP-005 – Phiếu chăm ngày 10
+POST /care/customers/{customer_id}/day-10
+24
+--- TRANG 25 ---
+CARE-STEP-006 – Phiếu đánh giá ngày 15
+POST /care/customers/{customer_id}/day-15
+CARE-STEP-007 – Phiếu chăm ngày 20
+POST /care/customers/{customer_id}/day-20
+CARE-STEP-008 – Phiếu bán lại ngày 25
+POST /care/customers/{customer_id}/day-25
+CARE-STEP-009 – Phiếu xử lý ngày 28
+POST /care/customers/{customer_id}/day-28
+CARE-STEP-010 – Phiếu chăm liệu trình 2
+POST /care/customers/{customer_id}/treatment-2
+CARE-STEP-011 – Phiếu chăm liệu trình 3
+POST /care/customers/{customer_id}/treatment-3
+XVI. API đánh giá triệu chứng
+ASSESSMENT-001 – Tạo đánh giá triệu chứng
+POST /care-interactions/{interaction_id}/symptom-assessments
+25
+--- TRANG 26 ---
+ASSESSMENT-002 – Lịch sử điểm triệu chứng
+GET /customers/{customer_id}/symptom-assessments
+ASSESSMENT-003 – So sánh trước và sau
+GET /customers/{customer_id}/symptom-progress
+XVII. API không phản hồi
+NORESPONSE-001 – Khởi tạo chuỗi không phản hồi
+POST /customers/{customer_id}/no-response-sequence
+NORESPONSE-002 – Ghi kết quả từng lần liên hệ
+POST /no-response-sequences/{sequence_id}/attempts
+NORESPONSE-003 – Kết thúc chuỗi
+POST /no-response-sequences/{sequence_id}/close
+NORESPONSE-004 – Yêu cầu ngừng liên hệ
+POST /customers/{customer_id}/do-not-contact
+26
+--- TRANG 27 ---
+XVIII. API mua lại
+REPURCHASE-001 – Danh sách cơ hội mua lại
+GET /repurchase-opportunities
+REPURCHASE-002 – Chi tiết cơ hội
+GET /repurchase-opportunities/{opportunity_id}
+REPURCHASE-003 – Tạo cơ hội mua lại
+POST /repurchase-opportunities
+REPURCHASE-004 – Cập nhật cơ hội
+PUT /repurchase-opportunities/{opportunity_id}
+REPURCHASE-005 – Chuyển trạng thái mua lại
+POST /repurchase-opportunities/{opportunity_id}/move-stage
+REPURCHASE-006 – Ghi lý do chưa mua lại
+POST /repurchase-opportunities/{opportunity_id}/lost-reason
+REPURCHASE-007 – Tính ngày dự kiến hết
+POST /customer-treatments/{customer_treatment_id}/calculate-end-date
+27
+--- TRANG 28 ---
+REPURCHASE-008 – Khách sắp hết liệu trình
+GET /repurchase-opportunities/due-soon
+REPURCHASE-009 – Khách quá hạn mua lại
+GET /repurchase-opportunities/overdue
+REPURCHASE-010 – Danh sách khách ngủ
+GET /customers/sleeping
+XIX. API công việc
+TASK-001 – Danh sách công việc
+GET /tasks
+TASK-002 – Chi tiết công việc
+GET /tasks/{task_id}
+TASK-003 – Tạo công việc
+POST /tasks
+TASK-004 – Cập nhật công việc
+PUT /tasks/{task_id}
+28
+--- TRANG 29 ---
+TASK-005 – Hoàn thành công việc
+POST /tasks/{task_id}/complete
+TASK-006 – Dời lịch
+POST /tasks/{task_id}/reschedule
+TASK-007 – Chuyển người phụ trách
+POST /tasks/{task_id}/reassign
+TASK-008 – Công việc hôm nay
+GET /tasks/today
+TASK-009 – Công việc quá hạn
+GET /tasks/overdue
+XX. API tổng đài
+CALL-001 – Danh sách cuộc gọi
+GET /calls
+CALL-002 – Chi tiết cuộc gọi
+GET /calls/{call_id}
+29
+--- TRANG 30 ---
+CALL-003 – Tạo cuộc gọi từ CRM
+POST /calls/click-to-call
+CALL-004 – Gắn cuộc gọi vào khách
+POST /calls/{call_id}/attach-customer
+CALL-005 – Lấy file ghi âm
+GET /calls/{call_id}/recording
+CALL-WH-001 – Webhook cuộc gọi mới
+POST /webhooks/call-center/calls
+CALL-WH-002 – Webhook cập nhật ghi âm
+POST /webhooks/call-center/recordings
+XXI. API AI cuộc gọi
+AI-CALL-001 – Chuyển giọng nói thành văn bản
+POST /calls/{call_id}/transcribe
+AI-CALL-002 – Lấy transcript
+GET /calls/{call_id}/transcript
+30
+--- TRANG 31 ---
+AI-CALL-003 – AI chấm cuộc gọi
+POST /calls/{call_id}/evaluate
+AI-CALL-004 – Lấy kết quả chấm
+GET /calls/{call_id}/evaluation
+AI-CALL-005 – Quản lý duyệt kết quả
+POST /calls/{call_id}/evaluation/review
+AI-CALL-006 – Báo AI chấm sai
+POST /calls/{call_id}/evaluation/feedback
+XXII. API kho kiến thức
+KNOWLEDGE-001 – Danh sách tài liệu
+GET /knowledge-documents
+KNOWLEDGE-002 – Chi tiết tài liệu
+GET /knowledge-documents/{document_id}
+KNOWLEDGE-003 – Tạo tài liệu
+POST /knowledge-documents
+31
+--- TRANG 32 ---
+KNOWLEDGE-004 – Cập nhật tài liệu
+PUT /knowledge-documents/{document_id}
+KNOWLEDGE-005 – Tạo phiên bản
+POST /knowledge-documents/{document_id}/versions
+KNOWLEDGE-006 – Gửi duyệt
+POST /knowledge-documents/{document_id}/submit-approval
+KNOWLEDGE-007 – Duyệt tài liệu
+POST /knowledge-documents/{document_id}/approve
+KNOWLEDGE-008 – Từ chối duyệt
+POST /knowledge-documents/{document_id}/reject
+KNOWLEDGE-009 – Tìm kiếm kiến thức
+POST /knowledge/search
+Dữ liệu:
+{
+"query": "Khách bị trào ngược sau ăn",
+"problem_group": "reflux",
+"only_approved": true
+}
+32
+--- TRANG 33 ---
+XXIII. API kịch bản tư vấn
+SCENARIO-001 – Danh sách kịch bản
+GET /consultation-scenarios
+SCENARIO-002 – Chi tiết kịch bản
+GET /consultation-scenarios/{scenario_id}
+SCENARIO-003 – Tạo kịch bản
+POST /consultation-scenarios
+SCENARIO-004 – Thêm bước kịch bản
+POST /consultation-scenarios/{scenario_id}/steps
+SCENARIO-005 – Tạo luật điều hướng
+POST /consultation-scenarios/{scenario_id}/rules
+SCENARIO-006 – Chạy bước tiếp theo
+POST /consultation-sessions/{session_id}/next-step
+33
+--- TRANG 34 ---
+XXIV. API AI tư vấn
+AI-001 – Tóm tắt khách hàng
+POST /customers/{customer_id}/ai-summary
+AI-002 – Trích xuất dữ liệu từ hội thoại
+POST /conversations/{conversation_id}/extract-data
+AI-003 – Gợi ý câu hỏi tiếp theo
+POST /consultation-sessions/{session_id}/suggest-next-question
+AI-004 – Gợi ý câu trả lời
+POST /consultation-sessions/{session_id}/suggest-response
+AI-005 – Gợi ý nội dung follow-up
+POST /customers/{customer_id}/suggest-followup
+AI-006 – Lịch sử gợi ý AI
+GET /customers/{customer_id}/ai-recommendations
+AI-007 – Xác nhận đã sử dụng gợi ý
+POST /ai-recommendations/{recommendation_id}/accept
+34
+--- TRANG 35 ---
+AI-008 – Từ chối gợi ý
+POST /ai-recommendations/{recommendation_id}/reject
+XXV. API Marketing và quảng cáo
+ADS-001 – Kết nối tài khoản quảng cáo
+POST /integrations/facebook-ads/connect
+ADS-002 – Danh sách campaign
+GET /ad-campaigns
+ADS-003 – Danh sách adset
+GET /ad-sets
+ADS-004 – Danh sách quảng cáo
+GET /ads
+ADS-005 – Đồng bộ chi phí
+POST /integrations/facebook-ads/sync
+ADS-006 – Phễu quảng cáo
+GET /ads/{ad_id}/funnel
+35
+--- TRANG 36 ---
+ADS-007 – Phiếu sức khỏe quảng cáo
+GET /ads/{ad_id}/health-report
+ADS-008 – Lý do chưa chốt theo quảng cáo
+GET /ads/{ad_id}/lost-reasons
+ADS-009 – Băn khoăn khách theo quảng cáo
+GET /ads/{ad_id}/objections
+ADS-010 – ROAS và LTV
+GET /ads/{ad_id}/performance
+Tham số:
+?window=30
+?window=60
+?window=90
+XXVI. API Funnel
+FUNNEL-001 – Ghi nhận sự kiện phễu
+POST /funnel-events
+FUNNEL-002 – Phễu tổng thể
+GET /reports/funnel
+36
+--- TRANG 37 ---
+FUNNEL-003 – Phễu theo Sale
+GET /reports/funnel/sales
+FUNNEL-004 – Phễu theo quảng cáo
+GET /reports/funnel/ads
+XXVII. API báo cáo
+REPORT-001 – Dashboard tổng quan
+GET /reports/dashboard
+REPORT-002 – Báo cáo Sale
+GET /reports/sales
+REPORT-003 – Báo cáo CSKH
+GET /reports/customer-care
+REPORT-004 – Báo cáo Marketing
+GET /reports/marketing
+REPORT-005 – Báo cáo đơn hàng
+GET /reports/orders
+37
+--- TRANG 38 ---
+REPORT-006 – Báo cáo doanh thu
+GET /reports/revenue
+REPORT-007 – Báo cáo mua lại
+GET /reports/repurchase
+REPORT-008 – Báo cáo chất lượng cuộc gọi
+GET /reports/call-quality
+REPORT-009 – Báo cáo công việc
+GET /reports/tasks
+REPORT-010 – Drill-down dữ liệu
+GET /reports/drill-down
+Ví dụ:
+/reports/drill-down?metric=delivered_orders&user_id=25
+REPORT-011 – Xuất Excel
+POST /reports/export
+38
+--- TRANG 39 ---
+XXVIII. API automation
+AUTO-001 – Danh sách automation
+GET /automations
+AUTO-002 – Chi tiết automation
+GET /automations/{automation_id}
+AUTO-003 – Tạo automation
+POST /automations
+AUTO-004 – Cập nhật automation
+PUT /automations/{automation_id}
+AUTO-005 – Bật/tắt automation
+PATCH /automations/{automation_id}/status
+AUTO-006 – Kiểm thử automation
+POST /automations/{automation_id}/test
+AUTO-007 – Nhật ký chạy automation
+GET /automations/{automation_id}/logs
+39
+--- TRANG 40 ---
+AUTO-008 – Chạy lại automation lỗi
+POST /automation-runs/{run_id}/retry
+XXIX. API thông báo
+NOTIFY-001 – Danh sách thông báo
+GET /notifications
+NOTIFY-002 – Đánh dấu đã đọc
+POST /notifications/{notification_id}/read
+NOTIFY-003 – Đánh dấu tất cả đã đọc
+POST /notifications/read-all
+NOTIFY-004 – Cài đặt thông báo
+PUT /notification-settings
+XXX. API danh mục dùng chung
+MASTER-001 – Danh sách tag
+GET /master-data/tags
+40
+--- TRANG 41 ---
+MASTER-002 – Danh sách lý do chưa mua
+GET /master-data/lost-reasons
+MASTER-003 – Danh sách băn khoăn
+GET /master-data/objections
+MASTER-004 – Danh sách kết quả chăm
+GET /master-data/care-results
+MASTER-005 – Danh sách loại công việc
+GET /master-data/task-types
+MASTER-006 – Danh sách trạng thái khách
+GET /master-data/customer-statuses
+MASTER-007 – Tạo hoặc sửa danh mục
+POST /master-data/{type}
+PUT /master-data/{type}/{id}
+XXXI. API file và tài liệu đính kèm
+FILE-001 – Tải file lên
+POST /files/upload
+41
+--- TRANG 42 ---
+FILE-002 – Xem thông tin file
+GET /files/{file_id}
+FILE-003 – Tải file xuống
+GET /files/{file_id}/download
+FILE-004 – Xóa mềm file
+DELETE /files/{file_id}
+XXXII. API nhật ký và hệ thống
+AUDIT-001 – Nhật ký hoạt động
+GET /audit-logs
+AUDIT-002 – Chi tiết thay đổi
+GET /audit-logs/{audit_id}
+SYNC-001 – Danh sách lỗi đồng bộ
+GET /sync-errors
+SYNC-002 – Retry lỗi đồng bộ
+POST /sync-errors/{error_id}/retry
+42
+--- TRANG 43 ---
+SYSTEM-001 – Cấu hình hệ thống
+GET /settings
+SYSTEM-002 – Cập nhật cấu hình
+PUT /settings
+SYSTEM-003 – Kiểm tra tình trạng hệ thống
+GET /health
+XXXIII. API sao lưu
+BACKUP-001 – Danh sách bản sao lưu
+GET /backups
+BACKUP-002 – Tạo sao lưu thủ công
+POST /backups
+BACKUP-003 – Phục hồi dữ liệu
+POST /backups/{backup_id}/restore
+43
+--- TRANG 44 ---
+XXXIV. Webhook nội bộ quan trọng
+WH-001 – Khi lead mới được tạo
+POST /internal-events/lead-created
+Hệ thống:
+Chia Sale.
+Tạo SLA.
+Gửi thông báo.
+WH-002 – Khi đơn giao thành công
+POST /internal-events/order-delivered
+Hệ thống:
+Tạo bàn giao.
+Gán CSKH.
+Tạo kế hoạch chăm.
+WH-003 – Khi khách bắt đầu dùng
+POST /internal-events/treatment-started
+Hệ thống:
+Tạo mốc ngày 4, 10, 15, 20, 25.
+WH-004 – Khi chăm ngày 20 hoàn tất
+POST /internal-events/care-day-20-completed
+Hệ thống:
+Tạo cơ hội mua lại.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+44
+--- TRANG 45 ---
+WH-005 – Khi ngày 25 chưa mua
+POST /internal-events/repurchase-not-closed
+Hệ thống:
+Tạo việc ngày 28.
+WH-006 – Khi phát hiện nội dung vi phạm
+POST /internal-events/compliance-violation
+Hệ thống:
+Ghi log.
+Cảnh báo quản lý.
+Chặn gửi tự động.
+XXXV. Nhóm API ưu tiên cho MVP
+Bản đầu tiên nên triển khai trước các nhóm:
+Auth và phân quyền.
+Người dùng và nhóm.
+Khách hàng.
+Đồng bộ Pancake.
+Hội thoại.
+Pipeline Sale.
+Hồ sơ tư vấn.
+Công việc.
+Sản phẩm.
+Mẫu liệu trình.
+Đơn hàng.
+Bàn giao Sale sang CSKH.
+Kế hoạch chăm.
+Mốc chăm ngày 4–10–15–20–25–28.
+Cơ hội mua lại.
+Dashboard cơ bản.
+Audit log.
+Các nhóm triển khai giai đoạn sau:
+Tổng đài.
+Transcript.
+AI chấm cuộc gọi.
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+7. 
+8. 
+9. 
+10. 
+11. 
+12. 
+13. 
+14. 
+15. 
+16. 
+17. 
+• 
+• 
+• 
+45
+--- TRANG 46 ---
+AI tư vấn.
+Kho kiến thức nâng cao.
+Facebook Ads.
+Attribution.
+LTV.
+Trình thiết kế automation.
+Tái kích hoạt khách ngủ.
+XXXVI. Yêu cầu kỹ thuật với API
+Mọi API ghi dữ liệu phải:
+Kiểm tra quyền.
+Kiểm tra dữ liệu bắt buộc.
+Ghi audit log.
+Trả mã lỗi rõ ràng.
+Không xóa cứng dữ liệu nghiệp vụ.
+Hỗ trợ idempotency với API đồng bộ.
+Hỗ trợ pagination.
+Hỗ trợ lọc và sắp xếp.
+Ghi external ID với dữ liệu từ hệ thống ngoài.
+Các mã lỗi tiêu chuẩn:
+UNAUTHORIZED
+FORBIDDEN
+NOT_FOUND
+VALIDATION_ERROR
+DUPLICATE_CUSTOMER
+INVALID_STAGE_TRANSITION
+MISSING_REQUIRED_DATA
+TREATMENT_BLOCKED
+CLINICAL_REVIEW_REQUIRED
+COMPLIANCE_VIOLATION
+INTEGRATION_ERROR
+RATE_LIMITED
+Với API tạo đơn, đồng bộ Pancake, nhận webhook và tạo thanh toán, nên hỗ trợ:
+Idempotency-Key
+để tránh tạo trùng khi request được gửi lại.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+46

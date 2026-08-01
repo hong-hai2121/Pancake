@@ -119,8 +119,13 @@ def _nhan_vien_pos(don_pos: dict) -> None:
             pass
 
 
-def sync_row(don_pos: dict, anh_xa: dict[int, str]) -> str:
-    """Đồng bộ MỘT đơn POS. Trả 'tao_moi' | 'cap_nhat' | 'bo_qua'. Idempotent."""
+def sync_row(don_pos: dict, anh_xa: dict[int, str],
+             *, hook_ban_giao: bool = True) -> str:
+    """Đồng bộ MỘT đơn POS. Trả 'tao_moi' | 'cap_nhat' | 'bo_qua'. Idempotent.
+
+    `hook_ban_giao=False` khi BACKFILL lịch sử: đơn giao từ đời nào rồi mà vẫn
+    sinh phiếu bàn giao + việc onboarding thì CSKH ngập 53k việc ảo (FR-090
+    chỉ dành cho đơn giao MỚI)."""
     shop_id = int(don_pos["shop_id"])
     pos_order_id = int(don_pos["id"])
     pos_status = don_pos.get("status")
@@ -146,13 +151,16 @@ def sync_row(don_pos: dict, anh_xa: dict[int, str]) -> str:
             "synced_at": datetime.now(timezone.utc),
         })
         if don_cu["status"] != crm_status:
-            # force: POS là nguồn sự thật — không bắt đơn POS đi đúng đường
-            # chuyển tay của CRM, nhưng lịch sử vẫn ghi đủ từng bước.
-            order_service.change_status(don_cu["id"], crm_status,
-                                        reason=ly_do, force=True)
+            # Mốc giao đóng dấu TRƯỚC change_status: hook bàn giao B8 chạy
+            # trong change_status cần delivered_at để tính ngày dự kiến bắt đầu.
             moc = _moc_giao_thanh_cong(don_pos)
             if moc and crm_status in ("delivered", "collected"):
                 order_repo.set_delivered_at(don_cu["id"], moc)
+            # force: POS là nguồn sự thật — không bắt đơn POS đi đúng đường
+            # chuyển tay của CRM, nhưng lịch sử vẫn ghi đủ từng bước.
+            order_service.change_status(don_cu["id"], crm_status,
+                                        reason=ly_do, force=True,
+                                        ban_giao=hook_ban_giao)
         _quy_nguon(don_cu["customer_id"], don_pos)
         return "cap_nhat"
 
@@ -199,8 +207,14 @@ def sync_row(don_pos: dict, anh_xa: dict[int, str]) -> str:
         "synced_at": datetime.now(timezone.utc),
         "_reason": ly_do,
     }
-    order_repo.create_order(don, [])
+    don_moi = order_repo.create_order(don, [])
     _quy_nguon(kh["id"], don_pos)
+    # Đơn về CRM khi ĐÃ giao xong (poll thưa/webhook trễ) không đi qua
+    # change_status -> gọi hook bàn giao B8 trực tiếp (tự nuốt lỗi, idempotent).
+    if hook_ban_giao and crm_status in ("delivered", "collected"):
+        from app.services import handover_service
+
+        handover_service.hook_giao_thanh_cong(don_moi["id"])
     return "tao_moi"
 
 
@@ -214,6 +228,8 @@ def sync_batch(dons: list[dict], *, run_type: str = "poll") -> dict:
     anh_xa = order_repo.load_mapping_dict()
     ket_qua = {"tao_moi": 0, "cap_nhat": 0, "bo_qua": 0, "loi": 0}
     shop = str((dons[0].get("shop_id") if dons else "") or "")
+    # Backfill lịch sử KHÔNG sinh phiếu bàn giao/việc (xem sync_row)
+    hook_ban_giao = run_type != "backfill"
 
     log_id = None
     try:
@@ -224,7 +240,8 @@ def sync_batch(dons: list[dict], *, run_type: str = "poll") -> dict:
 
     for don_pos in dons:
         try:
-            ket_qua[sync_row(don_pos, anh_xa)] += 1
+            ket_qua[sync_row(don_pos, anh_xa,
+                             hook_ban_giao=hook_ban_giao)] += 1
         except Exception as err:  # noqa: BLE001 — xem docstring
             ket_qua["loi"] += 1
             print(

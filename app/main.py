@@ -46,6 +46,9 @@ async def lifespan(_app: FastAPI):
     """
     tasks: list[asyncio.Task] = []
     from app.workers import (
+        care_steps_loop,
+        messages_loop,
+        notifications_loop,
         poll_loop,
         sentiment_loop,
         sync_retry_loop,
@@ -58,6 +61,12 @@ async def lifespan(_app: FastAPI):
     tasks.append(asyncio.create_task(task_escalation_loop(), name="tasks-qua-han"))
     # Mục 4: dọn hàng đợi lỗi đồng bộ + canh token hết hạn.
     tasks.append(asyncio.create_task(sync_retry_loop(), name="sync-retry"))
+    # FR-012: nội dung tin nhắn về crm.messages (công tắc MSG_SYNC_ENABLED).
+    tasks.append(asyncio.create_task(messages_loop(), name="msg-sync"))
+    # Màn 3: quét 11 nguồn sinh thông báo (NOTIFY_SCAN_ENABLED, mặc định BẬT).
+    tasks.append(asyncio.create_task(notifications_loop(), name="notify-scan"))
+    # B9: mốc chăm tới hạn → due + việc nhắc CSKH (nhẹ, chạy luôn như B4).
+    tasks.append(asyncio.create_task(care_steps_loop(), name="care-steps"))
     # B7 + mục 4 (quảng cáo): cần cấu hình POS mới tạo được task.
     if settings.pancake_pos_api_key and settings.pancake_pos_shop_id:
         from app.workers import ads_cost_loop, pos_orders_loop
@@ -241,6 +250,13 @@ from app.api.v1.leads import router as leads_api_router  # noqa: E402
 
 app.include_router(leads_api_router)
 
+# B10: mua lại & khách ngủ (REPURCHASE-001…010, FR-120…123) — PHẢI đứng
+# TRƯỚC customers router: /customers/sleeping là đường literal, đứng sau
+# /customers/{customer_id} sẽ bị route số nuốt mất (Starlette so theo thứ tự).
+from app.api.v1.repurchase import router as repurchase_api_router  # noqa: E402
+
+app.include_router(repurchase_api_router)
+
 # B1: API khách hàng 360° (CUSTOMER-001…012, IDENTITY-001/002).
 from app.api.v1.customers import router as customers_api_router  # noqa: E402
 
@@ -285,6 +301,36 @@ app.include_router(web_integration_router)
 from app.api.v1.ads import router as ads_api_router  # noqa: E402
 
 app.include_router(ads_api_router)
+
+# FR-012: hội thoại & tin nhắn phía CRM (CONV-001…006 + PANCAKE-010) — đọc từ
+# crm.messages do worker msg-sync kéo về, luật ở services/conversation_service.py.
+from app.api.v1.conversations import router as conversations_api_router  # noqa: E402
+
+app.include_router(conversations_api_router)
+
+# B8: bàn giao Sale→CSKH (FR-090/091 · HANDOVER-001…006) — tự động khi đơn
+# giao thành công (hook trong order_service), luật ở services/handover_service.py.
+from app.api.v1.handovers import router as handovers_api_router  # noqa: E402
+
+app.include_router(handovers_api_router)
+
+# Màn 3: trung tâm thông báo (NOTIFY-001…004) — worker notify-scan quét 11
+# nguồn trong DB, luật ở services/notification_service.py.
+from app.api.v1.notifications import router as notifications_api_router  # noqa: E402
+
+app.include_router(notifications_api_router)
+
+# B9: chăm sóc 11 bước (FR-100…110 · CARE/ASSESSMENT/NORESPONSE) — mốc tính
+# từ ngày bắt đầu THẬT, luật ở services/care_service.py, worker care-steps.
+from app.api.v1.care import router as care_api_router  # noqa: E402
+
+app.include_router(care_api_router)
+
+# B11: báo cáo (REPORT-001…011, FR-170…173) — sổ METRICS bảo đảm số tổng và
+# drill-down cùng điều kiện lọc; export CSV đòi data.export + audit.
+from app.api.v1.reports import router as reports_api_router  # noqa: E402
+
+app.include_router(reports_api_router)
 
 # Bộ màn CRM tạm (khung): /crm/* — cấu trúc theo danh sách màn hình, số liệu
 # thật từ schema crm; lát cắt B1…B11 làm đầy dần (xem app/web/views/crm.py).

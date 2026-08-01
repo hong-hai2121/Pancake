@@ -296,6 +296,13 @@ def chay_hang_doi(limit: int = 50) -> dict:
                 crm_sync.sync_row(
                     row.get("scope") or payload.get("_page_id") or "",
                     payload.get("_page_name") or "", payload)
+            elif row["entity"] == "message":
+                # FR-012: payload giữ nguyên mẻ tin đã lấy được từ Pancake —
+                # phát lại đúng phần GHI DB, không gọi lại API.
+                from app.integrations.pancake import message_sync
+
+                message_sync.ghi_mot_me(
+                    int(payload["_conv_crm_id"]), payload.get("_rows") or [])
             else:
                 raise ValueError(f"Chưa hỗ trợ chạy lại loại: {row['entity']}")
             integration_repo.danh_dau_xong(row["id"])

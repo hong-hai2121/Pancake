@@ -1,0 +1,2012 @@
+--- TRANG 1 ---
+DANH SÁCH MÀN HÌNH PHẦN MỀM CRM
+I. Màn hình chung
+1. Đăng nhập
+Chức năng:
+Đăng nhập bằng tài khoản và mật khẩu.
+Ghi nhớ đăng nhập.
+Quên mật khẩu.
+Khóa tài khoản sau nhiều lần đăng nhập sai.
+Ghi nhận thiết bị và lịch sử đăng nhập.
+2. Trang chủ theo vai trò
+Sau khi đăng nhập, mỗi vị trí nhìn thấy dashboard khác nhau:
+Chủ doanh nghiệp.
+Quản lý Sale.
+Sale.
+Quản lý CSKH.
+CSKH.
+Marketing.
+Kế toán.
+Người chuyên môn.
+Admin.
+3. Trung tâm thông báo
+Hiển thị:
+Lead mới.
+Công việc sắp đến hạn.
+Công việc quá hạn.
+Khách cần gọi lại.
+Khách có phản ứng.
+Khách cần chuyển chuyên môn.
+Đơn giao thành công.
+Đơn hoàn.
+Khách đến hạn mua lại.
+Nội dung chờ duyệt.
+Lỗi đồng bộ Pancake hoặc tổng đài.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1
+--- TRANG 2 ---
+II. Dashboard quản trị
+4. Dashboard tổng quan công ty
+Các chỉ số:
+Lead mới hôm nay.
+Lead chưa được xử lý.
+Lead quá hạn.
+Số khách đang tư vấn.
+Đơn mới.
+Đơn giao thành công.
+Đơn hoàn.
+Doanh thu lên đơn.
+Doanh thu giao thành công.
+Doanh thu mua lại.
+Chi phí quảng cáo.
+ROAS.
+Tỷ lệ chốt.
+Tỷ lệ giao thành công.
+Tỷ lệ mua lại.
+Công việc CSKH quá hạn.
+Khách sắp hết liệu trình.
+Khách cần chuyển chuyên môn.
+Biểu đồ:
+Doanh thu theo ngày, tuần, tháng.
+Phễu Marketing → Sale → đơn hàng.
+Doanh thu bán mới và mua lại.
+Hiệu quả theo Page.
+Hiệu quả theo nhân viên.
+Hiệu quả theo quảng cáo.
+Mỗi chỉ số phải bấm được để mở danh sách chi tiết.
+5. Dashboard Sale
+Hiển thị:
+Lead mới được giao.
+Lead chưa liên hệ.
+Lead nóng.
+Khách cần gọi hôm nay.
+Khách hẹn gọi lại.
+Khách đã báo giá chưa follow-up.
+Khách quá hạn.
+Tỷ lệ liên hệ.
+Tỷ lệ tư vấn.
+Tỷ lệ báo giá.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+2
+--- TRANG 3 ---
+Tỷ lệ chốt.
+Doanh thu.
+Điểm chất lượng chat.
+Điểm chất lượng cuộc gọi.
+Lỗi tư vấn thường gặp.
+6. Dashboard CSKH
+Hiển thị:
+Khách mới bàn giao.
+Đơn cần xác nhận.
+Khách chưa nhận hàng.
+Khách cần onboarding.
+Khách đến mốc ngày 4.
+Khách đến mốc ngày 10.
+Khách đến mốc ngày 15.
+Khách đến mốc ngày 20.
+Khách đến mốc ngày 25.
+Khách đến mốc ngày 28.
+Khách có phản ứng.
+Khách chưa cải thiện.
+Khách sắp hết liệu trình.
+Khách đến hạn mua lại.
+Công việc quá hạn.
+Doanh thu mua lại.
+Tỷ lệ mua liệu trình 2 và liệu trình 3.
+7. Dashboard Marketing
+Hiển thị:
+Chi phí quảng cáo.
+Reach.
+Impression.
+Tương tác.
+Hội thoại.
+Lead có số điện thoại.
+Lead liên hệ được.
+Lead phù hợp.
+Đơn tạo.
+Đơn giao thành công.
+Doanh thu.
+Doanh thu mua lại.
+ROAS lần đầu.
+ROAS 30/60/90 ngày.
+Tỷ lệ hoàn.
+Lý do chưa chốt phổ biến.
+Băn khoăn phổ biến.
+Quảng cáo có nhiều lead rác.
+Quảng cáo có LTV cao.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+3
+--- TRANG 4 ---
+III. Quản lý khách hàng
+8. Danh sách tất cả khách hàng
+Mỗi dòng hiển thị:
+Mã khách.
+Họ tên.
+Số điện thoại.
+Page.
+Nguồn quảng cáo.
+Trạng thái khách.
+Sale phụ trách.
+CSKH phụ trách.
+Lần tương tác cuối.
+Lần mua cuối.
+Tổng chi tiêu.
+Ngày mua lại dự kiến.
+Công việc tiếp theo.
+Cảnh báo.
+Bộ lọc:
+Nhân viên.
+Nhóm.
+Page.
+Nguồn quảng cáo.
+Trạng thái.
+Lead nóng/ấm/lạnh.
+Đã mua/chưa mua.
+Đang chăm.
+Sắp mua lại.
+Khách ngủ.
+Có phản ứng.
+Có dấu hiệu cảnh báo.
+Khoảng ngày.
+9. Hồ sơ khách hàng 360°
+Gồm các khu vực:
+Tổng quan
+Thông tin cơ bản.
+Người phụ trách.
+Trạng thái hiện tại.
+Công việc tiếp theo.
+Cảnh báo.
+Tóm tắt AI.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+4
+--- TRANG 5 ---
+Hội thoại
+Tin nhắn Pancake.
+Bình luận.
+Ghi chú.
+Link mở trên Pancake.
+Cuộc gọi
+Lịch sử gọi.
+File ghi âm.
+Transcript.
+Điểm AI.
+Kết quả cuộc gọi.
+Hồ sơ tư vấn
+Nhóm vấn đề.
+Triệu chứng.
+Thời gian mắc.
+Kết quả nội soi.
+HP .
+Thuốc đang dùng.
+Bệnh nền.
+Dấu hiệu cảnh báo.
+Thông tin còn thiếu.
+Liệu trình
+Liệu trình đã tư vấn.
+Liệu trình đang dùng.
+Sản phẩm trong liệu trình.
+Cách dùng.
+Ngày bắt đầu.
+Ngày dự kiến hết.
+Lịch sử điều chỉnh.
+Đơn hàng
+Đơn đầu.
+Đơn mua lại.
+Trạng thái.
+Giá trị.
+Hoàn/hủy/đổi.
+Chăm sóc
+Các mốc đã hoàn thành.
+Kết quả mỗi lần chăm.
+Mức cải thiện.
+Phản ứng.
+Nội dung đã gửi.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+5
+--- TRANG 6 ---
+Marketing
+Campaign.
+Adset.
+Ad.
+Creative.
+First touch.
+Last touch.
+Chi phí phân bổ.
+Doanh thu vòng đời.
+Lịch sử thay đổi
+Ai sửa.
+Sửa nội dung gì.
+Trước và sau.
+Thời gian.
+10. Màn hình hợp nhất khách trùng
+Hiển thị:
+Các hồ sơ nghi trùng.
+Số điện thoại giống nhau.
+Facebook ID.
+Page.
+Địa chỉ.
+Lịch sử đơn.
+Người phụ trách.
+Chức năng:
+Gộp khách.
+Giữ hồ sơ chính.
+Chọn dữ liệu giữ lại.
+Xem lịch sử gộp.
+Hoàn tác nếu có quyền.
+IV. Sale và telesale
+11. Pipeline Sale dạng Kanban
+Các cột:
+Lead mới.
+Chưa liên hệ.
+Đã kết nối.
+Đang khai thác.
+Đã tư vấn.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+6
+--- TRANG 7 ---
+Đã báo giá.
+Đang cân nhắc.
+Hẹn gọi lại.
+Cần bám đuổi.
+Đã chốt.
+Không phù hợp.
+Từ chối.
+Mất liên lạc.
+Mỗi thẻ khách hiển thị:
+Tên.
+Số điện thoại.
+Nguồn.
+Nhân viên.
+Mức độ tiềm năng.
+Lần tương tác cuối.
+Lịch hẹn tiếp theo.
+Số ngày ở trạng thái.
+Cảnh báo quá hạn.
+12. Bảng công việc Sale
+Các nhóm:
+Việc hôm nay.
+Sắp đến hạn.
+Quá hạn.
+Đã hoàn thành.
+Chưa liên hệ.
+Hẹn gọi lại.
+Follow-up sau báo giá.
+Lead nóng.
+Lead chưa có lịch tiếp theo.
+13. Màn hình tư vấn khách
+Hiển thị song song:
+Hội thoại khách.
+Hồ sơ khách.
+Checklist câu hỏi.
+Thông tin đã có.
+Thông tin còn thiếu.
+Kịch bản gợi ý.
+AI gợi ý câu trả lời.
+Cảnh báo từ cấm.
+Liệu trình có thể cân nhắc.
+Nút mở Pancake.
+Nút gọi điện.
+Nút tạo lịch hẹn.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+7
+--- TRANG 8 ---
+Nút chuyển chuyên môn.
+14. Phiếu khai thác tình trạng khách
+Các phần:
+Vấn đề khách tự khai.
+Triệu chứng chính.
+Triệu chứng phụ.
+Thời gian mắc.
+Mức độ.
+Tần suất.
+Thời điểm nặng.
+Liên quan bữa ăn.
+Nội soi.
+HP .
+Thuốc đang dùng.
+Điều trị trước đây.
+Bệnh nền.
+Dị ứng.
+Dấu hiệu cảnh báo.
+Vấn đề đại tràng.
+Mức độ tiềm năng.
+15. Màn hình đề xuất liệu trình
+Hiển thị:
+Dữ liệu đã đủ/chưa đủ.
+Nhóm liệu trình phù hợp.
+Lý do phù hợp.
+Điều kiện loại trừ.
+Sản phẩm trong bộ.
+Số lượng.
+Giá.
+Cách dùng.
+Cảnh báo.
+Cần duyệt chuyên môn hay không.
+Chức năng:
+Chọn liệu trình.
+Gửi duyệt.
+Tạo báo giá.
+Tạo đơn.
+Lưu phiên bản đề xuất.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+8
+--- TRANG 9 ---
+16. Danh sách khách chưa mua cần bám đuổi
+Các cột:
+Khách.
+Sale.
+Lý do chưa mua.
+Băn khoăn chính.
+Mức tiềm năng.
+Số lần follow-up.
+Lần gần nhất.
+Ngày tiếp theo.
+Nội dung gợi ý.
+Trạng thái.
+Bộ lọc theo:
+Giá cao.
+Chưa tin tưởng.
+Hỏi người nhà.
+Chưa có tiền.
+Đang điều trị nơi khác.
+Không nghe máy.
+Không phản hồi.
+Sợ tác dụng phụ.
+Không đúng đối tượng.
+17. Chi tiết chuỗi bám đuổi
+Hiển thị:
+Mốc ngày 0.
+Ngày 1.
+Ngày 3.
+Ngày 7.
+Ngày 14.
+Ngày 30.
+Nội dung từng mốc.
+Kênh liên hệ.
+Kết quả.
+Điều kiện dừng.
+Lịch tiếp theo.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+9
+--- TRANG 10 ---
+V. Tổng đài và cuộc gọi
+18. Danh sách cuộc gọi
+Các cột:
+Thời gian.
+Nhân viên.
+Khách.
+Số điện thoại.
+Cuộc gọi đến/đi.
+Thời lượng.
+Có nghe máy không.
+Kết quả.
+Điểm AI.
+Mức vi phạm.
+Có lịch hẹn tiếp theo không.
+19. Chi tiết cuộc gọi
+Gồm:
+Trình phát ghi âm.
+Transcript theo thời gian.
+Phân biệt nhân viên/khách.
+Tóm tắt AI.
+Dữ liệu AI trích xuất.
+Điểm từng tiêu chí.
+Điểm tốt.
+Lỗi.
+Đoạn minh chứng.
+Câu gợi ý thay thế.
+Nút quản lý xác nhận hoặc sửa điểm.
+20. Dashboard chất lượng telesale
+Hiển thị:
+Điểm trung bình theo nhân viên.
+Điểm theo kỹ năng.
+Tỷ lệ vi phạm.
+Tỷ lệ có bước tiếp theo.
+Tỷ lệ chốt.
+Lỗi lặp lại.
+Cuộc gọi cần nghe lại.
+Nhân viên tiến bộ hoặc giảm điểm.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+10
+--- TRANG 11 ---
+VI. Đơn hàng
+21. Danh sách đơn hàng
+Các cột:
+Mã đơn.
+Khách.
+Sale.
+CSKH.
+Liệu trình.
+Giá trị.
+Nguồn quảng cáo.
+Trạng thái.
+Ngày tạo.
+Ngày giao.
+Đơn đầu/mua lại.
+Hoàn/hủy.
+22. Chi tiết đơn hàng
+Hiển thị:
+Thông tin khách.
+Sản phẩm.
+Số lượng.
+Giá.
+Giảm giá.
+Thanh toán.
+Địa chỉ.
+Vận chuyển.
+Lịch sử trạng thái.
+Người tạo.
+Nguồn quảng cáo.
+Công việc liên quan.
+Liệu trình liên quan.
+23. Màn hình ánh xạ trạng thái đơn
+Admin cấu hình:
+Trạng thái Pancake.
+Trạng thái CRM.
+Có tính doanh thu không.
+Có kích hoạt bàn giao CSKH không.
+Có kích hoạt hoàn hay không.
+Có dừng chăm không.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+11
+--- TRANG 12 ---
+VII. Bàn giao Sale sang CSKH
+24. Danh sách khách chờ bàn giao
+Các cột:
+Khách.
+Sale chốt.
+Đơn hàng.
+Liệu trình.
+Ngày giao thành công.
+CSKH được gán.
+Hồ sơ đã đủ/chưa đủ.
+Trạng thái bàn giao.
+25. Phiếu bàn giao
+Thông tin:
+Tình trạng khách.
+Triệu chứng chính.
+Liệu trình.
+Cách dùng.
+Thuốc đang dùng.
+Bệnh nền.
+Lưu ý.
+Băn khoăn.
+Điều Sale đã trao đổi.
+Cam kết đã nói.
+Vấn đề CSKH cần theo dõi.
+Ngày dự kiến bắt đầu.
+VIII. Chăm sóc khách đã mua
+26. Bảng việc CSKH
+Các nhóm:
+Xác nhận đơn.
+Chờ nhận hàng.
+Onboarding.
+Chưa bắt đầu dùng.
+Ngày 4.
+Ngày 10.
+Ngày 15.
+Ngày 20.
+Ngày 25.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+12
+--- TRANG 13 ---
+Ngày 28.
+Liệu trình 2.
+Liệu trình 3.
+Có phản ứng.
+Cần chuyên môn.
+Quá hạn.
+Không phản hồi.
+27. Pipeline CSKH dạng Kanban
+Các cột:
+Mới bàn giao.
+Chờ nhận hàng.
+Đã nhận hàng.
+Đang onboarding.
+Đã bắt đầu dùng.
+Đang theo dõi.
+Có vấn đề.
+Đang cải thiện.
+Chưa cải thiện.
+Sắp hết liệu trình.
+Đến hạn mua lại.
+Đã mua lại.
+Khách ngủ.
+Ngừng chăm.
+28. Phiếu xác nhận đơn
+Các trường:
+Đã gọi xác nhận chưa.
+Số lần gọi.
+Xác nhận liệu trình.
+Xác nhận giá.
+Xác nhận địa chỉ.
+Xác nhận số điện thoại.
+Ghi chú.
+Ngày kiểm tra nhận hàng.
+29. Phiếu onboarding
+Các trường:
+Đã nhận đủ hàng chưa.
+Đã kết nối Zalo chưa.
+Đã gửi hướng dẫn chưa.
+Đã gửi chế độ ăn chưa.
+Đã xác nhận cách dùng chưa.
+Ngày dự kiến bắt đầu.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+13
+--- TRANG 14 ---
+Người thực hiện.
+30. Phiếu xác nhận bắt đầu sử dụng
+Các trường:
+Ngày bắt đầu thực tế.
+Đã dùng chưa.
+Lý do chưa dùng.
+Ngày hẹn bắt đầu.
+Có cần nhắc lại không.
+31. Phiếu chăm ngày 4
+Các trường:
+Dùng đều hay không.
+Có phản ứng không.
+Triệu chứng hiện tại.
+Thời điểm xuất hiện.
+Liên quan bữa ăn.
+Tình trạng phân.
+Chế độ ăn hiện tại.
+Nội dung đã gửi.
+Điều chỉnh đã tư vấn.
+Ngày chăm tiếp theo.
+32. Phiếu chăm ngày 10
+Các trường:
+Mức độ tuân thủ.
+Dùng đúng liều.
+Thực hiện chế độ ăn.
+Có vấn đề phát sinh.
+Triệu chứng thay đổi.
+Cần hỗ trợ thêm.
+Kết quả tổng thể.
+33. Phiếu đánh giá ngày 15
+Các trường:
+Triệu chứng trước dùng.
+Triệu chứng hiện tại.
+Điểm trước và sau.
+Mức cải thiện.
+Dùng đều hay không.
+Có phản ứng.
+Kết luận.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+14
+--- TRANG 15 ---
+Có cần chuyển chuyên môn.
+Nội dung cần điều chỉnh.
+34. Phiếu chăm ngày 20
+Các trường:
+Kết quả hiện tại.
+Số sản phẩm còn lại.
+Ngày dự kiến hết.
+Mức độ sẵn sàng mua lại.
+Băn khoăn.
+Cơ hội liệu trình 2.
+Ngày dự kiến chốt.
+35. Phiếu chăm ngày 25
+Các trường:
+Tổng kết tháng đầu.
+Mức cải thiện.
+Liệu trình tiếp theo.
+Giá đề xuất.
+Khách đồng ý/chưa đồng ý.
+Lý do chưa mua.
+Hành động tiếp theo.
+Có tạo việc ngày 28 không.
+36. Phiếu xử lý ngày 28
+Các trường:
+Lý do chưa mua.
+Đã xử lý từ chối thế nào.
+Khách có mua chưa.
+Ngày chốt dự kiến.
+Kết thúc cơ hội hay tiếp tục.
+Lý do kết thúc.
+37. Phiếu chăm liệu trình 2 và 3
+Các trường:
+Ngày nhận hàng.
+Ngày bắt đầu.
+Mốc đánh giá.
+Mức cải thiện.
+Điều chỉnh.
+Ngày dự kiến hết.
+Cơ hội mua tiếp.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+15
+--- TRANG 16 ---
+Trạng thái duy trì.
+38. Màn hình khách không phản hồi
+Hiển thị chuỗi:
+Nhắn lần 1.
+Gọi lần 1.
+Nhắn lần 2.
+Gọi lần 2.
+Tạm mất liên lạc.
+Tái kích hoạt sau.
+Mỗi bước có:
+Thời gian.
+Kênh.
+Kết quả.
+Nội dung.
+Người thực hiện.
+IX. Mua lại
+39. Danh sách cơ hội mua lại
+Các cột:
+Khách.
+CSKH.
+Liệu trình hiện tại.
+Ngày bắt đầu.
+Ngày dự kiến hết.
+Sản phẩm còn.
+Liệu trình tiếp theo.
+Giá trị dự kiến.
+Mức sẵn sàng.
+Lý do chưa mua.
+Ngày xử lý tiếp.
+40. Pipeline mua lại
+Các cột:
+Chưa đến hạn.
+Sắp đến hạn.
+Đến hạn.
+Đang tư vấn.
+Chờ quyết định.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+16
+--- TRANG 17 ---
+Đã mua.
+Chưa mua.
+Quá hạn.
+Khách ngủ.
+41. Danh sách khách ngủ
+Bộ lọc:
+30 ngày chưa mua.
+60 ngày.
+90 ngày.
+180 ngày.
+Theo liệu trình.
+Theo giá trị khách.
+Theo nguồn quảng cáo.
+Theo CSKH.
+Chức năng:
+Tạo chiến dịch tái kích hoạt.
+Gán người phụ trách.
+Theo dõi phản hồi.
+Theo dõi doanh thu phục hồi.
+X. Sản phẩm và liệu trình
+42. Danh sách sản phẩm
+Các cột:
+Mã.
+Tên.
+Nhóm.
+Quy cách.
+Giá.
+Số ngày dùng.
+Vai trò.
+Trạng thái bán.
+Trạng thái kiểm duyệt.
+43. Chi tiết sản phẩm
+Gồm:
+Thông tin cơ bản.
+Thành phần.
+Công dụng được duyệt.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+17
+--- TRANG 18 ---
+Cách dùng.
+Đối tượng phù hợp.
+Điều kiện không phù hợp.
+Nội dung Sale được nói.
+Nội dung cấm.
+Tài liệu nguồn.
+Phiên bản.
+Lịch sử thay đổi.
+44. Danh sách mẫu liệu trình
+Các cột:
+Mã liệu trình.
+Tên.
+Nhóm vấn đề.
+Cấp độ.
+Giá.
+Thời gian dùng.
+Số sản phẩm.
+Trạng thái duyệt.
+Phiên bản.
+45. Chi tiết mẫu liệu trình
+Hiển thị:
+Điều kiện áp dụng.
+Điều kiện loại trừ.
+Danh sách sản phẩm.
+Số lượng.
+Cách dùng.
+Giá.
+Thời gian.
+Mốc chăm.
+Ngày mua lại.
+Sản phẩm thay thế.
+Luật điều chỉnh.
+Người duyệt.
+46. Màn hình luật liệu trình
+Admin/người chuyên môn cấu hình:
+Khi nào được chọn.
+Khi nào bị chặn.
+Khi nào cần duyệt.
+Sản phẩm nào thay thế.
+Điều kiện bệnh nền.
+Điều kiện phân lỏng/táo.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+18
+--- TRANG 19 ---
+Điều kiện thuốc đang dùng.
+Điều kiện thai kỳ/cho con bú.
+XI. Kho kiến thức và AI
+47. Danh sách tài liệu kiến thức
+Các cột:
+Tiêu đề.
+Nhóm.
+Chủ đề.
+Trạng thái.
+Người soạn.
+Người duyệt.
+Phiên bản.
+Ngày hiệu lực.
+Quyền AI.
+48. Chi tiết tài liệu kiến thức
+Gồm:
+Nội dung nội bộ.
+Nội dung được phép gửi khách.
+Nguồn.
+Đối tượng áp dụng.
+Trường hợp không dùng.
+Mức rủi ro.
+Từ khóa.
+Phiên bản.
+Lịch sử duyệt.
+49. Thư viện kịch bản tư vấn
+Phân loại:
+Chat bán mới.
+Gọi bán mới.
+Chăm sau bán.
+Xử lý phản đối.
+Mua lại.
+Không phản hồi.
+Chuyển chuyên môn.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+19
+--- TRANG 20 ---
+50. Trình thiết kế cây kịch bản
+Chức năng:
+Tạo bước.
+Tạo câu hỏi.
+Gán trường dữ liệu.
+Tạo điều kiện.
+Tạo nhánh.
+Chặn bước.
+Gán nội dung.
+Gán mức rủi ro.
+Gán quyền AI.
+51. Màn hình duyệt nội dung
+Hiển thị:
+Nội dung chờ duyệt.
+Nội dung cũ/mới.
+Lý do thay đổi.
+Người soạn.
+Cảnh báo từ cấm.
+Nút duyệt.
+Từ chối.
+Yêu cầu sửa.
+52. Nhật ký AI
+Hiển thị:
+Khách.
+Nhân viên.
+Nội dung đầu vào.
+Nội dung AI đề xuất.
+Nguồn.
+Model.
+Phiên bản kịch bản.
+Nhân viên có sửa không.
+Nội dung cuối cùng.
+Có bị báo sai không.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+20
+--- TRANG 21 ---
+XII. Marketing và quảng cáo
+53. Danh sách campaign
+Các cột:
+Campaign.
+Chi phí.
+Inbox.
+Lead thật.
+Lead phù hợp.
+Đơn.
+Giao thành công.
+Doanh thu.
+ROAS.
+Mua lại.
+LTV.
+54. Danh sách adset
+Hiển thị tương tự campaign nhưng chi tiết theo adset.
+55. Danh sách quảng cáo
+Các cột:
+Ad ID.
+Tên.
+Creative.
+Chủ đề.
+Góc nội dung.
+Chi phí.
+Inbox.
+Lead phù hợp.
+Tỷ lệ chốt.
+Tỷ lệ hoàn.
+Doanh thu.
+LTV.
+Điểm chất lượng.
+56. Phiếu sức khỏe quảng cáo
+Hiển thị:
+Toàn bộ phễu.
+Chất lượng lead.
+Sale xử lý.
+Lý do chưa chốt.
+Băn khoăn khách.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+21
+--- TRANG 22 ---
+Tỷ lệ hoàn.
+Doanh thu lần đầu.
+Doanh thu mua lại.
+AI nhận định lỗi thuộc Ads hay Sale.
+Đề xuất cải thiện.
+57. Báo cáo băn khoăn khách hàng
+Các nhóm:
+Giá.
+Niềm tin.
+Hiệu quả.
+Tác dụng phụ.
+Hỏi người nhà.
+Đang dùng thuốc.
+Không đúng nhu cầu.
+Chưa sẵn sàng.
+Có thể lọc theo:
+Campaign.
+Adset.
+Ad.
+Sale.
+Thời gian.
+Sản phẩm.
+Liệu trình.
+58. Báo cáo lý do chưa chốt
+Hiển thị:
+Tỷ trọng từng lý do.
+Xu hướng tăng/giảm.
+Theo quảng cáo.
+Theo Sale.
+Theo nhóm tuổi.
+Theo Page.
+Danh sách khách minh chứng.
+59. Trung tâm đề xuất Marketing
+AI tổng hợp:
+Quảng cáo kéo sai khách.
+Quảng cáo có giá inbox rẻ nhưng chốt thấp.
+Nội dung tạo khách có LTV cao.
+Băn khoăn tăng mạnh.
+Chủ đề cần làm thêm.
+Kịch bản Sale cần sửa.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+22
+--- TRANG 23 ---
+Thử nghiệm nên chạy.
+XIII. Báo cáo và KPI
+60. Báo cáo Sale
+Lead.
+Tốc độ phản hồi.
+Tỷ lệ kết nối.
+Tỷ lệ tư vấn.
+Tỷ lệ báo giá.
+Tỷ lệ chốt.
+Giao thành công.
+Hoàn.
+Doanh thu.
+Điểm AI.
+Tỷ lệ follow-up đúng hạn.
+61. Báo cáo CSKH
+Số khách phụ trách.
+Việc đúng hạn.
+Việc quá hạn.
+Tỷ lệ onboarding.
+Tỷ lệ đánh giá đủ.
+Tỷ lệ cải thiện.
+Tỷ lệ mua liệu trình 2.
+Tỷ lệ mua liệu trình 3.
+Doanh thu mua lại.
+Khách ngủ.
+Vi phạm nội dung.
+62. Báo cáo nguồn quảng cáo
+Campaign.
+Adset.
+Ad.
+Lead.
+Lead phù hợp.
+Đơn.
+Giao thành công.
+Hoàn.
+Mua lại.
+ROAS.
+LTV.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+23
+--- TRANG 24 ---
+63. Báo cáo chất lượng tư vấn
+Chat.
+Cuộc gọi.
+Điểm trung bình.
+Lỗi lặp lại.
+Vi phạm nghiêm trọng.
+Nhân viên cần đào tạo.
+Kịch bản có hiệu quả cao.
+64. Báo cáo công việc
+Số việc.
+Hoàn thành.
+Quá hạn.
+Theo nhân viên.
+Theo loại việc.
+Theo bộ phận.
+Theo mốc chăm.
+XIV. Nhân sự và phân quyền
+65. Danh sách nhân viên
+Các cột:
+Họ tên.
+Bộ phận.
+Vai trò.
+Nhóm.
+Trạng thái.
+Số khách phụ trách.
+KPI.
+Lần đăng nhập cuối.
+66. Hồ sơ nhân viên
+Gồm:
+Thông tin.
+Quyền.
+Nhóm.
+Ca làm việc.
+Page được xem.
+KPI.
+Cuộc gọi.
+Khách phụ trách.
+Lịch sử chuyển khách.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+24
+--- TRANG 25 ---
+67. Vai trò và phân quyền
+Cấu hình:
+Xem khách.
+Sửa khách.
+Xem số điện thoại.
+Xuất Excel.
+Nghe ghi âm.
+Xem hồ sơ sức khỏe.
+Sửa liệu trình.
+Xem doanh thu.
+Sửa hoa hồng.
+Duyệt nội dung.
+Quản lý tích hợp.
+68. Phân nhóm và ca làm việc
+Nhóm Sale.
+Nhóm CSKH.
+Trưởng nhóm.
+Ca trực.
+Page phụ trách.
+Quy tắc chia lead.
+XV. Automation và cấu hình
+69. Danh sách automation
+Các cột:
+Tên luật.
+Sự kiện kích hoạt.
+Điều kiện.
+Hành động.
+Trạng thái.
+Số lần chạy.
+Lỗi gần nhất.
+70. Trình tạo automation
+Cấu hình dạng:
+text id="ug2sqa"
+KHI
+→ NẾU
+→ THÌ
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+25
+--- TRANG 26 ---
+Ví dụ:
+Khi lead mới → chia Sale.
+Nếu sau 5 phút chưa nhận → cảnh báo.
+Khi đơn giao thành công → tạo hồ sơ chăm.
+Khi khách bắt đầu dùng → sinh mốc ngày 4, 10, 15, 20, 25.
+Khi ngày 25 chưa mua → tạo việc ngày 28.
+Khi có từ cấm → chặn gửi.
+Khi khách yêu cầu dừng → ngắt automation.
+71. Mẫu chuỗi follow-up
+Chuỗi khách chưa mua.
+Chuỗi không phản hồi.
+Chuỗi chăm liệu trình 1.
+Chuỗi liệu trình 2.
+Chuỗi liệu trình 3.
+Chuỗi khách ngủ.
+Chuỗi tái kích hoạt.
+72. Danh mục dùng chung
+Quản lý:
+Trạng thái khách.
+Lý do chưa mua.
+Băn khoăn.
+Triệu chứng.
+Bệnh nền.
+Kết quả chăm.
+Mức cải thiện.
+Lý do không mua lại.
+Loại nhiệm vụ.
+Mức ưu tiên.
+XVI. Tích hợp
+73. Tích hợp Pancake
+Hiển thị:
+Tài khoản.
+Page.
+Token.
+Quyền.
+Trạng thái.
+Lần đồng bộ cuối.
+Số lỗi.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+26
+--- TRANG 27 ---
+Nút đồng bộ.
+74. Tích hợp tổng đài
+Hiển thị:
+Nhà cung cấp.
+API key.
+Số hotline.
+Extension.
+Trạng thái webhook.
+File ghi âm.
+Lỗi đồng bộ.
+75. Tích hợp Facebook Ads
+Hiển thị:
+Tài khoản quảng cáo.
+Campaign.
+Quyền truy cập.
+Ngày đồng bộ.
+Dữ liệu chi phí.
+Lỗi.
+76. Nhật ký đồng bộ
+Các cột:
+Hệ thống.
+Loại dữ liệu.
+Bắt đầu.
+Kết thúc.
+Thành công.
+Thất bại.
+Lỗi.
+Retry.
+XVII. Quản trị hệ thống
+77. Nhật ký hoạt động
+Hiển thị:
+Người dùng.
+Hành động.
+Dữ liệu.
+Giá trị cũ.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+27
+--- TRANG 28 ---
+Giá trị mới.
+Thời gian.
+IP/thiết bị.
+Lý do.
+78. Cấu hình công ty
+Tên công ty.
+Logo.
+Chi nhánh.
+Múi giờ.
+Định dạng tiền.
+Định dạng ngày.
+Thời gian SLA.
+Chính sách lưu dữ liệu.
+79. Sao lưu và phục hồi
+Lịch sao lưu.
+Trạng thái.
+Dung lượng.
+Nút tạo bản sao.
+Phục hồi.
+Nhật ký.
+80. Quản lý lỗi hệ thống
+Lỗi API.
+Lỗi automation.
+Lỗi AI.
+Lỗi đồng bộ.
+Trạng thái xử lý.
+Người phụ trách.
+Nhật ký sửa.
+XVIII. Các màn hình ưu tiên cho MVP
+Bản đầu tiên nên triển khai trước 18 màn hình:
+Đăng nhập.
+Dashboard tổng quan.
+Danh sách khách.
+Hồ sơ khách 360°.
+Pipeline Sale.
+Bảng công việc Sale.
+Màn hình tư vấn.
+Danh sách khách cần bám đuổi.
+Danh sách đơn.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1. 
+2. 
+3. 
+4. 
+5. 
+6. 
+7. 
+8. 
+9. 
+28
+--- TRANG 29 ---
+Chi tiết đơn.
+Danh sách khách chờ bàn giao.
+Bảng việc CSKH.
+Pipeline CSKH.
+Phiếu chăm theo từng mốc.
+Danh sách cơ hội mua lại.
+Danh sách sản phẩm/liệu trình.
+Báo cáo Sale – CSKH – Marketing cơ bản.
+Nhân viên và phân quyền.
+Các màn hình AI, tổng đài, kho kiến thức nâng cao, attribution quảng cáo và automation trực quan có
+thể triển khai ở giai đoạn tiếp theo.
+10. 
+11. 
+12. 
+13. 
+14. 
+15. 
+16. 
+17. 
+18. 
+29

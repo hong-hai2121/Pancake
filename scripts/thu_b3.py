@@ -196,13 +196,15 @@ def main() -> None:
             "temperature = 'nong' where id = %s",
             (l3["id"],),
         )
+    # limit lớn: DB thật (CRM_SYNC bật) có sẵn hàng chục lead quá hạn — trần
+    # mặc định 50 đẩy lead giả của test ra khỏi trang đầu là FAIL oan
     ok("l3 quá SLA chưa tương tác -> vào danh sách quá hạn",
-       l3["id"] in [x["id"] for x in lead_service.list_overdue()])
+       l3["id"] in [x["id"] for x in lead_service.list_overdue(5000)])
     ok("l3 nhiệt độ nóng -> vào danh sách nóng",
-       l3["id"] in [x["id"] for x in lead_service.list_hot()])
+       l3["id"] in [x["id"] for x in lead_service.list_hot(5000)])
     lead_service.record_first_contact(l3["id"])
     ok("ghi tương tác đầu -> khỏi danh sách quá hạn",
-       l3["id"] not in [x["id"] for x in lead_service.list_overdue()])
+       l3["id"] not in [x["id"] for x in lead_service.list_overdue(5000)])
 
     print("== 6. Audit ==")
     with get_pg_pool().connection() as conn:

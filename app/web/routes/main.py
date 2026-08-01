@@ -151,9 +151,10 @@ async def _pick_page(page_id: str) -> tuple[list[dict], dict | None]:
 
 @router.get("/")
 async def home() -> RedirectResponse:
-    """Vào gốc site thì sang Tổng quan CRM (màn bot cũ vẫn ở /bang-dieu-khien,
-    nhóm menu "Bot Pancake")."""
-    return RedirectResponse("/crm/tong-quan", status_code=307)
+    """Vào gốc site (kể cả vừa đăng nhập xong) thì sang Trang chủ theo vai trò
+    — màn 2, FR-001 "chuyển tới dashboard theo vai trò". Màn bot cũ vẫn ở
+    /bang-dieu-khien, nhóm menu "Bot Pancake"."""
+    return RedirectResponse("/crm/trang-chu", status_code=307)
 
 
 # ------------------------------------------------------------ bảng điều khiển

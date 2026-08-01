@@ -244,8 +244,10 @@ def main() -> None:
 
     print("== 7. Tổng quan + cảnh báo thiếu chi phí ==")
     tq = ads_service.tong_quan(tu, den)
+    # >= thay vì == : DB thật (POS_SYNC bật) có doanh thu quy nguồn thật cộng
+    # thêm vào kỳ — chỉ cần chắc 1 triệu của dữ liệu giả nằm TRONG tổng
     ok("tổng quan cộng đúng chi phí + doanh thu kỳ",
-       float(tq["chi_phi"]) >= 350000 and float(tq["doanh_thu"]) == 1000000,
+       float(tq["chi_phi"]) >= 350000 and float(tq["doanh_thu"]) >= 1000000,
        f"{tq['chi_phi']} {tq['doanh_thu']}")
     ok("đếm được số ad có doanh thu mà CHƯA có chi phí (nhắc nối tài khoản QC)",
        tq["ad_thieu_chi_phi"] >= 1, str(tq["ad_thieu_chi_phi"]))
