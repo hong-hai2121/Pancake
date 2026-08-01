@@ -52,6 +52,12 @@ async def lifespan(_app: FastAPI):
     tasks.append(asyncio.create_task(sentiment_loop(), name="sentiment"))
     # B4: 5 phút một lần đánh dấu việc quá hạn + audit "báo quản lý" (mục 19).
     tasks.append(asyncio.create_task(task_escalation_loop(), name="tasks-qua-han"))
+    # B7: kéo đơn Pancake POS về crm.orders. Task chỉ tạo khi ĐÃ cấu hình POS;
+    # kéo hay không do POS_SYNC_ENABLED quyết (kiểm mỗi vòng trong loop).
+    if settings.pancake_pos_api_key and settings.pancake_pos_shop_id:
+        from app.workers import pos_orders_loop
+
+        tasks.append(asyncio.create_task(pos_orders_loop(), name="pos-orders"))
 
     yield
 
@@ -250,6 +256,12 @@ from app.api.v1.treatments import router as treatments_api_router  # noqa: E402
 
 app.include_router(products_api_router)
 app.include_router(treatments_api_router)
+
+# B7: API đơn hàng (ORDER-001…011) — 11 trạng thái + ánh xạ Pancake POS→CRM,
+# luật ở services/order_service.py; đồng bộ POS ở integrations/pancake_pos/.
+from app.api.v1.orders import router as orders_api_router  # noqa: E402
+
+app.include_router(orders_api_router)
 
 # Bộ màn CRM tạm (khung): /crm/* — cấu trúc theo danh sách màn hình, số liệu
 # thật từ schema crm; lát cắt B1…B11 làm đầy dần (xem app/web/views/crm.py).

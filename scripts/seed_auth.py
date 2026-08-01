@@ -44,6 +44,9 @@ PERMISSIONS: list[tuple[str, str]] = [
     ("commission.edit", "Sửa hoa hồng"),
     ("content.approve", "Duyệt nội dung"),
     ("integration.manage", "Quản lý tích hợp"),
+    # B7 — đơn hàng (màn 21-23): xem tách khỏi sửa vì Kế toán/Marketing chỉ cần đọc
+    ("order.view", "Xem đơn hàng"),
+    ("order.edit", "Tạo/sửa đơn & chuyển trạng thái"),
     # A5 — FR-002/003 cần quyền riêng cho quản trị tài khoản + xem audit (màn 65-67, 77)
     ("user.manage", "Quản lý nhân viên & phân quyền"),
     ("user.manage_team", "Quản lý tài khoản trong đội (trưởng nhóm)"),
@@ -62,14 +65,17 @@ ROLE_PERMS: dict[str, list[str]] = {
     "Admin": _ALL,
     "Trưởng nhóm Sale": ["customer.view", "customer.edit", "customer.view_phone",
                           "call.listen", "health.view", "revenue.view",
-                          "user.manage_team"],
+                          "user.manage_team", "order.view", "order.edit"],
     "Sale": ["customer.view", "customer.edit", "customer.view_phone",
-             "health.view", "treatment.edit"],
+             "health.view", "treatment.edit", "order.view", "order.edit"],
     "Trưởng nhóm CSKH": ["customer.view", "customer.edit", "customer.view_phone",
-                          "call.listen", "health.view", "user.manage_team"],
-    "CSKH": ["customer.view", "customer.edit", "customer.view_phone", "health.view"],
+                          "call.listen", "health.view", "user.manage_team",
+                          "order.view", "order.edit"],
+    # CSKH có order.edit vì bước CS01 là "Xác nhận đơn" (đổi trạng thái đơn)
+    "CSKH": ["customer.view", "customer.edit", "customer.view_phone", "health.view",
+             "order.view", "order.edit"],
     "Marketing": ["customer.view"],
-    "Kế toán": ["customer.view", "revenue.view", "data.export"],
+    "Kế toán": ["customer.view", "revenue.view", "data.export", "order.view"],
     "Người chuyên môn": ["customer.view", "health.view", "treatment.edit",
                           "content.approve"],
 }

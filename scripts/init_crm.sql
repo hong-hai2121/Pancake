@@ -445,6 +445,10 @@ alter table leads add column if not exists stage_entered_at timestamptz not null
 alter table leads add column if not exists first_contact_at timestamptz;
 alter table leads add column if not exists sla_due_at       timestamptz;
 alter table leads add column if not exists closed_at        timestamptz;
+-- DB cũ thiếu CHECK inline ở trên (thêm 31/07/2026) — drop+add cho chạy lại được
+alter table leads drop constraint if exists ck_leads_temperature;
+alter table leads add constraint ck_leads_temperature
+    check (temperature is null or temperature in ('nong','am','lanh'));
 
 comment on column leads.temperature is
     'B3: lead score nóng/ấm/lạnh (BRD mục 7) — lọc màn 8/12, API LEAD-009 /leads/hot';
@@ -664,7 +668,9 @@ create table if not exists clinical_escalations (
     risk_level  text check (risk_level in ('low','medium','high','critical')),
     status      text not null default 'pending'
                 check (status in ('pending','resolved')),
-    task_id     bigint references tasks(id) on delete set null,
+    -- FK sang tasks gắn SAU (MODULE 6) — bảng tasks tạo ở dưới, khai inline
+    -- ở đây là vỡ khi nạp DB mới tinh
+    task_id     bigint,
     created_by  bigint references users(id) on delete set null,
     assigned_to bigint references users(id) on delete set null,
     resolution  text,
@@ -1092,6 +1098,12 @@ create index if not exists idx_tasks_assigned on tasks (assigned_to, status, due
 create index if not exists idx_tasks_customer on tasks (customer_id);
 create index if not exists idx_tasks_related  on tasks (related_type, related_id);
 
+-- FK task_id của clinical_escalations (MODULE 3 — B5) gắn ở đây vì tasks tạo
+-- sau nó; drop trước cho chạy lại được
+alter table clinical_escalations drop constraint if exists fk_clinical_escalations_task;
+alter table clinical_escalations add constraint fk_clinical_escalations_task
+    foreign key (task_id) references tasks(id) on delete set null;
+
 create table if not exists repurchase_opportunities (
     id                   bigint generated always as identity primary key,
     customer_id          bigint not null references customers(id) on delete cascade,
@@ -1431,6 +1443,88 @@ comment on column ref_codes.extra is
     'automation giữ {khi, thi, uu_tien}; cskh_state giữ {dieu_kien_vao, dieu_kien_ra}';
 
 create index if not exists idx_ref_codes_group on ref_codes (group_code, sort_order);
+
+
+-- ------------------------------------------------------------
+-- Bổ sung B7 — Đơn hàng (FR-080…082, màn 21-23)
+-- 1) orders.status nâng 7 -> 11 trạng thái chuẩn (thêm pending /
+--    awaiting_shipment / collected / returning) để phủ đủ vòng đời
+--    17 mã của Pancake POS mà không mất thông tin quan trọng.
+-- 2) Cột pos_* nhận diện + lưu vết đơn đồng bộ từ Pancake POS
+--    (Open API pos.pages.fm/api/v1 — dò 01/08, xem scripts/do_pos_api.py).
+-- 3) order_status_mappings: ánh xạ mã POS -> trạng thái CRM, admin sửa
+--    được ở màn 23 (ORDER-010) — seed 17 mã, on conflict DO NOTHING để
+--    KHÔNG đè chỉnh sửa của admin khi chạy lại file này.
+-- ------------------------------------------------------------
+alter table orders drop constraint if exists orders_status_check;
+alter table orders drop constraint if exists ck_orders_status;
+alter table orders add constraint ck_orders_status check (status in
+    ('draft','pending','confirmed','packing','awaiting_shipment','shipping',
+     'delivered','collected','returning','returned','cancelled'));
+
+alter table orders add column if not exists source text not null default 'crm'
+    check (source in ('crm','pancake_pos'));
+alter table orders add column if not exists note                text;
+alter table orders add column if not exists pos_shop_id         bigint;
+alter table orders add column if not exists pos_order_id        bigint;
+alter table orders add column if not exists pos_status          integer;
+alter table orders add column if not exists pos_conversation_id text;
+alter table orders add column if not exists pos_page_id         text;
+alter table orders add column if not exists pos_inserted_at     timestamptz;
+alter table orders add column if not exists pos_updated_at      timestamptz;
+alter table orders add column if not exists pos_raw             jsonb;
+
+comment on column orders.source is
+    'crm = tạo tay trong CRM; pancake_pos = đồng bộ từ Pancake POS (B7)';
+comment on column orders.pos_status is
+    'Mã trạng thái GỐC của POS (0…20) ở lần đồng bộ cuối — orders.status là bản ĐÃ ánh xạ';
+comment on column orders.pos_raw is
+    'Nguyên văn đơn POS lần đồng bộ cuối — giống watcher giữ raw hội thoại: '
+    'sau này cần trường nào (vận đơn, phí ship, UTM...) moi ra được, khỏi gọi lại API';
+
+create unique index if not exists uq_orders_pos
+    on orders (pos_shop_id, pos_order_id)
+    where pos_shop_id is not null and pos_order_id is not null;
+create index if not exists idx_orders_status on orders (status);
+
+-- Lý do đổi trạng thái: 'pos_sync' = máy đồng bộ đổi; còn lại người ghi
+alter table order_status_history add column if not exists reason text;
+
+create table if not exists order_status_mappings (
+    id                  bigint generated always as identity primary key,
+    pancake_status      integer not null unique,
+    pancake_status_name text not null default '',
+    crm_status          text not null check (crm_status in
+        ('draft','pending','confirmed','packing','awaiting_shipment','shipping',
+         'delivered','collected','returning','returned','cancelled')),
+    note                text,
+    updated_by          bigint references users(id) on delete set null,
+    created_at          timestamptz not null default now(),
+    updated_at          timestamptz not null default now()
+);
+comment on table order_status_mappings is
+    'Ánh xạ mã trạng thái Pancake POS -> 11 trạng thái CRM (FR-081, màn 23). '
+    'Đồng bộ đọc bảng này MỖI LẦN chạy — admin sửa là lượt sau ăn ngay';
+
+insert into order_status_mappings (pancake_status, pancake_status_name, crm_status) values
+    ( 0, 'Mới',            'draft'),
+    (17, 'Chờ xác nhận',   'pending'),
+    (11, 'Chờ hàng',       'confirmed'),
+    (20, 'Đã đặt hàng',    'confirmed'),
+    ( 1, 'Đã xác nhận',    'confirmed'),
+    (12, 'Chờ in',         'packing'),
+    (13, 'Đã in',          'packing'),
+    ( 8, 'Đang đóng hàng', 'packing'),
+    ( 9, 'Chờ chuyển hàng','awaiting_shipment'),
+    ( 2, 'Đã gửi hàng',    'shipping'),
+    ( 3, 'Đã nhận',        'delivered'),
+    (16, 'Đã thu tiền',    'collected'),
+    ( 4, 'Đang hoàn',      'returning'),
+    (15, 'Hoàn một phần',  'returning'),
+    ( 5, 'Đã hoàn',        'returned'),
+    ( 6, 'Đã hủy',         'cancelled'),
+    ( 7, 'Đã xóa',         'cancelled')
+on conflict (pancake_status) do nothing;
 
 
 -- ============================================================

@@ -29,6 +29,17 @@ class Settings(BaseSettings):
     # khi chưa có (cần token Pancake quyền Admin). Để trống = không tự sinh page nào.
     pancake_tag_page_ids: str = ""
 
+    # --- Pancake POS (Open API RIÊNG — không dùng chung JWT pages.fm ở trên) ---
+    # api_key tạo trong POS: Cấu hình -> Nâng cao -> Tích hợp bên thứ 3 -> API Key.
+    # Dò endpoint/shape thật: scripts/do_pos_api.py (bắt buộc trước B7 — đã dò 01/08).
+    pancake_pos_api_key: str = ""
+    pancake_pos_shop_id: str = ""       # số sau pos.pages.fm/shop/ (= pages.shop_id)
+    pancake_pos_base_url: str = "https://pos.pages.fm/api/v1"
+    # B7: worker kéo đơn POS về crm.orders. Mặc định TẮT như CRM_SYNC_ENABLED —
+    # bật lên là đơn Pancake bắt đầu đổ về CRM thật. Backfill: scripts/backfill_don_pos.py
+    pos_sync_enabled: bool = False
+    pos_sync_interval: float = 300.0    # giây giữa 2 lượt kéo đơn mới cập nhật
+
     # --- Facebook Messenger (luồng Graph cũ, hiện không dùng) ---
     fb_page_access_token: str = ""      # token page để gọi Send API
     fb_verify_token: str = ""           # chuỗi tự đặt để verify webhook
