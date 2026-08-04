@@ -26,7 +26,7 @@ _TRAN = 200
 
 # 11 loại — mã, nhãn tiếng Việt, mức ưu tiên mặc định, đường dẫn màn liên quan
 LOAI: dict[str, tuple[str, str, str]] = {
-    "lead_moi":                    ("Lead mới", "normal", "/crm/pipeline"),
+    "lead_moi":                    ("Khách tiềm năng mới", "normal", "/crm/pipeline"),
     "viec_sap_den_han":            ("Công việc sắp đến hạn", "normal", "/crm/cong-viec"),
     "viec_qua_han":                ("Công việc quá hạn", "high", "/crm/cong-viec"),
     "khach_can_goi_lai":           ("Khách cần gọi lại", "high", "/crm/pipeline"),
@@ -84,7 +84,7 @@ def _quet_lead_moi(tat: set[int]) -> int:
         if r["owner_id"] in tat:
             continue
         n += _day("lead_moi", r["owner_id"],
-                  f"Lead mới: {r['full_name']}",
+                  f"Khách tiềm năng mới: {r['full_name']}",
                   f"lead_moi:{r['id']}",
                   body=f"SĐT {r['primary_phone'] or '—'} — chưa liên hệ lần nào",
                   related_type="lead", related_id=r["id"])

@@ -37,7 +37,7 @@ _LEAD_COT = ("l.id, c.full_name as khach, s.name as giai_doan, "
              "u.name as phu_trach, l.created_at as luc")
 _LEAD_NHAN = ["ID", "Khách", "Giai đoạn", "Phụ trách", "Lúc"]
 
-# Lead ĐI QUA một giai đoạn trong kỳ — đếm theo lịch sử FR-041, không phải
+# Khách tiềm năng ĐI QUA một giai đoạn trong kỳ — đếm theo lịch sử FR-041, không phải
 # trạng thái hiện tại (khách đã sang bước sau vẫn được tính là "đã tư vấn")
 _QUA_BUOC_TU = """
     from crm.lead_stage_history h
@@ -48,6 +48,7 @@ _QUA_BUOC_TU = """
 """
 _QUA_BUOC_COT = ("h.lead_id as id, c.full_name as khach, ps.name as sang_buoc, "
                  "u.name as phu_trach, h.changed_at as luc")
+_QUA_BUOC_NHAN = ["ID", "Khách", "Sang bước", "Phụ trách", "Lúc"]
 
 _DON_TU = """
     from crm.orders o
@@ -89,45 +90,48 @@ _CO_HOI_NHAN = ["ID", "Khách", "Bước", "Ngày hết", "Giá trị", "Phụ t
 
 
 METRICS: dict[str, Metric] = {
-    # ---------------- lead (FR-170) ----------------
-    "lead_moi": Metric("Lead mới trong kỳ", "customer.view", _LEAD_TU,
+    # ---------------- khách tiềm năng (FR-170) ----------------
+    "lead_moi": Metric("Khách tiềm năng mới trong kỳ", "customer.view", _LEAD_TU,
                        "l.created_at between %(tu)s and %(den)s",
                        _LEAD_COT, "l.created_at desc",
                        cot_nguoi="l.owner_id", cot=_LEAD_NHAN),
     "lead_chua_lien_he": Metric(
-        "Lead chưa liên hệ (đang mở)", "customer.view", _LEAD_TU,
+        "Khách tiềm năng chưa liên hệ (đang mở)", "customer.view", _LEAD_TU,
         "l.closed_at is null and l.first_contact_at is null "
         "and l.created_at between %(tu)s and %(den)s",
         _LEAD_COT, "l.created_at", cot_nguoi="l.owner_id", cot=_LEAD_NHAN),
-    "lead_nong": Metric("Lead nóng đang mở", "customer.view", _LEAD_TU,
+    "lead_nong": Metric("Khách tiềm năng nóng đang mở", "customer.view", _LEAD_TU,
                         "l.closed_at is null and l.temperature = 'nong'",
                         _LEAD_COT, "l.updated_at desc",
                         cot_nguoi="l.owner_id", cot=_LEAD_NHAN),
     "lead_qua_sla": Metric(
-        "Lead quá SLA nhận (FR-042)", "customer.view", _LEAD_TU,
+        "Khách tiềm năng quá SLA nhận (FR-042)", "customer.view", _LEAD_TU,
         "l.closed_at is null and l.first_contact_at is null "
         "and l.sla_due_at < now()",
         _LEAD_COT, "l.sla_due_at", cot_nguoi="l.owner_id", cot=_LEAD_NHAN),
     "lead_lien_he": Metric(
-        "Lead có tương tác đầu trong kỳ", "customer.view", _LEAD_TU,
+        "Khách tiềm năng có tương tác đầu trong kỳ", "customer.view", _LEAD_TU,
         "l.first_contact_at between %(tu)s and %(den)s",
         _LEAD_COT, "l.first_contact_at desc",
         cot_nguoi="l.owner_id", cot=_LEAD_NHAN),
     "lead_tu_van": Metric(
-        "Lead vào bước Đã tư vấn trong kỳ", "customer.view", _QUA_BUOC_TU,
+        "Khách tiềm năng vào bước Đã tư vấn trong kỳ", "customer.view",
+        _QUA_BUOC_TU,
         "ps.name = 'Đã tư vấn' and h.changed_at between %(tu)s and %(den)s",
         _QUA_BUOC_COT, "h.changed_at desc",
-        cot_nguoi="l.owner_id", cot=["Lead", "Khách", "Sang bước", "Phụ trách", "Lúc"]),
+        cot_nguoi="l.owner_id", cot=_QUA_BUOC_NHAN),
     "lead_bao_gia": Metric(
-        "Lead vào bước Đã báo giá trong kỳ", "customer.view", _QUA_BUOC_TU,
+        "Khách tiềm năng vào bước Đã báo giá trong kỳ", "customer.view",
+        _QUA_BUOC_TU,
         "ps.name = 'Đã báo giá' and h.changed_at between %(tu)s and %(den)s",
         _QUA_BUOC_COT, "h.changed_at desc",
-        cot_nguoi="l.owner_id", cot=["Lead", "Khách", "Sang bước", "Phụ trách", "Lúc"]),
+        cot_nguoi="l.owner_id", cot=_QUA_BUOC_NHAN),
     "lead_chot": Metric(
-        "Lead chốt (vào Đã chốt) trong kỳ", "customer.view", _QUA_BUOC_TU,
+        "Khách tiềm năng chốt (vào Đã chốt) trong kỳ", "customer.view",
+        _QUA_BUOC_TU,
         "ps.name = 'Đã chốt' and h.changed_at between %(tu)s and %(den)s",
         _QUA_BUOC_COT, "h.changed_at desc",
-        cot_nguoi="l.owner_id", cot=["Lead", "Khách", "Sang bước", "Phụ trách", "Lúc"]),
+        cot_nguoi="l.owner_id", cot=_QUA_BUOC_NHAN),
     # ---------------- đơn & doanh thu (FR-170/172) ----------------
     "don_tao": Metric("Đơn tạo trong kỳ", "revenue.view", _DON_TU,
                       "o.created_at between %(tu)s and %(den)s",
@@ -156,6 +160,32 @@ METRICS: dict[str, Metric] = {
         _DON_COT, "o.delivered_at desc",
         bieu_thuc="coalesce(sum(o.total_amount), 0)",
         cot_nguoi="o.sale_owner_id", cot=_DON_NHAN),
+    # "Lên đơn" = tiền đã LÊN ĐƠN trong kỳ, đơn ở MỌI trạng thái trừ huỷ/hoàn —
+    # khác "đã thu" (chỉ đơn giao thành công). Trang chủ bày cạnh nhau để thấy
+    # ngay phần tiền còn treo trên đường.
+    "doanh_thu_len_don": Metric(
+        "Doanh thu lên đơn (mọi trạng thái, bỏ huỷ/hoàn)", "revenue.view", _DON_TU,
+        "o.created_at between %(tu)s and %(den)s "
+        "and o.status not in ('cancelled','returned','returning')",
+        _DON_COT, "o.created_at desc",
+        bieu_thuc="coalesce(sum(o.total_amount), 0)",
+        cot_nguoi="o.sale_owner_id", cot=_DON_NHAN),
+    "doanh_thu_len_don_sale": Metric(
+        "Doanh thu lên đơn — bán mới (Sale)", "revenue.view", _DON_TU,
+        "o.created_at between %(tu)s and %(den)s "
+        "and o.status not in ('cancelled','returned','returning') "
+        "and coalesce(o.order_type, 'new') <> 'repurchase'",
+        _DON_COT, "o.created_at desc",
+        bieu_thuc="coalesce(sum(o.total_amount), 0)",
+        cot_nguoi="o.sale_owner_id", cot=_DON_NHAN),
+    "doanh_thu_len_don_cskh": Metric(
+        "Doanh thu lên đơn — chăm sóc/mua lại (CSKH)", "revenue.view", _DON_TU,
+        "o.created_at between %(tu)s and %(den)s "
+        "and o.status not in ('cancelled','returned','returning') "
+        "and o.order_type = 'repurchase'",
+        _DON_COT, "o.created_at desc",
+        bieu_thuc="coalesce(sum(o.total_amount), 0)",
+        cot_nguoi="o.cskh_owner_id", cot=_DON_NHAN),
     # ---------------- việc (FR-160/171) ----------------
     "viec_hoan_thanh": Metric(
         "Việc hoàn thành trong kỳ", "customer.view", _VIEC_TU,

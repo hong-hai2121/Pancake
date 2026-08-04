@@ -26,7 +26,11 @@ def _nguoi(request: Request) -> dict:
 
 
 def _ve(path: str, ok: str = "", error: str = "") -> RedirectResponse:
-    duoi = f"?ok={quote(ok)}" if ok else (f"?error={quote(error)}" if error else "")
+    # `path` có thể đã mang sẵn query (vd /crm/pipeline?st=3&lead=9) — nối tiếp
+    # bằng "&", nối bằng "?" nữa là hỏng tham số cuối và trang đích trả 422.
+    noi = "&" if "?" in path else "?"
+    duoi = f"{noi}ok={quote(ok)}" if ok else (
+        f"{noi}error={quote(error)}" if error else "")
     return RedirectResponse(path + duoi, status_code=303)
 
 # Màn 2 — ánh xạ TÊN vai trò (nằm trong token, cột crm.roles.name) → nhóm
@@ -45,16 +49,27 @@ _NHOM_VAI_TRO = {
 
 
 @router.get("/trang-chu", response_class=HTMLResponse)
-async def trang_chu(request: Request) -> HTMLResponse:
+async def trang_chu(request: Request, tu: str = "", den: str = "") -> HTMLResponse:
     """Màn 2 — Trang chủ theo vai trò (FR-001 'chuyển tới dashboard theo vai
     trò'): 9 vị trí mỗi vị trí một bộ số + lối tắt; đăng nhập xong vào đây.
 
     Phạm vi số liệu: Sale/CSKH thấy CỦA MÌNH; trưởng nhóm thấy CẢ ĐỘI (tra
     teams.manager_id trong DB, không tin token); các vai còn lại xem số chung
-    đúng mảng mình phụ trách."""
+    đúng mảng mình phụ trách.
+
+    Chủ DN/Admin còn có khối "báo cáo cả team" theo KỲ (`?tu=&den=`, mặc định
+    30 ngày gần nhất) — dùng chung tầng số liệu B11 với màn Báo cáo."""
+    from app.services import report_service
+
     user = getattr(request.state, "user", None) or {}
     nhom = _NHOM_VAI_TRO.get(user.get("role") or "", "khac")
     data = repo.trang_chu(nhom, int(user.get("sub", 0) or 0))
+    if nhom in ("chu_dn", "admin"):
+        try:
+            data["bc"] = report_service.bao_cao_ca_doi(tu, den, user=user)
+        except ApiError:
+            # kỳ lọc gõ sai (tu > den, sai định dạng) — lùi về kỳ mặc định
+            data["bc"] = report_service.bao_cao_ca_doi(user=user)
     return HTMLResponse(views.render_trang_chu(nhom, data, user))
 
 
@@ -435,10 +450,147 @@ async def chuyen_chuyen_mon(request: Request, customer_id: int):
 
 
 @router.get("/pipeline", response_class=HTMLResponse)
-async def pipeline(st: int = 0) -> HTMLResponse:
-    """Màn 11 (khung) — Kanban 13 giai đoạn. `?st=<stage_id>` tô sáng + cuộn
-    tới cột đó (đường vào từ khối Sale ở menu trái)."""
-    return HTMLResponse(views.render_pipeline(repo.pipeline_board(), st=st))
+async def pipeline(request: Request, st: int = 0, lead: int = 0, q: str = "",
+                   owner_id: int = 0, temperature: str = "", moc: str = "",
+                   tu: str = "", den: str = "", xem: str = "",
+                   ok: str = "", error: str = "") -> HTMLResponse:
+    """Màn 11 — bảng chăm sóc theo mốc (khách tiềm năng của Sale).
+
+    `st`   cột đang mở (khối Sale ở menu trái trỏ vào đây);
+    `lead` khách đang chọn — mở khung làm việc bên phải, luôn kéo theo cột của
+           chính khách đó nên bấm thẳng từ chế độ Bảng cũng vào đúng cột;
+    còn lại là bộ lọc: tìm kiếm · nhân viên · nhiệt độ · mốc chăm · ngày tạo.
+    """
+    from app.db.repositories import catalog_screen_repo
+
+    ho_so = repo.pipeline_lead(lead) if lead else None
+    if ho_so is not None:
+        st = ho_so["stage_id"]          # chọn khách = mở đúng cột khách đứng
+    board = repo.pipeline_board(
+        # chế độ Bảng liệt kê MỌI giai đoạn (st chỉ còn dùng để mở sẵn đúng khối)
+        st=0 if xem == "bang" else st,
+        q=q, owner_id=owner_id or None, temperature=temperature,
+        moc=moc, tu=tu, den=den,
+        # xem 1 cột / chế độ Bảng thì lấy dày hơn (bày 13 cột một lúc mới cần gọn)
+        moi_cot=60 if (st or xem == "bang") else 10,
+    )
+    return HTMLResponse(views.render_pipeline(
+        board, st=st, lead=ho_so,
+        loc={"st": st, "lead": lead if ho_so else 0, "q": q,
+             "owner_id": owner_id, "temperature": temperature, "moc": moc,
+             "tu": tu, "den": den, "xem": xem},
+        nhan_vien=_ds_nhan_vien(("Sale", "Trưởng nhóm Sale")),
+        ly_do=catalog_screen_repo.danh_muc_ly_do() if ho_so else [],
+        ok_msg=ok, error=error))
+
+
+# --- thao tác trên khung làm việc màn 11 (luật nằm ở app/services/lead_service)
+def _chan_sua_lead(request: Request) -> HTMLResponse | None:
+    if not co_quyen(_nguoi(request), "customer.edit"):
+        return HTMLResponse(
+            render_403("Chăm khách tiềm năng cần quyền customer.edit",
+                       heading="Bảng chăm sóc"), status_code=403)
+    return None
+
+
+def _gio(v: str):
+    """`<input type=datetime-local>` trả 'YYYY-MM-DDTHH:MM' (giờ máy người dùng)
+    — gắn múi giờ máy chủ vào cho thành mốc tuyệt đối. Chuỗi lạ -> None."""
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat((v or "").strip()).astimezone()
+    except ValueError:
+        return None
+
+
+def _so(v) -> int:
+    """Số trong form (do người dùng gửi lên) — không phải số thì coi như 0."""
+    try:
+        return int(str(v or "").strip() or 0)
+    except ValueError:
+        return 0
+
+
+@router.post("/pipeline/{lead_id}/giai-doan")
+async def lead_chuyen_giai_doan(request: Request, lead_id: int):
+    """Chuyển cột — đi qua đủ luật chặn FR-040, sai luật thì hiện lỗi lên màn."""
+    from app.services import lead_service
+
+    if chan := _chan_sua_lead(request):
+        return chan
+    f = await request.form()
+    ve = str(f.get("ve") or f"/crm/pipeline?lead={lead_id}")
+    try:
+        kq = lead_service.move_stage(
+            lead_id=lead_id, to_stage_id=_so(f.get("stage_id")),
+            actor_id=int(_nguoi(request).get("sub", 0)) or None,
+            reason=str(f.get("reason") or "").strip() or None,
+            next_action_at=_gio(str(f.get("next_action_at") or "")),
+            # Đóng ở Từ chối / Không phù hợp / Mất liên lạc: service tự ghi
+            # lead_lost_reasons rồi mới cho đóng (FR-040, LEAD-010)
+            lost_reason_id=_so(f.get("lost_reason_id")) or None)
+    except (ApiError, ValueError) as err:
+        return _ve(ve, error=getattr(err, "message", str(err)))
+    return _ve(ve, ok=f"Đã chuyển sang '{kq['stage_name']}'")
+
+
+@router.post("/pipeline/{lead_id}/hen")
+async def lead_dat_hen(request: Request, lead_id: int):
+    """Đặt mốc chăm tiếp theo (next_action_at) — dải 'Hôm nay/Sắp tới' đọc mốc này."""
+    from app.services import lead_service
+
+    if chan := _chan_sua_lead(request):
+        return chan
+    f = await request.form()
+    ve = str(f.get("ve") or f"/crm/pipeline?lead={lead_id}")
+    try:
+        lead_service.update_lead(
+            lead_id, {"next_action_at": _gio(str(f.get("next_action_at") or ""))},
+            actor_id=int(_nguoi(request).get("sub", 0)) or None)
+    except (ApiError, ValueError) as err:
+        return _ve(ve, error=getattr(err, "message", str(err)))
+    return _ve(ve, ok="Đã đặt lịch nhắc lại")
+
+
+@router.post("/pipeline/{lead_id}/nhiet")
+async def lead_doi_nhiet(request: Request, lead_id: int):
+    """Đổi nhiệt độ lead (nóng/ấm/lạnh) — dùng cho bộ lọc và ô '🔥 Đang nóng'."""
+    from app.services import lead_service
+
+    if chan := _chan_sua_lead(request):
+        return chan
+    f = await request.form()
+    ve = str(f.get("ve") or f"/crm/pipeline?lead={lead_id}")
+    nhiet = str(f.get("temperature") or "")
+    if nhiet not in ("nong", "am", "lanh"):   # CHECK ck_leads_temperature
+        return _ve(ve, error="Nhiệt độ chỉ nhận nóng / ấm / lạnh")
+    try:
+        lead_service.update_lead(
+            lead_id, {"temperature": nhiet},
+            actor_id=int(_nguoi(request).get("sub", 0)) or None)
+    except (ApiError, ValueError) as err:
+        return _ve(ve, error=getattr(err, "message", str(err)))
+    return _ve(ve, ok="Đã đổi nhiệt độ khách")
+
+
+@router.post("/pipeline/{lead_id}/chia-lai")
+async def lead_chia_lai(request: Request, lead_id: int):
+    """Chuyển khách sang nhân viên khác — FR-031 bắt buộc lý do khi đã có người giữ."""
+    from app.services import lead_service
+
+    if chan := _chan_sua_lead(request):
+        return chan
+    f = await request.form()
+    ve = str(f.get("ve") or f"/crm/pipeline?lead={lead_id}")
+    try:
+        lead_service.assign_owner(
+            lead_id=lead_id, new_owner_id=_so(f.get("owner_id")),
+            reason=str(f.get("reason") or "").strip() or None,
+            actor_id=int(_nguoi(request).get("sub", 0)) or None)
+    except (ApiError, ValueError) as err:
+        return _ve(ve, error=getattr(err, "message", str(err)))
+    return _ve(ve, ok="Đã chuyển khách cho nhân viên khác")
 
 
 @router.get("/cong-viec", response_class=HTMLResponse)

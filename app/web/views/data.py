@@ -33,12 +33,14 @@ def _fmt_dt(iso: str) -> str:
     return dt.strftime("%H:%M %d/%m/%Y")
 
 
-# 4 tab của mục "Dữ liệu bot": (đường dẫn, nhãn, khoá active)
+# 5 tab của mục "Dữ liệu bot": (đường dẫn, nhãn, khoá active)
 _TABS = [
     ("/data/kich-ban", "Kịch bản", "kich-ban"),
     ("/data/hoi-thoai", "Hội thoại mẫu", "hoi-thoai"),
     ("/data/thu-tin-nhan", "Thử tin nhắn", "thu"),
-    ("/data/thu-api", "Thử API", "api"),
+    ("/data/thu-api", "Thử API dự án", "api"),
+    ("/data/thu-api/ra-pancake", "Gọi ra Pancake", "api-ra"),
+    ("/data/thu-api/pancake", "API Pancake (thô)", "api-pancake"),
 ]
 
 
@@ -533,7 +535,7 @@ def render_api_test(
     bên dưới là khối Response (mã trạng thái, thời gian, dung lượng, body).
 
     ⚠️ XOÁ KHI XONG DỰ ÁN — tab này phơi access_token + page ID ra màn hình,
-    chỉ dùng để thử ở localhost. Muốn bỏ: xoá route `/data/thu-api`
+    chỉ dùng để thử ở localhost. Muốn bỏ: xoá route `/data/thu-api/pancake`
     (app/web/routes/data.py), 3 hàm `render_api_test`/`_api_reference`/
     `_render_api_result` + `_API_JS`/`_API_PRESETS` ở file này, dòng tab trong
     `_TABS`, hàm `raw_call`/`mask_token` (app/integrations/pancake/client.py) và khối CSS
@@ -558,7 +560,7 @@ def render_api_test(
     )
 
     form = f"""
-      <form class="card pm" method="get" action="/data/thu-api">
+      <form class="card pm" method="get" action="/data/thu-api/pancake">
         <div class="pm-bar">
           <select class="inp pm-method" name="http_method">
             <option value="GET"{sel("GET", method)}>GET</option>
@@ -610,7 +612,7 @@ def render_api_test(
         listing = _render_api_result(result, show_token)
 
     return _page(
-        title="Thử API", active="api",
+        title="API Pancake", active="api-pancake",
         sub="Gọi thẳng Pancake API và xem JSON gốc (không qua lớp xử lý của app)",
         intro="Thay cho Postman: xem <b>đúng những gì đã gửi đi</b> (URL đầy đủ + "
               "từng tham số) và <b>đúng những gì máy chủ trả về</b> (mã trạng thái, "
@@ -770,6 +772,385 @@ _API_JS = """
     var ok = confirm('POST có thể GỬI TIN THẬT tới khách hoặc đổi dữ liệu trên '
       + 'Pancake — không hoàn tác được.\\n\\nTiếp tục gửi?');
     if (!ok) e.preventDefault();
+  });
+})();
+"""
+
+
+# ------------------------------------------------- danh mục API của dự án
+def _ac_dong(i: int, e: dict) -> str:
+    """1 dòng endpoint: [METHOD] đường dẫn · mô tả · quyền · nút Chạy.
+
+    Panel nhập tham số/body được JS dựng khi mở dòng (metadata nằm ở khối JSON
+    dưới cuối trang) — 205 dòng mà dựng sẵn hết thì trang nặng vô ích.
+    """
+    quyen = " · ".join(e["quyen"])
+    khoa = f'{e["method"]} {e["path"]} {e["mo_ta"]} {e["ten"]}'.lower()
+    return (
+        f'<div class="ac-ep" data-i="{i}" data-m="{e["method"]}" '
+        f'data-key="{escape(khoa, quote=True)}">'
+        '<button type="button" class="ac-head">'
+        f'<span class="ac-m {e["method"].lower()}">{e["method"]}</span>'
+        f'<code class="ac-path">{escape(e["path"])}</code>'
+        f'<span class="ac-desc">{escape(e["mo_ta"])}</span>'
+        f'<span class="ac-perm">{escape(quyen)}</span>'
+        '<span class="ac-go">▶ Chạy</span>'
+        "</button></div>"
+    )
+
+
+def _ac_trang(
+    nhom: list[tuple[str, str, list[dict]]],
+    items: list[dict],
+    *,
+    title: str,
+    active: str,
+    sub: str,
+    intro: str,
+    canh_bao: str,
+    tim: str,
+    don_vi: str = "endpoint",
+    mo_het: bool = False,
+) -> str:
+    """Khung chung của 2 tab danh mục (gọi VÀO dự án · gọi RA Pancake).
+
+    Cùng một giao diện bấm-là-chạy, chỉ khác nguồn `items` — nên phần dựng dòng,
+    thanh lọc và JS đều dùng lại, không nhân đôi.
+    """
+    stt = 0
+    khoi = ""
+    for i, (_tag, ten_nhom, eps) in enumerate(nhom):
+        dong = ""
+        for e in eps:
+            dong += _ac_dong(stt, e)
+            stt += 1
+        # Nhóm đầu mở sẵn để vào màn là thấy ngay dòng + nút Chạy, khỏi phải đoán.
+        mo = " open" if (mo_het or i == 0) else ""
+        khoi += (
+            f'<details class="ac-grp"{mo}><summary>'
+            f'{escape(ten_nhom)} <span class="count">{len(eps)} {don_vi}</span>'
+            f"</summary>{dong}</details>"
+        )
+
+    thanh = f"""
+      <div class="ac-bar">
+        <input class="inp ac-find" id="ac-find" autocomplete="off"
+               placeholder="{escape(tim, quote=True)}">
+        <div class="ac-chips">
+          <button type="button" class="ac-chip on" data-f="all">Tất cả</button>
+          <button type="button" class="ac-chip" data-f="get">Chỉ đọc</button>
+          <button type="button" class="ac-chip" data-f="write">Ghi dữ liệu</button>
+          <button type="button" class="ac-chip" data-f="open">Mở tất cả</button>
+          <button type="button" class="ac-chip" data-f="close">Đóng tất cả</button>
+        </div>
+      </div>"""
+
+    # JS chỉ cần đủ thứ để ghép URL + dựng ô nhập; mô tả/quyền đã nằm trong HTML
+    # rồi, nhét lại vào khối JSON chỉ tổ phình trang.
+    goi = [{k: e[k] for k in ("method", "path", "path_params", "query", "body")}
+           for e in items]
+    body_json = json.dumps(goi, ensure_ascii=False).replace("</", "<\\/")
+    return _page(
+        title=title, active=active, sub=sub, intro=intro,
+        form=thanh + canh_bao,
+        listing=f'<div id="ac-root">{khoi}</div>'
+                f'<p class="empty" id="ac-none" hidden>Không {don_vi} nào khớp '
+                "từ khoá.</p>",
+        script=_CATALOG_JS.replace("__EPS__", body_json),
+    )
+
+
+def render_api_catalog(nhom: list[tuple[str, str, list[dict]]], items: list[dict]) -> str:
+    """Tab "Thử API dự án": liệt kê MỌI endpoint /api/v1 của chính app này.
+
+    Chiều VÀO: web local (hoặc client ngoài) gọi tới dự án. Bấm một dòng là gọi
+    thật bằng phiên đăng nhập hiện tại (cookie) rồi hiện JSON trả về ngay dưới
+    dòng đó. Danh sách dò động từ FastAPI (app/web/api_catalog.py) nên không bao
+    giờ lệch với code.
+    """
+    tong = len(items)
+    so_get = sum(1 for e in items if e["chi_doc"])
+    return _ac_trang(
+        nhom, items,
+        title="Thử API dự án", active="api",
+        sub=f"Chiều VÀO · {tong} endpoint <code>/api/v1</code> · {so_get} cái "
+            "chỉ đọc — bấm một dòng là gọi thật và xem JSON",
+        intro="Bấm một dòng <b>GET</b> là chạy luôn và hiện JSON ngay dưới dòng "
+              "đó; dòng cần tham số thì điền rồi bấm <b>▶ Chạy thật</b>. Danh mục "
+              "dò thẳng từ FastAPI nên luôn khớp code. Gọi bằng <b>chính phiên "
+              "đăng nhập của bạn</b> (cookie), nên endpoint nào vai trò bạn không "
+              "có quyền sẽ trả <code>FORBIDDEN</code> — đó là kết quả đúng, không "
+              "phải lỗi màn hình. Chiều NGƯỢC LẠI (dự án gọi ra Pancake để lấy "
+              'hội thoại) nằm ở tab <a href="/data/thu-api/ra-pancake">Gọi ra '
+              "Pancake</a>.",
+        canh_bao='<div class="flash err" style="margin-bottom:12px">⚠️ Endpoint '
+                 '<b>POST / PUT / PATCH / DELETE</b> chạm dữ liệu THẬT trong '
+                 "database (tạo đơn, đổi trạng thái, xoá…) — bấm chạy là ăn ngay, "
+                 "không hoàn tác được. Phải xác nhận thêm một lần trước khi gửi.</div>",
+        tim="Tìm nhanh: gõ /leads, doanh thu, POST…",
+    )
+
+
+def render_pancake_ops(nhom: list[tuple[str, str, list[dict]]],
+                       items: list[dict]) -> str:
+    """Tab "Gọi ra Pancake": chiều dự án → Pancake và đồng bộ về CRM.
+
+    Mỗi dòng chạy ĐÚNG hàm mà worker đang dùng thật (client / crm_sync /
+    message_sync — xem app/web/pancake_catalog.py), nên thấy gì ở đây là poller
+    cũng thấy đúng như vậy.
+    """
+    so_ghi = sum(1 for e in items if not e["chi_doc"])
+    return _ac_trang(
+        nhom, items,
+        title="Gọi ra Pancake", active="api-ra",
+        sub=f"Chiều RA · {len(items)} việc · {so_ghi} việc GHI vào CRM — "
+            "lấy hội thoại thật rồi soi ngay dữ liệu đã đồng bộ",
+        intro="Đây là đường <b>dự án → Pancake</b>: lấy page · thẻ · hội thoại · "
+              "tin nhắn, rồi đổ vào CRM thành <b>khách · hội thoại · tin nhắn · "
+              "thẻ · nhân viên xử lý</b>. Chạy bằng <b>chính các hàm worker dùng "
+              "thật</b> (<code>client</code>, <code>crm_sync</code>, "
+              "<code>message_sync</code>) chứ không phải bản mô phỏng. Nhóm 3 để "
+              "soi lại kết quả trong DB sau khi đồng bộ.",
+        canh_bao='<div class="flash err" style="margin-bottom:12px">⚠️ Nhóm 2 '
+                 "<b>ghi thật vào CRM</b> (tạo khách, tạo hội thoại, gắn thẻ, ghi "
+                 "tin nhắn) và có gọi ra Pancake — tốn lượt API. Page đang TẮT "
+                 "đồng bộ ở màn Tích hợp thì <code>sync_batch</code> bỏ qua, kết "
+                 "quả trả về sẽ ghi rõ.</div>",
+        tim="Tìm nhanh: hội thoại, thẻ, đồng bộ…",
+        don_vi="việc", mo_het=True,
+    )
+
+
+# JS của tab danh mục: mở dòng -> dựng panel tham số -> fetch -> hiện JSON.
+_CATALOG_JS = """
+(function(){
+  var root = document.getElementById('ac-root');
+  if (!root) return;
+  var EPS = __EPS__;
+
+  function esc(s){
+    return String(s).replace(/[&<>"]/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+    });
+  }
+
+  // ------- dựng panel nhập liệu cho 1 endpoint (chỉ dựng 1 lần) -------
+  function o(ten, kieu, bat_buoc, mac_dinh, goi_y, loai){
+    var sao = bat_buoc ? ' <span class="ac-req">*</span>' : '';
+    var chu_thich = goi_y ? ' — ' + esc(goi_y) : '';
+    return '<label>' + esc(ten) + sao +
+      ' <span class="note">' + esc(kieu) + chu_thich + '</span>' +
+      '<input class="inp" data-loai="' + loai + '" data-ten="' + esc(ten) + '"' +
+      ' value="' + esc(mac_dinh || '') + '" placeholder="' + esc(mac_dinh || '') +
+      '"></label>';
+  }
+
+  function panel(ep){
+    var h = '';
+    var truong = '';
+    ep.path_params.forEach(function(p){
+      truong += o(p.ten, p.kieu, true, '', 'trong đường dẫn', 'path');
+    });
+    ep.query.forEach(function(q){
+      truong += o(q.ten, q.kieu, q.bat_buoc, q.mac_dinh, q.goi_y, 'query');
+    });
+    if (truong) h += '<div class="ac-fields">' + truong + '</div>';
+    if (ep.body) {
+      h += '<label class="note" style="display:block;margin-top:10px">Body JSON' +
+           ' (sửa thoải mái, bỏ bớt trường không cần)</label>' +
+           '<textarea class="ac-json" rows="' +
+           Math.min(16, ep.body.split('\\n').length + 1) + '">' +
+           esc(ep.body) + '</textarea>';
+    }
+    h += '<div class="ac-acts">' +
+         '<button type="button" class="btn primary ac-send">▶ Chạy thật</button>' +
+         '<button type="button" class="btn ac-curl">⧉ Copy cURL</button>' +
+         (ep.method === 'GET'
+            ? '<a class="btn ac-tab" target="_blank" rel="noopener">↗ Mở tab mới</a>'
+            : '') +
+         '<span class="note ac-hint"></span></div>' +
+         '<div class="ac-res"></div>';
+    return '<div class="ac-body">' + h + '</div>';
+  }
+
+  // ------- ghép URL từ các ô đã nhập -------
+  function urlCua(box, ep){
+    var p = ep.path, thieu = [];
+    box.querySelectorAll('[data-loai="path"]').forEach(function(el){
+      var v = el.value.trim();
+      if (!v) thieu.push(el.dataset.ten);
+      p = p.replace('{' + el.dataset.ten + '}',
+                    encodeURIComponent(v || '{' + el.dataset.ten + '}'));
+    });
+    // Đường dẫn kiểu {role_id:int} — FastAPI cho phép, chỗ thay ở trên không
+    // khớp nên xử nốt bằng regex.
+    box.querySelectorAll('[data-loai="path"]').forEach(function(el){
+      var v = el.value.trim();
+      if (v) p = p.replace(new RegExp('\\\\{' + el.dataset.ten + ':[^}]*\\\\}'),
+                           encodeURIComponent(v));
+    });
+    var qs = [];
+    box.querySelectorAll('[data-loai="query"]').forEach(function(el){
+      var v = el.value.trim();
+      if (v) qs.push(encodeURIComponent(el.dataset.ten) + '=' + encodeURIComponent(v));
+    });
+    return { url: p + (qs.length ? '?' + qs.join('&') : ''), thieu: thieu };
+  }
+
+  function hienKetQua(hop, status, reason, ms, bytes, text, la_json){
+    var tone = (status >= 200 && status < 300) ? 'ok' : 'err';
+    var kb = (bytes / 1024).toFixed(1) + ' KB';
+    hop.innerHTML =
+      '<div class="pm-status" style="margin-bottom:8px">' +
+        '<span class="pill ' + tone + '">' + status + ' ' + esc(reason) + '</span>' +
+        '<span class="note">' + ms + ' ms · ' + kb + ' · ' +
+        (la_json ? 'JSON' : 'không phải JSON') + '</span></div>' +
+      '<pre class="pm-json">' + esc(text) + '</pre>';
+  }
+
+  function chay(ep, box){
+    var res = box.querySelector('.ac-res');
+    var hint = box.querySelector('.ac-hint');
+    var g = urlCua(box, ep);
+    if (g.thieu.length) {
+      hint.textContent = 'Thiếu tham số: ' + g.thieu.join(', ');
+      return;
+    }
+    hint.textContent = '';
+    var opts = { method: ep.method, credentials: 'same-origin',
+                 headers: { 'Accept': 'application/json' } };
+    var ta = box.querySelector('.ac-json');
+    if (ta && ta.value.trim() && ep.method !== 'GET') {
+      try { JSON.parse(ta.value); }
+      catch (err) {
+        res.innerHTML = '<div class="flash err">✕ Body không phải JSON hợp lệ: ' +
+                        esc(err.message) + '</div>';
+        return;
+      }
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = ta.value;
+    }
+    if (ep.method !== 'GET') {
+      var dong_y = confirm(ep.method + ' ' + ep.path +
+        '\\n\\nEndpoint này GHI vào database thật và không hoàn tác được.' +
+        '\\n\\nVẫn chạy?');
+      if (!dong_y) return;
+    }
+    res.innerHTML = '<p class="note">Đang gọi…</p>';
+    var t0 = performance.now();
+    fetch(g.url, opts).then(function(r){
+      return r.text().then(function(t){ return { r: r, t: t }; });
+    }).then(function(kq){
+      var ms = Math.round(performance.now() - t0);
+      var text = kq.t, la_json = false;
+      try { text = JSON.stringify(JSON.parse(kq.t), null, 2); la_json = true; }
+      catch (e) {}
+      if (text.length > 200000) text = text.slice(0, 200000) + '\\n… (đã cắt bớt)';
+      hienKetQua(res, kq.r.status, kq.r.statusText || '', ms,
+                 new Blob([kq.t]).size, text, la_json);
+    }).catch(function(err){
+      res.innerHTML = '<div class="flash err">✕ Không gọi được: ' +
+                      esc(err.message) + '</div>';
+    });
+  }
+
+  function curl(ep, box){
+    var g = urlCua(box, ep);
+    var c = "curl -X " + ep.method + " '" + location.origin + g.url + "'" +
+            " -H 'Cookie: access_token=<token của bạn>'";
+    var ta = box.querySelector('.ac-json');
+    if (ta && ta.value.trim() && ep.method !== 'GET') {
+      c += " -H 'Content-Type: application/json' -d '" +
+           ta.value.replace(/'/g, "'\\\\''") + "'";
+    }
+    var tmp = document.createElement('textarea');
+    tmp.value = c; document.body.appendChild(tmp); tmp.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(tmp);
+    box.querySelector('.ac-hint').textContent = '✓ Đã copy lệnh cURL';
+  }
+
+  // ------- mở/đóng dòng; GET không cần tham số thì chạy luôn -------
+  root.addEventListener('click', function(e){
+    var head = e.target.closest('.ac-head');
+    if (head) {
+      var ep_el = head.parentElement;
+      var ep = EPS[parseInt(ep_el.dataset.i, 10)];
+      var bam_chay = !!e.target.closest('.ac-go');
+      var box = ep_el.querySelector('.ac-body');
+      if (!box) {
+        ep_el.insertAdjacentHTML('beforeend', panel(ep));
+        box = ep_el.querySelector('.ac-body');
+      }
+      var dang_mo = ep_el.classList.contains('open');
+      if (dang_mo && !bam_chay) { ep_el.classList.remove('open'); box.hidden = true; }
+      else { ep_el.classList.add('open'); box.hidden = false; }
+      var tu_chay = bam_chay ||
+        (!dang_mo && ep.method === 'GET' && !ep.path_params.length &&
+         !ep.query.some(function(q){ return q.bat_buoc; }));
+      var link = box.querySelector('.ac-tab');
+      if (link) link.href = urlCua(box, ep).url;
+      if (tu_chay) chay(ep, box);
+      return;
+    }
+    var nut = e.target.closest('.ac-send, .ac-curl');
+    if (nut) {
+      var hop = nut.closest('.ac-ep');
+      var ep2 = EPS[parseInt(hop.dataset.i, 10)];
+      var b = hop.querySelector('.ac-body');
+      if (nut.classList.contains('ac-send')) chay(ep2, b); else curl(ep2, b);
+    }
+  });
+
+  // Cập nhật link "Mở tab mới" mỗi khi người dùng sửa ô tham số.
+  root.addEventListener('input', function(e){
+    var hop = e.target.closest('.ac-ep');
+    if (!hop) return;
+    var link = hop.querySelector('.ac-tab');
+    if (link) link.href = urlCua(hop.querySelector('.ac-body'),
+                                 EPS[parseInt(hop.dataset.i, 10)]).url;
+  });
+
+  // ------- lọc: từ khoá + chỉ đọc/ghi; nhóm nào không còn dòng thì ẩn -------
+  var find = document.getElementById('ac-find');
+  var khong = document.getElementById('ac-none');
+  var loc = 'all';
+
+  function apDung(){
+    var tu = (find.value || '').trim().toLowerCase();
+    var con = 0;
+    root.querySelectorAll('.ac-grp').forEach(function(g){
+      var hien_nhom = 0;
+      g.querySelectorAll('.ac-ep').forEach(function(el){
+        var m = el.dataset.m;
+        var hop_loc = loc === 'all' || (loc === 'get' ? m === 'GET' : m !== 'GET');
+        var hop_tu = !tu || el.dataset.key.indexOf(tu) >= 0;
+        var hien = hop_loc && hop_tu;
+        el.hidden = !hien;
+        if (hien) hien_nhom++;
+      });
+      g.hidden = hien_nhom === 0;
+      if (tu && hien_nhom) g.open = true;
+      con += hien_nhom;
+    });
+    khong.hidden = con > 0;
+  }
+
+  find.addEventListener('input', apDung);
+  document.querySelectorAll('.ac-chip').forEach(function(chip){
+    chip.addEventListener('click', function(){
+      var f = chip.dataset.f;
+      if (f === 'open' || f === 'close') {
+        root.querySelectorAll('.ac-grp').forEach(function(g){ g.open = f === 'open'; });
+        return;
+      }
+      loc = f;
+      document.querySelectorAll('.ac-chip[data-f="all"],.ac-chip[data-f="get"],' +
+        '.ac-chip[data-f="write"]').forEach(function(c){
+          c.classList.toggle('on', c === chip);
+        });
+      apDung();
+    });
   });
 })();
 """

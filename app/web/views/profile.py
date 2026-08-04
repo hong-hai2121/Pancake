@@ -85,7 +85,8 @@ def _tab_tong_quan(kh: dict) -> str:
     khoi_lead = ""
     if lead:
         khoi_lead = (
-            '<div class="card" style="margin-top:14px"><h3>Lead hiện tại</h3>'
+            '<div class="card" style="margin-top:14px">'
+            "<h3>Hồ sơ khách tiềm năng hiện tại</h3>"
             f"<p>Giai đoạn <b>{_e(lead.get('stage_name'))}</b> · "
             f"nhiệt {_e(lead.get('temperature'))} · "
             f"hẹn kế tiếp {_dt(lead.get('next_action_at'))} · "
@@ -536,7 +537,8 @@ def render_gop_trung(nhom: list[dict], ok_msg: str = "", error: str = "") -> str
                    "Máy dò theo <b>số điện thoại giống nhau</b> và "
                    "<b>Facebook ID trùng trên cùng page</b>.</p></div>")
         + '<p class="note" style="margin-top:14px">Gộp dồn dữ liệu 20 bảng trong MỘT '
-          "giao dịch (đơn · hội thoại · lead · liệu trình · việc…); hồ sơ phụ chuyển "
+          "giao dịch (đơn · hội thoại · khách tiềm năng · liệu trình · việc…); "
+          "hồ sơ phụ chuyển "
           "trạng thái <code>merged</code> và KHÔNG bị xoá, nên tra ngược được. "
           "Xem lịch sử gộp ở <a href='/quan-tri/nhat-ky'>Nhật ký hoạt động</a>.</p>"
     )

@@ -15,8 +15,11 @@ _SALE_MENU_CACHE: tuple[float, list[dict]] | None = None
 
 
 def sale_menu(ttl: float = 15.0) -> list[dict]:
-    """Khối 'Sale' ở sidebar: 13 giai đoạn pipeline + số lead ĐANG MỞ từng cột
-    (khớp với Kanban màn 11 — lead đóng không tính)."""
+    """Khối 'Sale' ở sidebar: 13 giai đoạn pipeline + số lead ĐANG ĐỨNG ở từng
+    cột — đếm y hệt `pipeline_board` để số trên menu khớp số trên bảng.
+
+    Lead ở giai đoạn kết thúc (Đã chốt / Từ chối…) đều có closed_at, nên KHÔNG
+    lọc closed_at ở đây — lọc đi thì các cột kết thúc luôn hiện 0."""
     global _SALE_MENU_CACHE
     if _SALE_MENU_CACHE and time.time() - _SALE_MENU_CACHE[0] < ttl:
         return _SALE_MENU_CACHE[1]
@@ -24,9 +27,11 @@ def sale_menu(ttl: float = 15.0) -> list[dict]:
     with pool.connection() as conn:
         rows = conn.execute(
             """
-            select s.id, s.name, s.is_closed, count(l.id) as so_lead
+            select s.id, s.name, s.is_closed, count(c.id) as so_lead
               from crm.pipeline_stages s
-              left join crm.leads l on l.stage_id = s.id and l.closed_at is null
+              left join crm.leads l on l.stage_id = s.id
+              left join crm.customers c on c.id = l.customer_id
+                    and c.deleted_at is null
              group by s.id, s.name, s.is_closed
              order by s.sort_order
             """
@@ -50,12 +55,15 @@ def _quan_cua_toi(conn, user_id: int) -> list[int]:
 
 
 def _viec_cua(conn, scope: list[int]) -> dict:
-    """Đếm việc hôm nay / quá hạn của một nhóm người (B4)."""
+    """Đếm việc hôm nay / quá hạn / sắp tới 7 ngày của một nhóm người (B4) —
+    đúng 3 ô lớn trên đầu Trang chủ."""
     return conn.execute(
         """
         select
           count(*) filter (where due_at::date = current_date and due_at >= now()) as hom_nay,
-          count(*) filter (where due_at < now())                                  as qua_han
+          count(*) filter (where due_at < now())                                  as qua_han,
+          count(*) filter (where due_at > now()
+                             and due_at::date <= current_date + 7)                as sap_toi
           from crm.tasks
          where status in ('open','in_progress') and assigned_to = any(%s)
         """,
@@ -397,30 +405,209 @@ def list_customers(q: str = "", limit: int = 50) -> tuple[list[dict], int]:
     return rows, total
 
 
-def pipeline_board() -> list[dict]:
-    """Màn Pipeline Sale (màn 11, khung): 13 cột + tối đa 5 thẻ lead mỗi cột."""
+# ------------------------------------------ Bảng chăm sóc theo mốc (màn 11)
+# Hội thoại Pancake MỚI NHẤT của khách — dùng chung cho thẻ trên bảng và khung
+# làm việc bên phải (đọc DB, không gọi API Pancake mỗi lần mở màn — luật mục 4).
+_HOI_THOAI_MOI = """
+    left join lateral (
+          select p.external_page_id, p.name as page_name,
+                 cv.external_conversation_id, cv.message_count, cv.last_message_at
+            from crm.conversations cv
+            join crm.pages p on p.id = cv.page_id
+           where cv.customer_id = c.id
+           order by cv.last_message_at desc nulls last
+           limit 1
+    ) hi on true
+"""
+
+
+def _ngay(v: str):
+    """'YYYY-MM-DD' -> date; rỗng hoặc sai định dạng -> None (bỏ qua bộ lọc)."""
+    from datetime import date
+
+    try:
+        return date.fromisoformat((v or "").strip())
+    except ValueError:
+        return None
+
+
+def _loc_bang_cham_soc(
+    q: str, owner_id: int | None, temperature: str, moc: str, tu: str, den: str,
+) -> tuple[str, dict]:
+    """Mảnh WHERE + tham số dùng chung cho 3 câu của bảng chăm sóc (đếm cột,
+    lấy thẻ, tính chỉ số) — sửa một chỗ là cả 3 câu cùng đổi."""
+    dk = ["c.deleted_at is null"]
+    ts: dict = {}
+    if q.strip():
+        dk.append("(c.full_name ilike %(q)s or c.primary_phone ilike %(q)s "
+                  "or c.customer_code ilike %(q)s)")
+        ts["q"] = f"%{q.strip()}%"
+    if owner_id:
+        dk.append("l.owner_id = %(own)s")
+        ts["own"] = owner_id
+    if temperature:
+        dk.append("l.temperature = %(nhiet)s")
+        ts["nhiet"] = temperature
+    # Mốc bám đuổi: tính trên next_action_at của lead ĐANG MỞ
+    if moc == "qua_han":
+        dk.append("l.closed_at is null and l.next_action_at < now()")
+    elif moc == "hom_nay":
+        dk.append("l.closed_at is null and l.next_action_at::date = current_date")
+    elif moc == "chua_hen":
+        dk.append("l.closed_at is null and l.next_action_at is null")
+    # Thời điểm tạo = ngày khách vào (khớp bộ lọc "Thời điểm tạo" trên thanh lọc).
+    # Ngày gõ sai/bịa trong URL thì BỎ QUA chứ không để Postgres ném lỗi 500.
+    if (d := _ngay(tu)) is not None:
+        dk.append("l.created_at >= %(tu)s")
+        ts["tu"] = d
+    if (d := _ngay(den)) is not None:
+        dk.append("l.created_at < %(den)s + 1")
+        ts["den"] = d
+    return " and ".join(dk), ts
+
+
+def pipeline_board(
+    *,
+    st: int = 0,
+    q: str = "",
+    owner_id: int | None = None,
+    temperature: str = "",
+    moc: str = "",
+    tu: str = "",
+    den: str = "",
+    moi_cot: int = 12,
+) -> dict:
+    """Màn 11 — bảng chăm sóc theo mốc: mọi giai đoạn + thẻ khách mỗi cột.
+
+    Trả `{"stages": [...], "kpi": {...}}`. Số đếm và chỉ số tính trên TOÀN bộ
+    lead khớp bộ lọc (không cắt theo `st`) để bấm qua lại giữa các cột thì dải
+    chỉ số vẫn đứng yên; `st` chỉ giới hạn danh sách thẻ phải lấy về.
+
+    Khác bản khung cũ: KHÔNG bỏ lead đã đóng — lead nằm ở giai đoạn kết thúc
+    (Đã chốt / Từ chối…) luôn có closed_at, lọc đi thì các cột đó rỗng vĩnh viễn.
+
+    `moi_cot` — số thẻ tối đa mỗi cột (xem 1 cột thì route truyền số lớn hơn).
+    """
+    where, ts = _loc_bang_cham_soc(q, owner_id, temperature, moc, tu, den)
     pool = get_pg_pool()
     with pool.connection() as conn:
         stages = conn.execute(
-            """
-            select s.id, s.name, s.is_closed, count(l.id) as so_lead
+            f"""
+            select s.id, s.code, s.name, s.is_closed, s.sort_order,
+                   coalesce(n.so, 0) as so_lead
               from crm.pipeline_stages s
-              left join crm.leads l on l.stage_id = s.id and l.closed_at is null
-             group by s.id, s.name, s.is_closed
+              left join (
+                    select l.stage_id, count(*) as so
+                      from crm.leads l
+                      join crm.customers c on c.id = l.customer_id
+                     where {where}
+                     group by l.stage_id
+              ) n on n.stage_id = s.id
              order by s.sort_order
-            """
+            """,
+            ts or None,
         ).fetchall()
-        for s in stages:
-            s["leads"] = conn.execute(
-                """
-                select l.id, c.full_name, l.temperature, l.next_action_at
-                  from crm.leads l join crm.customers c on c.id = l.customer_id
-                 where l.stage_id = %s and l.closed_at is null
-                 order by l.updated_at desc limit 5
-                """,
-                (s["id"],),
-            ).fetchall()
-    return stages
+
+        kpi = conn.execute(
+            f"""
+            select count(*)                                          as tong,
+                   count(*) filter (where l.closed_at is null)       as dang_mo,
+                   count(*) filter (where l.closed_at is null
+                                      and l.temperature = 'nong')    as nong,
+                   count(*) filter (where l.closed_at is null
+                                      and l.next_action_at < now())  as qua_han,
+                   count(*) filter (where s.code = 'da_chot')        as da_chot
+              from crm.leads l
+              join crm.customers c on c.id = l.customer_id
+              join crm.pipeline_stages s on s.id = l.stage_id
+             where {where}
+            """,
+            ts or None,
+        ).fetchone()
+
+        loc_cot = " and l.stage_id = %(st)s" if st else ""
+        the = conn.execute(
+            f"""
+            select * from (
+              select l.id, l.stage_id, l.customer_id, l.temperature, l.priority,
+                     l.source, l.next_action_at, l.stage_entered_at,
+                     l.first_contact_at, l.sla_due_at, l.closed_at, l.created_at,
+                     c.full_name, c.primary_phone, c.province, c.customer_code,
+                     u.name as owner_name,
+                     hi.external_page_id, hi.external_conversation_id,
+                     hi.message_count, hi.last_message_at, hi.page_name,
+                     row_number() over (
+                         partition by l.stage_id
+                         order by (l.next_action_at is null), l.next_action_at,
+                                  l.created_at desc
+                     ) as rn
+                from crm.leads l
+                join crm.customers c on c.id = l.customer_id
+                left join crm.users u on u.id = l.owner_id
+                {_HOI_THOAI_MOI}
+               where {where}{loc_cot}
+            ) t
+             where rn <= %(so)s
+             order by stage_id, rn
+            """,
+            {**ts, "st": st, "so": moi_cot},
+        ).fetchall()
+
+    theo_cot: dict[int, list[dict]] = {}
+    for r in the:
+        theo_cot.setdefault(r["stage_id"], []).append(r)
+    for s in stages:
+        s["leads"] = theo_cot.get(s["id"], [])
+    return {"stages": stages, "kpi": dict(kpi or {})}
+
+
+def pipeline_lead(lead_id: int) -> dict | None:
+    """Khung làm việc bên phải màn 11 — hồ sơ khách tiềm năng đang chọn:
+    lead + khách + người phụ trách + hội thoại Pancake mới nhất, kèm danh sách
+    giai đoạn của đúng pipeline đó và nhật ký chuyển cột."""
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        lead = conn.execute(
+            f"""
+            select l.*, s.code as stage_code, s.name as stage_name, s.is_closed,
+                   s.sort_order,
+                   c.full_name, c.primary_phone, c.province, c.customer_code,
+                   c.status as kh_status,
+                   u.name as owner_name,
+                   hi.external_page_id, hi.external_conversation_id,
+                   hi.message_count, hi.last_message_at, hi.page_name
+              from crm.leads l
+              join crm.pipeline_stages s on s.id = l.stage_id
+              join crm.customers c on c.id = l.customer_id
+              left join crm.users u on u.id = l.owner_id
+              {_HOI_THOAI_MOI}
+             where l.id = %s
+            """,
+            (lead_id,),
+        ).fetchone()
+        if lead is None:
+            return None
+        lead["stages"] = conn.execute(
+            "select id, code, name, is_closed, sort_order "
+            "from crm.pipeline_stages where pipeline_id = %s order by sort_order",
+            (lead["pipeline_id"],),
+        ).fetchall()
+        lead["lich_su"] = conn.execute(
+            """
+            select h.changed_at, h.reason, h.note,
+                   sf.name as from_stage_name, st.name as to_stage_name,
+                   u.name as changed_by_name
+              from crm.lead_stage_history h
+              left join crm.pipeline_stages sf on sf.id = h.from_stage_id
+              join crm.pipeline_stages st on st.id = h.to_stage_id
+              left join crm.users u on u.id = h.changed_by
+             where h.lead_id = %s
+             order by h.changed_at desc
+             limit 20
+            """,
+            (lead_id,),
+        ).fetchall()
+    return lead
 
 
 # Cache số đếm menu CSKH theo user (menu vẽ ở MỌI trang) — cùng nếp sale_menu

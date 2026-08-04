@@ -22,11 +22,13 @@ from app.db.client import get_pg_pool         # noqa: E402
 ROLES: list[tuple[str, str]] = [
     ("Chủ doanh nghiệp", "Toàn hệ thống: dashboard, doanh thu, Ads, KPI, audit"),
     ("Admin", "Toàn hệ thống: tài khoản, phân quyền, danh mục, automation, tích hợp"),
-    ("Trưởng nhóm Sale", "Khách + nhân viên trong nhóm: chia lead, pipeline, coaching"),
+    ("Trưởng nhóm Sale",
+     "Khách + nhân viên trong nhóm: chia khách tiềm năng, pipeline, coaching"),
     ("Sale", "Khách được giao: tư vấn, gọi, cập nhật trạng thái, tạo đơn"),
     ("Trưởng nhóm CSKH", "Khách đã bàn giao trong nhóm: điều phối, giám sát mốc chăm"),
     ("CSKH", "Khách được giao: xác nhận đơn, onboarding, chăm theo mốc, mua lại"),
-    ("Marketing", "Dữ liệu nguồn + chỉ số được phép: campaign, chất lượng lead, ROAS"),
+    ("Marketing",
+     "Dữ liệu nguồn + chỉ số được phép: campaign, chất lượng khách tiềm năng, ROAS"),
     ("Kế toán", "Đơn, thanh toán, doanh thu, đối soát"),
     ("Người chuyên môn", "Hồ sơ cần duyệt: kiến thức, nội dung, liệu trình, ngoại lệ"),
 ]

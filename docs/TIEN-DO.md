@@ -46,7 +46,7 @@
 
 ## Việc lẻ ngoài lộ trình (ghi để khỏi quên)
 
-- ⬜ Xoá tab **Thử API** (`/data/thu-api`) trước khi đưa web ra Internet — đang phơi token Pancake (từ A2 phải đăng nhập mới xem được, nhưng vẫn nên xoá)
+- ⬜ Xoá tab **API Pancake** (`/data/thu-api/pancake`) trước khi đưa web ra Internet — đang phơi token Pancake (từ A2 phải đăng nhập mới xem được, nhưng vẫn nên xoá). Tab **Thử API dự án** (`/data/thu-api`, danh mục 205 endpoint bấm-là-chạy) chỉ mở cho `bot.view` nhưng gọi được cả endpoint ghi dữ liệu — cân nhắc chặn ở môi trường thật
 - ✅ Tắt `/docs` `/redoc`, chặn `/poller` — *làm luôn trong A2 (middleware khoá + docs_url=None)*
 - ⬜ Đưa lên domain: Cloudflare Tunnel + Access (đã bàn 31/07, làm sau A2)
 - ✅ **Dò API Pancake POS** *(01/08)* — Open API riêng `https://pos.pages.fm/api/v1`, xác thực query `api_key` (tạo ở POS: Cấu hình → Nâng cao → Tích hợp bên thứ 3 → tab API Key; đã lưu `.env`: `PANCAKE_POS_API_KEY` + `PANCAKE_POS_SHOP_ID=1328220779`). Spec 82 endpoint: `https://docs.pancake.biz/pos/api/openapi.json`. Dò thật bằng `scripts/do_pos_api.py`: shop "Bác sĩ Hội" 56 page — **53.306 đơn** (102 trường/đơn, CÓ `conversation_id`/`page_id`/`post_id`/`ad_id` → nối được về `crm.conversations`), 29.691 khách (`fb_id`, `phone_numbers`, `order_count`, `purchased_amount`), 34 mẫu mã SP. 17 mã `status` (0 Mới · 17 Chờ XN · 1 Đã XN · 2 Đã gửi · 3 Đã nhận · 16 Đã thu tiền · 4/15/5 hoàn · 6 Hủy · 7 Xóa…) → nguồn ánh xạ 11 trạng thái CRM. Webhook có sẵn: `PUT /shops/{id}` bật `webhook_types:["orders",…]` → B7 nên đi webhook + poller bù

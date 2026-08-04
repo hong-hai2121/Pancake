@@ -8,9 +8,14 @@ from urllib.parse import parse_qs, urlencode
 
 import httpx
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app.core.config import settings
+from app.core.errors import ApiError
+# alias: file này dùng tên `ok` cho tham số thông báo của form, đừng để đè nhau
+from app.core.response import err_response
+from app.core.response import ok as bao_thanh_cong
 
 from app.db.repositories.queries import (
     debug_search,
@@ -26,9 +31,13 @@ from app.ai.prompt import build_prompt
 from app.ai.embedding import embed
 from app.ai.llm import complete
 from app.integrations.pancake.client import PancakeError, list_pages, raw_call
+from app.web import pancake_catalog
+from app.web.api_catalog import gom_nhom, liet_ke
 from app.web.views.data import (
+    render_api_catalog,
     render_api_test,
     render_error,
+    render_pancake_ops,
     render_qa,
     render_scripts,
     render_simulate,
@@ -240,8 +249,52 @@ async def simulate_page(
     )
 
 
-# ----------------------------------------------------------------- thử API
+# ------------------------------------------------- danh mục API của dự án
 @router.get("/thu-api", response_class=HTMLResponse)
+async def api_catalog_page(request: Request) -> HTMLResponse:
+    """Liệt kê MỌI endpoint /api/v1 của chính app này để bấm chạy thử tại chỗ.
+
+    Không gọi gì ở server: chỉ dò `request.app.routes` rồi dựng danh mục. Việc
+    gọi thật do trình duyệt làm (fetch kèm cookie phiên hiện tại), nên kết quả
+    đúng bằng những gì tài khoản đang đăng nhập được phép thấy.
+    """
+    items = liet_ke(request.app)
+    return HTMLResponse(render_api_catalog(gom_nhom(items), items))
+
+
+# --------------------------------------- chiều RA: dự án gọi Pancake + đồng bộ
+@router.get("/thu-api/ra-pancake", response_class=HTMLResponse)
+async def pancake_ops_page() -> HTMLResponse:
+    """Danh mục việc dự án GỌI RA Pancake: lấy hội thoại → đồng bộ vào CRM."""
+    items = pancake_catalog.liet_ke()
+    return HTMLResponse(render_pancake_ops(gom_nhom(items), items))
+
+
+@router.api_route("/thu-api/goi/{ma}", methods=["GET", "POST"])
+async def pancake_ops_chay(ma: str, request: Request) -> JSONResponse:
+    """Chạy 1 việc trong danh mục rồi trả JSON — nút "Chạy" trên màn gọi vào đây.
+
+    Whitelist nằm ở `pancake_catalog.OPS`; việc GHI dữ liệu bắt buộc POST nên
+    không thể lỡ tay kích hoạt bằng cách dán đường dẫn vào thanh địa chỉ.
+    """
+    try:
+        kq = await pancake_catalog.chay(
+            ma, dict(request.query_params), ghi_duoc=request.method == "POST")
+    except ApiError as err:
+        return err_response(err.code, err.message, err.errors)
+    except (PancakeError, httpx.HTTPError) as exc:
+        return err_response("EXTERNAL_ERROR", f"Pancake lỗi: {str(exc)[:300]}")
+    except Exception as exc:  # noqa: BLE001 — trang test: hiện lỗi thật, đừng nuốt
+        return err_response(
+            "INTERNAL_ERROR", f"{type(exc).__name__}: {str(exc)[:300]}")
+    # jsonable_encoder: dữ liệu thật có datetime/Decimal, JSONResponse trần
+    # không nuốt được (route /api/v1 trả dict nên FastAPI tự mã hoá, ở đây phải
+    # tự gọi vì cần trả JSONResponse cho cả nhánh lỗi).
+    return JSONResponse(jsonable_encoder(bao_thanh_cong(kq)))
+
+
+# ----------------------------------------------------------- thử API Pancake
+@router.get("/thu-api/pancake", response_class=HTMLResponse)
 async def api_test_page(request: Request) -> HTMLResponse:
     """Gọi thẳng 1 endpoint Pancake rồi hiện request đã gửi + JSON gốc trả về.
 

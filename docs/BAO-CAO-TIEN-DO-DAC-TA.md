@@ -66,7 +66,7 @@
 - [ ] **Bật `POS_SYNC_ENABLED` + chạy backfill 53k đơn** (`scripts/backfill_don_pos.py`) — điều kiện để ROAS/doanh thu quy nguồn có số thật
 - [ ] **Nối thêm tài khoản quảng cáo vào Pancake POS** — hiện 1/64 ad_id trên đơn khớp được (chỉ 1 tài khoản QC đang nối)
 - [ ] **Nhập danh mục sản phẩm/liệu trình thật** vào B6 (từ `Bang-san-pham-CRM-hoan-thien.xlsx`) — bảng đang 0 dòng, chưa nhập thì đề xuất liệu trình chưa dùng được thật
-- [ ] **Xóa tab Thử API** (`/data/thu-api`) trước khi đưa web ra Internet — đang phơi token Pancake
+- [ ] **Xóa tab API Pancake** (`/data/thu-api/pancake`) trước khi đưa web ra Internet — đang phơi token Pancake
 - [ ] **Commit đợt tái cấu trúc thư mục** đang nằm ở working tree
 - [ ] Đưa lên domain (Cloudflare Tunnel + Access) → khi có domain thì bật **webhook POS** thay poll bù
 

@@ -743,7 +743,7 @@ mà không cần F5; bấm vào một người để xem hội thoại và trả
 
 > Tài liệu công khai của Pancake không đọc được (trang SPA + cert `docs.pancake.vn`
 > hết hạn) nên phần này **dò thật bằng token trong `.env`** qua tab
-> [Thử API](http://127.0.0.1:8000/data/thu-api) — 26 lượt GET, chỉ đọc, ngày
+> [API Pancake](http://127.0.0.1:8000/data/thu-api/pancake) — 26 lượt GET, chỉ đọc, ngày
 > **2026-07-29**, trên page `613327758541266`, token role `EDIT_PROFILE`.
 
 Base: `https://pages.fm/api/v1` · `access_token` đặt ở **query string**.
@@ -1138,7 +1138,7 @@ Mục này trước đây cảnh báo "code KHÔNG có lớp bảo mật nào" �
 
 - ⏳ Phân quyền theo từng route (`require_permission`) — làm ở **A3**
 - ⏳ **Rate limit** — chưa có; bị spam form đăng nhập/endpoint LLM vẫn tốn tài nguyên
-- ⏳ Xoá tab **Thử API** (`/data/thu-api`) — sau đăng nhập vẫn phơi token Pancake ra màn hình
+- ⏳ Xoá tab **API Pancake** (`/data/thu-api/pancake`) — sau đăng nhập vẫn phơi token Pancake ra màn hình. Tab **Thử API dự án** (`/data/thu-api`) không phơi bí mật nhưng bấm được cả endpoint GHI dữ liệu, cũng nên cân nhắc
 - ⏳ `COOKIE_SECURE=true` trong `.env` khi chạy sau HTTPS (tunnel/domain)
 
 ### Cơ chế bảo mật API — 6 lớp

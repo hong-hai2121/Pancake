@@ -32,18 +32,28 @@ MK = "TrangChu-test-1234"
 PASS = 0
 FAIL = 0
 
-# vai trò -> (marker PHẢI có trên trang của vai trò đó)
+# vai trò -> (marker PHẢI có trên trang của vai trò đó).
+# Nhãn bám theo bố cục Kallet dựng lại 03/08/2026 (thẻ đội + ô kpi2).
 MARKER = {
-    "Chủ doanh nghiệp": ["Chi phí QC 30 ngày", "Tổng quan chi tiết"],
-    "Admin": ["Lỗi đồng bộ chờ thử lại", "Hoạt động gần đây"],
-    "Trưởng nhóm Sale": ["Hàng đợi chưa nhận", "Tải theo nhân viên trong đội"],
-    "Sale": ["Lead cần hành động sớm nhất", "Doanh thu giao TC tháng"],
-    "Trưởng nhóm CSKH": ["Việc theo nhân viên trong đội", "Mốc chăm chờ làm"],
-    "CSKH": ["Đơn chờ xác nhận (CS01)", "Mốc chăm chờ làm"],
-    "Marketing": ["ROAS 30 ngày", "Chi phí QC 7 ngày"],
-    "Kế toán": ["Đơn mới nhất", "Doanh thu giao TC hôm nay"],
-    "Người chuyên môn": ["Ca chuyển chuyên môn chờ", "Khách cờ đỏ"],
+    "Chủ doanh nghiệp": ["Chi phí QC 30 ngày", "Tổng quan chi tiết",
+                         "Báo cáo cả team"],
+    "Admin": ["Lỗi đồng bộ chờ thử lại", "Vận hành hệ thống", "Báo cáo cả team"],
+    "Trưởng nhóm Sale": ["Hàng đợi chưa ai nhận", "Tải theo nhân viên trong đội",
+                         "Đội Sale"],
+    "Sale": ["Khách tiềm năng cần hành động sớm nhất",
+             "Doanh thu giao thành công trong tháng", "Việc bán của tôi"],
+    "Trưởng nhóm CSKH": ["Việc theo nhân viên trong đội", "Mốc chăm chờ làm",
+                         "Đội CSKH"],
+    "CSKH": ["Đơn chờ xác nhận (CS01)", "Mốc chăm chờ làm",
+             "Việc chăm sóc của tôi"],
+    "Marketing": ["ROAS 30 ngày", "Chi phí 7 ngày", "Quảng cáo 30 ngày"],
+    "Kế toán": ["Đơn mới nhất", "Đơn &amp; doanh thu", "Giao thành công"],
+    "Người chuyên môn": ["Ca chuyển chuyên môn chờ", "Khách cờ đỏ",
+                         "Chuyên môn &amp; an toàn"],
 }
+# Khối chung MỌI vai trò: 3 ô lớn việc + đầu trang kiểu Kallet
+MARKER_CHUNG = ['class="kpi3"', "Cần làm hôm nay", "Quá hạn", "Sắp tới 7 ngày",
+                'class="hm-h1"', "Xin chào"]
 
 
 def ok(ten: str, dk: bool, them: str = "") -> None:
@@ -172,6 +182,9 @@ def main() -> None:
         ok(f"[{ten_vai}] thấy đúng bản của mình",
            r.status_code == 200 and not thieu,
            f"status={r.status_code} thiếu={thieu}")
+        thieu_chung = [m for m in MARKER_CHUNG if m not in r.text]
+        ok(f"[{ten_vai}] có khối chung (3 ô lớn + đầu trang)",
+           not thieu_chung, f"thiếu={thieu_chung}")
 
     # 4. vai trò lạ không vỡ trang, rơi về bản "khac"
     ok("đăng nhập vai trò lạ", dang_nhap_web(client, f"{DAU}vaila"))
@@ -196,6 +209,37 @@ def main() -> None:
        f"hang_doi={d_tn['hang_doi']}")
     ok("Bảng tải theo nhân viên đủ 3 người đội Sale",
        len(d_tn["theo_nv"]) == 3, f"n={len(d_tn['theo_nv'])}")
+
+    # 6. khối "báo cáo cả team" của Chủ DN/Admin — kỳ lọc + biểu đồ + xếp hạng
+    print("== Khối báo cáo cả team (Chủ DN / Admin) ==")
+    ok("đăng nhập Chủ DN", dang_nhap_web(client, f"{DAU}chudn"))
+    r = client.get("/crm/trang-chu")
+    t = r.text
+    ok("có thanh chọn kỳ + 5 nút nhanh",
+       'class="rf-seg"' in t and "Đầu tháng đến nay" in t and 'name="tu"' in t)
+    ok("có 2 thẻ đội Sale/CSKH kèm thanh doanh thu",
+       t.count('class="teamcard"') == 2 and t.count("revbar") >= 2)
+    ok("có khối doanh thu Lên đơn vs Đã thu",
+       "Lên đơn · Tổng" in t and "Đã thu" in t)
+    ok("có biểu đồ doanh thu + chú giải",
+       'class="hm-chart"' in t and "Sale (bán mới)" in t)
+    ok("có 2 bảng xếp hạng", t.count('class="rtbl"') == 2)
+    ok("số bấm được ra drill-down đúng kỳ",
+       "/crm/bao-cao/chi-tiet?metric=lead_moi&amp;tu=" in t)
+
+    r2 = client.get("/crm/trang-chu?tu=2026-07-01&den=2026-07-31")
+    ok("đổi kỳ -> mọi liên kết drill-down đổi theo",
+       "tu=2026-07-01&amp;den=2026-07-31" in r2.text
+       and "2026-07-01 → 2026-07-31" in r2.text)
+    for xau in ("?tu=zzz&den=", "?tu=2026-09-01&den=2026-01-01"):
+        ok(f"kỳ lọc hỏng '{xau}' vẫn ra trang 200",
+           client.get("/crm/trang-chu" + xau).status_code == 200)
+
+    # Marketing KHÔNG có revenue.view -> phải ẩn tiền, không hiện số 0 giả
+    ok("đăng nhập Marketing", dang_nhap_web(client, f"{DAU}mkt"))
+    tm = client.get("/crm/trang-chu").text
+    ok("Marketing không thấy khối doanh thu công ty",
+       "Lên đơn · Tổng" not in tm and 'class="rtbl"' not in tm)
 
     with pool.connection() as conn:
         don_dep(conn)

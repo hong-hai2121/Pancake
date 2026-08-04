@@ -98,7 +98,7 @@ def assign_owner(
         if not (reason or "").strip():
             raise ApiError(
                 "MISSING_REQUIRED_DATA",
-                "Chuyển lead giữa nhân viên phải có lý do (FR-031)",
+                "Chuyển khách tiềm năng giữa nhân viên phải có lý do (FR-031)",
             )
     # Nhận mới thì đặt lại đồng hồ SLA tương tác đầu
     sla = _now() + timedelta(minutes=SLA_TUONG_TAC_DAU_PHUT)
@@ -135,7 +135,7 @@ def move_stage(
     if to_stage["pipeline_id"] != lead["pipeline_id"]:
         raise ApiError(
             "INVALID_STAGE_TRANSITION",
-            "Giai đoạn đích không thuộc pipeline của lead",
+            "Giai đoạn đích không thuộc pipeline của khách tiềm năng",
         )
     if to_stage_id == lead["stage_id"]:
         return lead  # đứng yên — không ghi lịch sử rác
@@ -176,7 +176,7 @@ def move_stage(
         if lead_repo.count_lost_reasons(lead_id) == 0:
             raise ApiError(
                 "MISSING_REQUIRED_DATA",
-                f"Đóng lead ở '{to_stage['name']}' phải có lý do chuẩn "
+                f"Đóng hồ sơ ở '{to_stage['name']}' phải có lý do chuẩn "
                 "(lead_lost_reasons — FR-040, LEAD-010)",
             )
 

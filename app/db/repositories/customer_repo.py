@@ -530,7 +530,7 @@ def timeline(customer_id: int, limit: int = 100) -> list[dict]:
              from crm.calls c2 where c2.customer_id = %(c)s)
             union all
             (select 'lead_stage', h.changed_at,
-                    concat('Lead #', l.id, ' → ', s.name), h.id
+                    concat('Khách tiềm năng #', l.id, ' → ', s.name), h.id
              from crm.lead_stage_history h
              join crm.leads l on l.id = h.lead_id
              join crm.pipeline_stages s on s.id = h.to_stage_id

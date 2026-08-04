@@ -7,6 +7,7 @@ Nguyên tắc của bộ khung:
   * Khi lát cắt đó làm thật, thay phần thân màn; khung + menu giữ nguyên.
 """
 
+from datetime import datetime
 from html import escape
 
 from app.integrations.pancake.links import link_hoi_thoai
@@ -81,11 +82,273 @@ _LOI_TAT: dict[str, list[tuple[str, str]]] = {
     "khac":       [("/crm/cong-viec", "🗓️ Việc của tôi")],
 }
 
+# Tiêu đề lớn đầu trang chủ — nói ngay người xem đang xem BÁO CÁO GÌ (bố cục Kallet)
+_HM_TIEU_DE: dict[str, str] = {
+    "chu_dn":     "📊 Báo cáo cả team Sale &amp; CSKH",
+    "admin":      "📊 Báo cáo cả team Sale &amp; CSKH",
+    "sale":       "🎯 Việc bán hàng của tôi",
+    "sale_tn":    "🎯 Báo cáo đội Sale",
+    "cskh":       "💗 Việc chăm sóc của tôi",
+    "cskh_tn":    "💗 Báo cáo đội CSKH",
+    "marketing":  "📣 Hiệu quả quảng cáo",
+    "ke_toan":    "🧾 Đơn hàng &amp; doanh thu",
+    "chuyen_mon": "🩺 Hồ sơ cần chuyên môn",
+    "khac":       "🏠 Trang chủ",
+}
+
 
 def _card(tieu_de: str, ruot: str, note: str = "") -> str:
     ghi = f'<p class="note" style="margin:8px 0 0">{escape(note)}</p>' if note else ""
     return (f'<div class="card" style="margin-top:14px"><h3>{escape(tieu_de)}</h3>'
             f"{ruot}{ghi}</div>")
+
+
+# --- mảnh dựng Trang chủ (bố cục Kallet) -----------------------------------
+def _hm_panel(tieu_de: str, ruot: str, phu: str = "") -> str:
+    dau = (f'<div class="panel-t">{tieu_de}'
+           + (f"<small>{phu}</small>" if phu else "") + "</div>") if tieu_de else ""
+    return f'<div class="panel">{dau}{ruot}</div>'
+
+
+def _hm_bigkpi(so: str, nhan: str, bieu: str, tone: str, href: str) -> str:
+    """Ô số lớn trên đầu trang chủ (3 ô: hôm nay · quá hạn · sắp tới)."""
+    return (
+        f'<a class="bigkpi {tone}" href="{escape(href)}">'
+        f'<span class="bk-ic">{bieu}</span>'
+        f'<span><span class="bk-n">{escape(so)}</span>'
+        f'<span class="bk-l">{nhan} ›</span></span></a>'
+    )
+
+
+def _hm_o(so: str, nhan: str, mau: str = "", href: str = "") -> str:
+    """Ô số nhỏ trong thẻ đội."""
+    ruot = (f'<div class="n{" " + mau if mau else ""}">{escape(so)}</div>'
+            f'<div class="l">{nhan}</div>')
+    return (f'<a class="kpi2" href="{escape(href)}">{ruot}</a>' if href
+            else f'<div class="kpi2">{ruot}</div>')
+
+
+def _hm_the_doi(bieu: str, ten: str, lop: str, o: str, link: tuple[str, str] = (),
+                thanh: str = "") -> str:
+    """Thẻ một đội: đầu thẻ + lưới ô số + (tuỳ chọn) thanh doanh thu dưới cùng."""
+    xem = (f'<a class="tc-link" href="{escape(link[0])}">{escape(link[1])} ›</a>'
+           if link else "")
+    return (
+        f'<div class="teamcard"><div class="tc-head">'
+        f'<span class="tc-ic {lop}">{bieu}</span><b>{escape(ten)}</b>{xem}</div>'
+        f'<div class="kpis2">{o}</div>{thanh}</div>'
+    )
+
+
+def _hm_thanh_tien(lop: str, nhan: str, tien, phu: str, href: str) -> str:
+    """Thanh doanh thu dưới đáy thẻ đội. `phu` là dòng phụ ĐÃ soạn sẵn (mỗi vai
+    trò đối chiếu một thứ khác nhau: đã thu · số đơn · doanh thu hôm nay)."""
+    return (
+        f'<a class="revbar {lop}" href="{escape(href)}"><span>{escape(nhan)}</span>'
+        f"<b>{_tien(tien)}<small>{phu}</small></b></a>"
+    )
+
+
+def _hm_chon_ky(ky: dict) -> str:
+    """Thanh chọn kỳ: 5 nút nhanh (liên kết) + ô từ/đến. Không cần JS."""
+    from datetime import date, timedelta
+
+    h = date.today()
+    dau_thang = h.replace(day=1)
+    san = [("Hôm nay", h, h),
+           ("Hôm qua", h - timedelta(days=1), h - timedelta(days=1)),
+           ("7 ngày qua", h - timedelta(days=6), h),
+           ("30 ngày qua", h - timedelta(days=29), h),
+           ("Đầu tháng đến nay", dau_thang, h)]
+    seg = "".join(
+        f'<a class="{"on" if ky.get("tu") == a.isoformat() and ky.get("den") == b.isoformat() else ""}"'
+        f' href="/crm/trang-chu?tu={a}&den={b}">{escape(ten)}</a>'
+        for ten, a, b in san
+    )
+    return _hm_panel(
+        "",
+        f'<div class="rf-quick"><span class="rf-lb">⚡ Xem nhanh</span>'
+        f'<span class="rf-seg">{seg}</span></div>'
+        '<form class="rf-row" method="get" action="/crm/trang-chu">'
+        '<label class="rf-field"><span class="rf-ov">Từ ngày</span>'
+        f'<input type="date" name="tu" value="{escape(str(ky.get("tu") or ""))}"></label>'
+        '<label class="rf-field"><span class="rf-ov">Đến ngày</span>'
+        f'<input type="date" name="den" value="{escape(str(ky.get("den") or ""))}"></label>'
+        '<button class="rf-go">Xem báo cáo</button></form>',
+    )
+
+
+def _hm_bieu_do(chuoi: list[dict]) -> str:
+    """Cột doanh thu theo ngày — SVG dựng tay (dự án không có thư viện biểu đồ).
+
+    Mỗi ngày 2 cột: Sale (bán mới = tổng − mua lại) và CSKH (mua lại)."""
+    if not chuoi:
+        return ('<div class="lp-mut">Chưa có đơn giao thành công nào trong kỳ '
+                "— biểu đồ hiện khi có dữ liệu.</div>")
+    rong, cao, le_d, le_t = 900, 190, 24, 8
+    cot = [(r["ngay"], float(r["tong"] or 0) - float(r["mua_lai"] or 0),
+            float(r["mua_lai"] or 0)) for r in chuoi]
+    dinh = max([s + c for _, s, c in cot] + [1])
+    buoc = (rong - le_t * 2) / len(cot)
+    w = max(3.0, min(18.0, buoc / 3))
+    than, nhan = "", ""
+    for i, (ngay, s, c) in enumerate(cot):
+        x = le_t + buoc * i + buoc / 2
+        for gia_tri, lop, lech in ((s, "bs", -w - 1), (c, "bc", 1)):
+            h = (cao - le_d) * gia_tri / dinh
+            if h > 0:
+                than += (f'<rect class="{lop}" x="{x + lech:.1f}" '
+                         f'y="{cao - le_d - h:.1f}" width="{w:.1f}" '
+                         f'height="{h:.1f}" rx="2"><title>{ngay:%d/%m} · '
+                         f'{"Sale" if lop == "bs" else "CSKH"}: '
+                         f"{gia_tri:,.0f}đ</title></rect>")
+        # nhãn ngày: thưa dần khi kỳ dài, khỏi chồng chữ
+        if len(cot) <= 12 or i % max(1, len(cot) // 10) == 0:
+            nhan += (f'<text x="{x:.1f}" y="{cao - 8}" text-anchor="middle">'
+                     f"{ngay:%d/%m}</text>")
+    luoi = "".join(
+        f'<line class="gl" x1="0" y1="{(cao - le_d) * k / 3:.1f}" x2="{rong}" '
+        f'y2="{(cao - le_d) * k / 3:.1f}"/>' for k in range(4)
+    )
+    return (
+        f'<svg class="hm-chart" viewBox="0 0 {rong} {cao}" role="img" '
+        f'aria-label="Doanh thu giao thành công theo ngày">'
+        f"{luoi}{than}{nhan}</svg>"
+        '<div class="hm-legend">'
+        '<span><i style="background:var(--hot)"></i>Sale (bán mới)</span>'
+        '<span><i style="background:#3b82f6"></i>CSKH (mua lại)</span>'
+        f"<span>Đỉnh cột: {_tien(dinh)}</span></div>"
+    )
+
+
+def _hm_khoi_ca_doi(bc: dict) -> str:
+    """Khối "báo cáo cả team Sale & CSKH" của Trang chủ Chủ DN / Admin.
+
+    `bc` = `report_service.bao_cao_ca_doi()`. Khoá `tien` rỗng nghĩa là người
+    xem KHÔNG có revenue.view — bỏ hẳn khối tiền/biểu đồ/xếp hạng thay vì bày
+    số 0 (đúng nếp FR-173: ẩn theo quyền, không bịa)."""
+    ky, doi, tl = bc["ky"], bc["doi"], bc["ti_le"]
+    tien = bc.get("tien") or {}
+
+    def drill(metric: str) -> str:
+        return (f'/crm/bao-cao/chi-tiet?metric={metric}'
+                f'&tu={ky["tu"]}&den={ky["den"]}')
+
+    def pt(v) -> str:
+        return "—" if v is None else f"{v}%"
+
+    def n(v) -> str:
+        return f"{int(v or 0):,}".replace(",", ".")
+
+    khoi = _hm_chon_ky(ky) + '<div class="hm-2col">' + _hm_the_doi(
+        "🧑‍💼", "Đội Sale", "sale",
+        _hm_o(n(doi["lead_moi"]), "🆕 Khách tiềm năng mới", "pink",
+              drill("lead_moi"))
+        + _hm_o(n(doi["lead_lien_he"]), "💬 Đã liên hệ được", "",
+                drill("lead_lien_he"))
+        + _hm_o(n(doi["lead_chot"]), "✅ Chốt đơn", "green", drill("lead_chot"))
+        + _hm_o(pt(tl["chot"]), "🎯 Tỉ lệ chốt", "")
+        + _hm_o(n(doi["don_tao"]), "🧾 Đơn tạo", "", drill("don_tao"))
+        + _hm_o(n(doi["don_giao"]), "🚚 Đơn giao thành công", "green",
+                drill("don_giao")),
+        ("/crm/bao-cao?tab=sale", "Xem báo cáo"),
+        _hm_thanh_tien(
+            "sale", "Doanh thu Sale (đơn bán mới)",
+            tien.get("doanh_thu_len_don_sale"),
+            "· ✅ đã thu " + _tien(float(tien.get("doanh_thu_giao") or 0)
+                                  - float(tien.get("doanh_thu_mua_lai") or 0)),
+            drill("doanh_thu_len_don_sale")) if tien else "",
+    ) + _hm_the_doi(
+        "💬", "Đội CSKH", "cskh",
+        _hm_o(n(doi["moc_den_han"]), "📞 Mốc chăm đến hạn",
+              "blue" if doi["moc_den_han"] else "", drill("moc_den_han"))
+        + _hm_o(n(doi["moc_hoan_thanh"]), "☑️ Mốc đã làm", "",
+                drill("moc_hoan_thanh"))
+        + _hm_o(pt(tl["dung_han"]), "⭐ Làm đúng hạn", "green")
+        + _hm_o(n(doi["ban_giao_moi"]), "🤝 Khách mới bàn giao", "",
+                drill("ban_giao_moi"))
+        + _hm_o(n(doi["co_hoi_mo"]), "🔄 Cơ hội mua lại đang mở", "",
+                drill("co_hoi_mo"))
+        + _hm_o(n(doi["viec_qua_han"]), "⚠️ Việc quá hạn",
+                "red" if doi["viec_qua_han"] else "", drill("viec_qua_han")),
+        ("/crm/bao-cao?tab=cskh", "Xem báo cáo"),
+        _hm_thanh_tien(
+            "cskh", "Doanh thu CSKH (đơn chăm sóc)",
+            tien.get("doanh_thu_len_don_cskh"),
+            "· ✅ đã thu " + _tien(tien.get("doanh_thu_mua_lai")),
+            drill("doanh_thu_len_don_cskh")) if tien else "",
+    ) + "</div>"
+
+    if not tien:
+        return khoi + _hm_panel(
+            "💰 Doanh thu",
+            '<div class="lp-mut">Tài khoản của bạn không có quyền '
+            "<b>revenue.view</b> nên phần doanh thu, biểu đồ và xếp hạng theo "
+            "tiền được ẩn.</div>")
+
+    khoi += _hm_panel(
+        "💰 Doanh thu toàn công ty",
+        '<div class="stats">'
+        + stat("💰 Lên đơn · Tổng", _tien(tien["doanh_thu_len_don"]),
+               hint=f'✅ Đã thu: {_tien(tien["doanh_thu_giao"])}',
+               href=drill("doanh_thu_len_don"))
+        + stat("🎯 Sale (đơn bán mới)", _tien(tien["doanh_thu_len_don_sale"]),
+               href=drill("doanh_thu_len_don_sale"))
+        + stat("💗 CSKH (đơn chăm sóc)", _tien(tien["doanh_thu_len_don_cskh"]),
+               hint=f'✅ Đã thu: {_tien(tien["doanh_thu_mua_lai"])}',
+               href=drill("doanh_thu_len_don_cskh"))
+        + "</div>"
+        '<p class="note" style="margin:10px 0 0">💰 <b>Lên đơn</b> = tiền đơn '
+        "tạo trong kỳ ở <b>mọi trạng thái</b> (bỏ huỷ/hoàn) · ✅ <b>Đã thu</b> = "
+        "đơn đã <b>giao thành công</b>. Bấm số để xem đúng danh sách đơn của "
+        "kỳ đang lọc.</p>",
+        f'· {ky["tu"]} → {ky["den"]}',
+    )
+
+    khoi += _hm_panel("📈 Doanh thu theo thời gian",
+                      _hm_bieu_do(bc["theo_ngay"]),
+                      "· đơn giao thành công từng ngày")
+
+    xh_s = "".join(
+        f'<tr><td><a href="/crm/dashboard-sale?user_id={r["id"]}'
+        f'&tu={ky["tu"]}&den={ky["den"]}">{_e(r["name"])}</a></td>'
+        f'<td class="num">{r["chot"]}</td>'
+        f'<td class="num"><b>{_tien(r["doanh_thu"])}</b></td></tr>'
+        for r in bc["xh_sale"]
+    )
+    xh_c = "".join(
+        f'<tr><td><a href="/crm/dashboard-cskh?user_id={r["id"]}'
+        f'&tu={ky["tu"]}&den={ky["den"]}">{_e(r["name"])}</a></td>'
+        f'<td class="num">{r["moc_xong"]}</td>'
+        f'<td class="num"><b>{_tien(r["doanh_thu_mua_lai"])}</b></td></tr>'
+        for r in bc["xh_cskh"]
+    )
+    khoi += (
+        '<div class="rankwrap">'
+        + _hm_xep_hang("🏆 Xếp hạng đội Sale · theo doanh thu",
+                       ["Nhân viên", "Chốt", "Doanh thu ▾"], xh_s)
+        + _hm_xep_hang("🏆 Xếp hạng CSKH · theo doanh thu mua lại",
+                       ["Nhân viên", "Mốc xong", "Doanh thu ▾"], xh_c)
+        + "</div>"
+        '<p class="note">💡 Hai bảng cùng thước đo <b>doanh thu giao thành '
+        "công</b> trong kỳ — bấm tên nhân viên để mở dashboard riêng của họ.</p>"
+    )
+    return khoi
+
+
+def _hm_xep_hang(tieu_de: str, cot: list[str], dong: str) -> str:
+    than = dong or (f'<tr><td colspan="{len(cot)}" class="lp-mut">'
+                    "Chưa có số liệu trong kỳ</td></tr>")
+    # cột đầu là tên người (căn trái), các cột số căn phải
+    dau = "".join(
+        ("<th>" if i == 0 else '<th class="num">') + escape(c) + "</th>"
+        for i, c in enumerate(cot)
+    )
+    return _hm_panel(
+        tieu_de,
+        f'<table class="rtbl"><thead><tr>{dau}</tr></thead>'
+        f"<tbody>{than}</tbody></table>",
+    )
 
 
 def render_trang_chu(nhom: str, data: dict, user: dict) -> str:
@@ -102,44 +365,60 @@ def render_trang_chu(nhom: str, data: dict, user: dict) -> str:
         f'<a class="btn sm" href="{href}">{nhan}</a>'
         for href, nhan in _LOI_TAT.get(nhom, _LOI_TAT["khac"])
     )
-    viec = data.get("viec") or {"hom_nay": 0, "qua_han": 0}
+    viec = data.get("viec") or {"hom_nay": 0, "qua_han": 0, "sap_toi": 0}
+    cua_ai = "cả đội" if nhom in ("sale_tn", "cskh_tn") else "của tôi"
+
+    # --- đầu trang: tiêu đề theo vai trò + lời chào + lối tắt (bố cục Kallet) ---
     chao = (
-        '<div class="card" style="display:flex;gap:14px;align-items:center;'
-        'flex-wrap:wrap;justify-content:space-between">'
-        f"<div><h3 style='margin:0'>👋 Chào {escape(ten)}</h3>"
-        f"<p class='note' style='margin:4px 0 0'>{escape(vai)} · "
-        f"{_THU[hom_nay.weekday()]}, {hom_nay.strftime('%d/%m/%Y')}</p></div>"
-        f'<div style="display:flex;gap:8px;flex-wrap:wrap">{nut}</div></div>'
+        f'<div class="hm-h1">{_HM_TIEU_DE.get(nhom, "🏠 Trang chủ")}'
+        f'<span class="dt">· {_THU[hom_nay.weekday()]}, '
+        f'{hom_nay.strftime("%d/%m/%Y")}</span></div>'
+        f'<div class="hm-sub">Xin chào <b>{escape(ten)}</b> · Vai trò: '
+        f'<b>{escape(vai or "chưa gán")}</b> · Phạm vi: <b>{cua_ai}</b> · '
+        "💡 bấm vào từng chỉ số để mở trang chi tiết</div>"
+        + (f'<div class="rf-quick" style="margin-bottom:14px">{nut}</div>'
+           if nut else "")
     )
 
-    khoi = ""
-    # --- dải "việc của tôi" chung mọi vai trò (trưởng nhóm = cả đội) ---
-    cua_ai = "cả đội" if nhom in ("sale_tn", "cskh_tn") else "của tôi"
-    khoi += (
-        '<div class="stats" style="margin-top:14px">'
-        + stat(f"Việc hôm nay ({cua_ai})", str(viec["hom_nay"]), href="/crm/cong-viec")
-        + stat(f"Việc quá hạn ({cua_ai})", str(viec["qua_han"]),
-               tone="err" if viec["qua_han"] else "", href="/crm/cong-viec")
+    # --- 3 ô lớn: việc hôm nay · quá hạn · sắp tới 7 ngày (mọi vai trò) ---
+    khoi = (
+        '<div class="kpi3">'
+        + _hm_bigkpi(f'{viec["hom_nay"]:,}'.replace(",", "."),
+                     f"Cần làm hôm nay ({cua_ai})", "💗", "warn", "/crm/cong-viec")
+        + _hm_bigkpi(f'{viec["qua_han"]:,}'.replace(",", "."),
+                     f"Quá hạn ({cua_ai})", "⏰",
+                     "err" if viec["qua_han"] else "", "/crm/cong-viec")
+        + _hm_bigkpi(f'{viec.get("sap_toi", 0):,}'.replace(",", "."),
+                     f"Sắp tới 7 ngày ({cua_ai})", "📅", "info", "/crm/cong-viec")
+        + "</div>"
     )
 
     if nhom in ("sale", "sale_tn"):
         lead, don = data["lead"], data["don"]
-        khoi += (
-            stat("Lead đang mở", str(lead["mo"]), href="/crm/pipeline")
-            + stat("Lead mới hôm nay", str(lead["moi_hom_nay"]), href="/crm/pipeline")
-            + stat("Lead nóng 🔥", str(lead["nong"]), tone="warn" if lead["nong"] else "",
-                   href="/crm/pipeline")
-            + stat("Quá SLA nhận", str(lead["qua_sla"]),
-                   tone="err" if lead["qua_sla"] else "", href="/crm/pipeline")
-            + stat("Trễ hẹn hành động", str(lead["hen_tre"]),
-                   tone="err" if lead["hen_tre"] else "", href="/crm/pipeline")
-            + stat("Doanh thu giao TC tháng", _tien(don["doanh_thu_thang"]),
-                   hint=f"{don['don_thang']} đơn tạo trong tháng", href="/crm/don-hang")
+        o_sale = (
+            _hm_o(str(lead["mo"]), "🎯 Khách tiềm năng đang mở", "pink",
+                  "/crm/pipeline")
+            + _hm_o(str(lead["moi_hom_nay"]), "🆕 Mới hôm nay", "", "/crm/pipeline")
+            + _hm_o(str(lead["nong"]), "🔥 Đang nóng",
+                    "warn" if lead["nong"] else "", "/crm/pipeline?temperature=nong")
+            + _hm_o(str(lead["qua_sla"]), "⚠️ Quá SLA nhận",
+                    "red" if lead["qua_sla"] else "", "/crm/pipeline")
+            + _hm_o(str(lead["hen_tre"]), "⏰ Trễ hẹn chăm",
+                    "red" if lead["hen_tre"] else "", "/crm/pipeline?moc=qua_han")
+            + _hm_o(str(don["don_thang"]), "🧾 Đơn tạo trong tháng", "",
+                    "/crm/don-hang")
         )
         if nhom == "sale_tn":
-            khoi += stat("Hàng đợi chưa nhận", str(data["hang_doi"]),
-                         tone="warn" if data["hang_doi"] else "", href="/crm/pipeline")
-        khoi += "</div>"
+            o_sale += _hm_o(str(data["hang_doi"]), "📥 Hàng đợi chưa ai nhận",
+                            "warn" if data["hang_doi"] else "", "/crm/pipeline")
+        khoi += '<div class="hm-2col">' + _hm_the_doi(
+            "🧑‍💼", "Đội Sale" if nhom == "sale_tn" else "Việc bán của tôi", "sale",
+            o_sale, ("/crm/pipeline", "Mở bảng chăm sóc"),
+            _hm_thanh_tien("sale", "Doanh thu giao thành công trong tháng",
+                           don["doanh_thu_thang"],
+                           f'· 🧾 {don["don_thang"]} đơn tạo trong tháng',
+                           "/crm/don-hang"),
+        ) + "</div>"
         dong = "".join(
             f"<tr><td><b>{_e(r['full_name'])}</b></td><td>{_e(r['stage'])}</td>"
             f"<td>{_e(r['temperature'])}</td><td>{_dt(r['next_action_at'])}</td>"
@@ -147,9 +426,9 @@ def render_trang_chu(nhom: str, data: dict, user: dict) -> str:
             for r in data["can_lam"]
         )
         khoi += _card(
-            "Lead cần hành động sớm nhất",
+            "Khách tiềm năng cần hành động sớm nhất",
             _bang(["Khách", "Giai đoạn", "Nhiệt", "Hẹn kế tiếp", "Phụ trách"],
-                  dong, "Chưa có lead nào được giao"),
+                  dong, "Chưa có khách tiềm năng nào được giao"),
         )
         if nhom == "sale_tn":
             nv = "".join(
@@ -159,20 +438,23 @@ def render_trang_chu(nhom: str, data: dict, user: dict) -> str:
             )
             khoi += _card(
                 "Tải theo nhân viên trong đội",
-                _bang(["Nhân viên", "Lead mở", "Trễ hẹn", "Nóng"], nv,
+                _bang(["Nhân viên", "Khách tiềm năng mở", "Trễ hẹn", "Nóng"], nv,
                       "Đội chưa có thành viên"),
             )
 
     elif nhom in ("cskh", "cskh_tn"):
         so = data["so"]
-        khoi += (
-            stat("Đơn chờ xác nhận (CS01)", str(so["don_cho_xn"]),
-                 tone="warn" if so["don_cho_xn"] else "", href="/crm/don-hang")
-            + stat("Mốc chăm đến hạn", str(so["moc_den_han"]),
-                   tone="warn" if so["moc_den_han"] else "", href="/crm/cham-soc")
-            + stat("Cơ hội mua lại đang mở", str(so["mua_lai"]), href="/crm/mua-lai")
-            + "</div>"
-        )
+        khoi += '<div class="hm-2col">' + _hm_the_doi(
+            "💬", "Đội CSKH" if nhom == "cskh_tn" else "Việc chăm sóc của tôi",
+            "cskh",
+            _hm_o(str(so["don_cho_xn"]), "🛍️ Đơn chờ xác nhận (CS01)",
+                  "warn" if so["don_cho_xn"] else "", "/crm/don-hang")
+            + _hm_o(str(so["moc_den_han"]), "📞 Mốc chăm đến hạn",
+                    "blue" if so["moc_den_han"] else "", "/crm/cham-soc")
+            + _hm_o(str(so["mua_lai"]), "🔄 Cơ hội mua lại đang mở", "",
+                    "/crm/mua-lai"),
+            ("/crm/cham-soc", "Mở bảng chăm sóc"),
+        ) + "</div>"
         moc = "".join(
             f"<tr><td><span class='pill'>{_e(m['step_code'])}</span></td>"
             f"<td>{_e(m['khach'])}</td><td>{_dt(m['planned_at'])}</td>"
@@ -202,16 +484,21 @@ def render_trang_chu(nhom: str, data: dict, user: dict) -> str:
         chi_30 = float(ads["chi_30n"] or 0)
         dt_30 = float(moi["doanh_thu_30n"] or 0)
         roas = f"{dt_30 / chi_30:,.2f}" if chi_30 > 0 else "—"
-        khoi += (
-            stat("Chi phí QC 7 ngày", _tien(ads["chi_7n"]), href="/crm/quang-cao")
-            + stat("Chi phí QC 30 ngày", _tien(ads["chi_30n"]), href="/crm/quang-cao")
-            + stat("Ad có chi phí (30n)", str(ads["ad_co_chi"]), href="/crm/quang-cao")
-            + stat("ROAS 30 ngày", roas,
-                   hint="doanh thu giao TC / chi phí", href="/crm/quang-cao")
-            + stat("Lead mới 7 ngày", str(moi["lead_7n"]), href="/crm/pipeline")
-            + stat("Khách mới 7 ngày", str(moi["khach_7n"]), href="/crm/khach-hang")
-            + "</div>"
-        )
+        khoi += '<div class="hm-2col">' + _hm_the_doi(
+            "📣", "Quảng cáo 30 ngày", "sale",
+            _hm_o(_tien(ads["chi_7n"]), "💸 Chi phí 7 ngày", "", "/crm/quang-cao")
+            + _hm_o(_tien(ads["chi_30n"]), "💸 Chi phí 30 ngày", "",
+                    "/crm/quang-cao")
+            + _hm_o(str(ads["ad_co_chi"]), "🎬 Ad có chi phí", "",
+                    "/crm/quang-cao")
+            + _hm_o(roas, "📈 ROAS 30 ngày", "green" if chi_30 else "",
+                    "/crm/quang-cao")
+            + _hm_o(str(moi["lead_7n"]), "🆕 Khách tiềm năng mới 7 ngày", "pink",
+                    "/crm/pipeline")
+            + _hm_o(str(moi["khach_7n"]), "👤 Khách mới 7 ngày", "",
+                    "/crm/khach-hang"),
+            ("/crm/quang-cao", "Mở nguồn quảng cáo"),
+        ) + "</div>"
         khoi += _card(
             "Đi sâu hơn",
             '<p style="margin:0">Mở <a href="/crm/quang-cao">Nguồn quảng cáo</a> để xem '
@@ -225,19 +512,22 @@ def render_trang_chu(nhom: str, data: dict, user: dict) -> str:
         def n(ma: str) -> int:
             return tt.get(ma, {}).get("n", 0)
 
-        khoi += (
-            stat("Doanh thu giao TC hôm nay", _tien(thang["doanh_thu_hom_nay"]),
-                 href="/crm/don-hang")
-            + stat("Doanh thu giao TC tháng", _tien(thang["doanh_thu_thang"]),
-                   href="/crm/don-hang")
-            + stat("Chờ xác nhận", str(n("pending")), href="/crm/don-hang")
-            + stat("Đang giao", str(n("shipping")), href="/crm/don-hang")
-            + stat("Giao thành công", str(n("delivered")), tone="ok", href="/crm/don-hang")
-            + stat("Hoàn", str(n("returned") + n("returning")),
-                   tone="err" if n("returned") + n("returning") else "",
-                   href="/crm/don-hang")
-            + "</div>"
-        )
+        hoan = n("returned") + n("returning")
+        khoi += '<div class="hm-2col">' + _hm_the_doi(
+            "🧾", "Đơn & doanh thu", "cskh",
+            _hm_o(str(n("pending")), "⏳ Chờ xác nhận", "warn" if n("pending") else "",
+                  "/crm/don-hang?status=pending")
+            + _hm_o(str(n("shipping")), "🚚 Đang giao", "blue",
+                    "/crm/don-hang?status=shipping")
+            + _hm_o(str(n("delivered")), "✅ Giao thành công", "green",
+                    "/crm/don-hang?status=delivered")
+            + _hm_o(str(hoan), "↩️ Hoàn", "red" if hoan else "", "/crm/don-hang"),
+            ("/crm/don-hang", "Mở danh sách đơn"),
+            _hm_thanh_tien("sale", "Doanh thu giao thành công trong tháng",
+                           thang["doanh_thu_thang"],
+                           f'· 📅 hôm nay {_tien(thang["doanh_thu_hom_nay"])}',
+                           "/crm/don-hang"),
+        ) + "</div>"
         dong = "".join(
             f"<tr><td>{_e(r['external_order_id']) if r['external_order_id'] else '#' + str(r['id'])}</td>"
             f"<td>{_e(r['khach'])}</td><td><span class='pill'>{_e(r['status'])}</span></td>"
@@ -252,20 +542,21 @@ def render_trang_chu(nhom: str, data: dict, user: dict) -> str:
 
     elif nhom == "chuyen_mon":
         so = data["so"]
-        khoi += (
-            stat("Ca chuyển chuyên môn chờ", str(so["ca_cho"]),
-                 tone="err" if so["ca_cho"] else "")
-            + stat("Giao cho tôi", str(so["ca_cua_toi"]),
-                   tone="warn" if so["ca_cua_toi"] else "")
-            + stat("Đề xuất chờ duyệt", str(so["de_xuat_cho"]),
-                   tone="warn" if so["de_xuat_cho"] else "", href="/crm/san-pham")
-            + stat("SP/nội dung chờ duyệt", str(so["sp_cho_duyet"]), href="/crm/san-pham")
-            + stat("Khách cờ đỏ", str(so["khach_do"]),
-                   tone="err" if so["khach_do"] else "", href="/crm/khach-hang")
-            + stat("Khách cờ vàng", str(so["khach_vang"]),
-                   tone="warn" if so["khach_vang"] else "", href="/crm/khach-hang")
-            + "</div>"
-        )
+        khoi += '<div class="hm-2col">' + _hm_the_doi(
+            "🩺", "Chuyên môn & an toàn", "cskh",
+            _hm_o(str(so["ca_cho"]), "🚨 Ca chuyển chuyên môn chờ",
+                  "red" if so["ca_cho"] else "")
+            + _hm_o(str(so["ca_cua_toi"]), "🙋 Giao cho tôi",
+                    "warn" if so["ca_cua_toi"] else "")
+            + _hm_o(str(so["de_xuat_cho"]), "📋 Đề xuất chờ duyệt",
+                    "warn" if so["de_xuat_cho"] else "", "/crm/san-pham")
+            + _hm_o(str(so["sp_cho_duyet"]), "🏷️ SP/nội dung chờ duyệt", "",
+                    "/crm/san-pham")
+            + _hm_o(str(so["khach_do"]), "🔴 Khách cờ đỏ",
+                    "red" if so["khach_do"] else "", "/crm/khach-hang")
+            + _hm_o(str(so["khach_vang"]), "🟡 Khách cờ vàng",
+                    "warn" if so["khach_vang"] else "", "/crm/khach-hang"),
+        ) + "</div>"
         ca = "".join(
             f"<tr><td><b>{_e(r['khach'])}</b></td><td>{_e(r['risk_level'])}</td>"
             f"<td>{_e(r['reason'])}</td><td>{_e(r['giao_cho'])}</td>"
@@ -279,27 +570,34 @@ def render_trang_chu(nhom: str, data: dict, user: dict) -> str:
         )
 
     elif nhom == "admin":
+        # Admin trước hết là người điều hành: bày báo cáo cả 2 đội y như Chủ DN,
+        # rồi mới tới khối kỹ thuật (tài khoản, lỗi đồng bộ, nhật ký).
         so = data["so"]
-        khoi += (
-            stat("Nhân viên hoạt động", str(so["nv_active"]), href="/quan-tri/nhan-vien")
-            + stat("Phiên đăng nhập hôm nay", str(so["phien_hom_nay"]))
-            + stat("Lỗi đồng bộ chờ thử lại", str(so["loi_cho"]),
-                   tone="warn" if so["loi_cho"] else "", href="/quan-tri/tich-hop/loi")
-            + stat("Lỗi bỏ cuộc (cần xử tay)", str(so["loi_bo_cuoc"]),
-                   tone="err" if so["loi_bo_cuoc"] else "", href="/quan-tri/tich-hop/loi")
-            + stat("Thao tác hôm nay", str(so["thao_tac_hom_nay"]),
-                   href="/quan-tri/nhat-ky")
-            + "</div>"
-        )
+        khoi += _hm_khoi_ca_doi(data["bc"]) if data.get("bc") else ""
         audit = "".join(
             f"<tr><td>{_dt(a['created_at'])}</td><td>{_e(a['user_name'])}</td>"
             f"<td><span class='pill'>{_e(a['action'])}</span></td>"
             f"<td>{_e(a['object_type'])}</td></tr>"
             for a in data["audit_moi"]
         )
-        khoi += _card(
-            "Hoạt động gần đây",
-            _bang(["Lúc", "Ai", "Hành động", "Đối tượng"], audit, "Chưa có hoạt động"),
+        khoi += _hm_panel(
+            "🛠️ Vận hành hệ thống",
+            '<div class="kpis2">'
+            + _hm_o(str(so["nv_active"]), "👥 Nhân viên hoạt động", "",
+                    "/quan-tri/nhan-vien")
+            + _hm_o(str(so["phien_hom_nay"]), "🔑 Phiên đăng nhập hôm nay")
+            + _hm_o(str(so["loi_cho"]), "🔁 Lỗi đồng bộ chờ thử lại",
+                    "warn" if so["loi_cho"] else "", "/quan-tri/tich-hop/loi")
+            + _hm_o(str(so["loi_bo_cuoc"]), "⛔ Lỗi bỏ cuộc (xử tay)",
+                    "red" if so["loi_bo_cuoc"] else "", "/quan-tri/tich-hop/loi")
+            + _hm_o(str(so["thao_tac_hom_nay"]), "📝 Thao tác hôm nay", "",
+                    "/quan-tri/nhat-ky")
+            + "</div>"
+            '<div style="margin-top:12px">'
+            + _bang(["Lúc", "Ai", "Hành động", "Đối tượng"], audit,
+                    "Chưa có hoạt động")
+            + "</div>",
+            "· tài khoản · đồng bộ · nhật ký",
         )
 
     elif nhom == "chu_dn":
@@ -307,28 +605,31 @@ def render_trang_chu(nhom: str, data: dict, user: dict) -> str:
         chi_30 = float(ads["chi_30n"] or 0)
         dt_30 = float(ads["doanh_thu_30n"] or 0)
         roas = f"{dt_30 / chi_30:,.2f}" if chi_30 > 0 else "—"
-        khoi += (
-            stat("Khách hàng", str(so["khach"]), href="/crm/khach-hang")
-            + stat("Lead đang mở", str(so["lead_mo"]), href="/crm/pipeline")
-            + stat("Đơn trong tháng", str(so["don_thang"]), href="/crm/don-hang")
-            + stat("Doanh thu giao TC tháng", _tien(so["doanh_thu_thang"]),
-                   href="/crm/don-hang")
-            + stat("Chi phí QC 30 ngày", _tien(ads["chi_30n"]), href="/crm/quang-cao")
-            + stat("ROAS 30 ngày", roas, href="/crm/quang-cao")
-            + stat("Việc quá hạn toàn cty", str(so["viec_qua_han"]),
-                   tone="err" if so["viec_qua_han"] else "", href="/crm/cong-viec")
-            + stat("Cơ hội mua lại", str(so["co_hoi_mua_lai"]), href="/crm/mua-lai")
+        khoi += _hm_khoi_ca_doi(data["bc"]) if data.get("bc") else ""
+        khoi += _hm_panel(
+            "🏢 Toàn công ty (không phụ thuộc kỳ lọc)",
+            '<div class="kpis2">'
+            + _hm_o(str(so["khach"]), "👤 Khách hàng", "", "/crm/khach-hang")
+            + _hm_o(str(so["lead_mo"]), "🎯 Khách tiềm năng đang mở", "pink",
+                    "/crm/pipeline")
+            + _hm_o(str(so["don_thang"]), "🧾 Đơn trong tháng", "",
+                    "/crm/don-hang")
+            + _hm_o(_tien(ads["chi_30n"]), "💸 Chi phí QC 30 ngày", "",
+                    "/crm/quang-cao")
+            + _hm_o(roas, "📈 ROAS 30 ngày", "green" if chi_30 else "",
+                    "/crm/quang-cao")
+            + _hm_o(str(so["viec_qua_han"]), "⚠️ Việc quá hạn toàn cty",
+                    "red" if so["viec_qua_han"] else "", "/crm/cong-viec")
+            + _hm_o(str(so["co_hoi_mua_lai"]), "🔄 Cơ hội mua lại", "",
+                    "/crm/mua-lai")
             + "</div>"
-        )
-        khoi += _card(
-            "Đi sâu hơn",
-            '<p style="margin:0">Mở <a href="/crm/tong-quan">Tổng quan chi tiết</a> '
-            '(lead theo 13 giai đoạn, hoạt động gần đây) hoặc '
+            '<p class="note" style="margin:10px 0 0">Đi sâu hơn: '
+            '<a href="/crm/tong-quan">Tổng quan chi tiết</a> · '
             '<a href="/crm/quang-cao">Nguồn quảng cáo</a> (ROAS từng ad).</p>',
         )
 
     else:  # vai trò lạ / chưa gán — chỉ việc của tôi + hướng dẫn
-        khoi += "</div>" + _card(
+        khoi += _card(
             "Chưa nhận diện vai trò",
             '<p style="margin:0">Tài khoản của bạn chưa thuộc nhóm dashboard nào — '
             'vẫn xem được <a href="/crm/cong-viec">Công việc</a> và các màn được cấp '
@@ -348,7 +649,7 @@ def render_tong_quan(data: dict, tieu_cuc: int | None) -> str:
     tiles = (
         '<div class="stats">'
         + stat("Khách hàng", str(so["khach"]), href="/crm/khach-hang")
-        + stat("Lead đang mở", str(so["lead_mo"]), href="/crm/pipeline")
+        + stat("Khách tiềm năng đang mở", str(so["lead_mo"]), href="/crm/pipeline")
         + stat("Việc hôm nay", str(so["viec_hom_nay"]), href="/crm/cong-viec")
         + stat("Việc quá hạn", str(so["viec_qua_han"]),
                tone="err" if so["viec_qua_han"] else "", href="/crm/cong-viec")
@@ -376,7 +677,7 @@ def render_tong_quan(data: dict, tieu_cuc: int | None) -> str:
         _ghi_chu("B1→B11", "mỗi ô số sẽ sống dần theo từng lát cắt; số hiện tại "
                  "đếm thật từ DB (trống thì 0)")
         + tiles
-        + '<div class="card" style="margin-top:14px"><h3>Lead theo giai đoạn '
+        + '<div class="card" style="margin-top:14px"><h3>Khách tiềm năng theo giai đoạn '
           '(13 giai đoạn — B3)</h3><div class="kanban">' + cot_stage + "</div></div>"
         + '<div class="card" style="margin-top:14px"><h3>Hoạt động gần đây</h3>'
         + _bang(["Lúc", "Ai", "Hành động", "Đối tượng"], audit, "Chưa có hoạt động")
@@ -459,39 +760,514 @@ def render_khach_hang(rows: list[dict], total: int, q: str,
                         heading="Khách hàng", sub="Màn 8 — danh sách tất cả khách hàng")
 
 
-# ------------------------------------------------------------ Pipeline (màn 11)
-def render_pipeline(stages: list[dict], st: int = 0) -> str:
-    """`st` — id giai đoạn cần tô sáng (bấm 'cột trên bảng' từ khối Sale
-    ở menu trái); 0 = không tô gì."""
-    cot = ""
-    for s in stages:
-        the = "".join(
-            '<div class="kcard">'
-            f"<b>{_e(l['full_name'])}</b>"
-            f"<div class='note'>{_e(l['temperature'])} · hẹn {_dt(l['next_action_at'])}</div>"
-            "</div>"
-            for l in s["leads"]
-        )
-        hl = " hl" if s["id"] == st else ""
-        cot += (
-            f'<div class="kcol{" closed" if s["is_closed"] else ""}{hl}">'
-            f"<h4>{escape(s['name'])}<span class='kcount'>{s['so_lead']}</span></h4>"
-            f"{the}</div>"
-        )
-    body = (
-        _ghi_chu("B3 (lead & pipeline)", "kéo thả thẻ, luật chặn chuyển trạng thái, "
-                 "chia lead tự động, SLA — tầng luật đã xong, chờ nối")
-        + '<style>.kcol.hl{outline:2px solid var(--accent);outline-offset:2px;'
-          "border-radius:10px}</style>"
-        + f'<div class="kanban card">{cot}</div>'
+# ------------------------------------- Bảng chăm sóc theo mốc (màn 11 — B3)
+# Biểu tượng từng giai đoạn (mã seed ở scripts/seed_danh_muc.py). Giai đoạn tự
+# thêm ở màn cấu hình pipeline rơi về dấu chấm tròn.
+_LP_ICON = {
+    "lead_moi": "🆕", "chua_lien_he": "📞", "da_ket_noi": "🔗",
+    "dang_khai_thac": "🔍", "da_tu_van": "💬", "da_bao_gia": "🏷️",
+    "dang_can_nhac": "🤔", "hen_goi_lai": "⏰", "can_bam_duoi": "🎯",
+    "da_chot": "✅", "khong_phu_hop": "🚫", "tu_choi": "❌", "mat_lien_lac": "📵",
+}
+# Nhiệt độ lead (crm.leads.temperature — CHECK nong/am/lanh)
+_LP_NHIET = {"nong": ("🔥", "Nóng", "lp-hot"),
+             "am": ("🌤️", "Ấm", "lp-warm"),
+             "lanh": ("❄️", "Lạnh", "lp-cold")}
+# Dải nhóm thẻ trong một cột, theo mốc phải chăm tiếp (next_action_at)
+_LP_BAND = [("qua_han", "Quá hạn"), ("hom_nay", "Hôm nay"), ("mai", "Ngày mai"),
+            ("sap_toi", "Sắp tới"), ("chua_hen", "Chưa đặt hẹn"),
+            ("da_dong", "Đã đóng")]
+
+
+def _lp_url(loc: dict, **doi) -> str:
+    """Đường dẫn màn 11 giữ nguyên bộ lọc hiện tại, chỉ đổi vài tham số.
+
+    Giá trị rỗng/0 bị bỏ khỏi query cho URL sạch; khoá bắt đầu bằng `_` là dữ
+    liệu phụ mang kèm cho lớp vẽ (vd danh sách nhân viên), không phải bộ lọc."""
+    from urllib.parse import urlencode
+
+    p = {**loc, **doi}
+    goi = {k: v for k, v in p.items()
+           if not k.startswith("_") and v not in ("", 0, None)}
+    return "/crm/pipeline" + (f"?{urlencode(goi)}" if goi else "")
+
+
+def _lp_moc(v) -> tuple[str, str, str]:
+    """(mã dải, nhãn hạn, class thẻ) suy từ `next_action_at` của lead."""
+    if v is None:
+        return "chua_hen", "chưa đặt hẹn", ""
+    now = datetime.now().astimezone()
+    ngay = (v.astimezone().date() - now.date()).days
+    if v.astimezone() < now:
+        tre = (now.date() - v.astimezone().date()).days
+        return "qua_han", ("quá hạn hôm nay" if tre == 0 else f"quá hạn {tre} ngày"), "od"
+    if ngay == 0:
+        return "hom_nay", f"hẹn hôm nay {v.astimezone():%H:%M}", ""
+    if ngay == 1:
+        return "mai", f"hẹn mai {v.astimezone():%H:%M}", ""
+    return "sap_toi", f"hẹn {v.astimezone():%d/%m}", ""
+
+
+def _lp_dai(l: dict) -> tuple[str, str, str]:
+    """Như `_lp_moc` nhưng hồ sơ ĐÃ ĐÓNG (giai đoạn kết thúc) thì không còn mốc
+    chăm nữa — xếp riêng một dải, khỏi bị tô đỏ 'quá hạn' oan."""
+    if l.get("closed_at"):
+        return "da_dong", f"đóng {l['closed_at'].astimezone():%d/%m/%Y}", ""
+    return _lp_moc(l["next_action_at"])
+
+
+def _lp_the(l: dict, loc: dict, dang_chon: int) -> str:
+    """Một thẻ khách trên cột."""
+    _, han, tone = _lp_dai(l)
+    link = link_hoi_thoai(l.get("external_page_id") or "",
+                          l.get("external_conversation_id") or "")
+    chat = (f'<a class="lp-c-chat" href="{escape(link)}" target="_blank" '
+            'rel="noopener" title="Mở hội thoại bên Pancake">💬</a>' if link else "")
+    bieu, nhan, mau = _LP_NHIET.get(l.get("temperature") or "", ("", "", ""))
+    nhiet = (f'<span class="lp-pill {mau}">{bieu} {escape(nhan)}</span>'
+             if bieu else "")
+    bieu_han = "🔒" if l.get("closed_at") else "⏰"
+    meta = [f'<span class="{tone}">{bieu_han} {escape(han)}</span>' if tone
+            else f"<span>{bieu_han} {escape(han)}</span>"]
+    if l.get("message_count"):
+        meta.append(f'<span>✉️ {l["message_count"]}</span>')
+    if l.get("owner_name"):
+        meta.append(f'<span>👤 {escape(l["owner_name"])}</span>')
+    else:
+        meta.append('<span class="od">👤 chưa ai nhận</span>')
+    lop = " on" if l["id"] == dang_chon else ""
+    if tone:
+        lop += " od"
+    elif l.get("closed_at"):
+        lop += " won"
+    return (
+        f'<div class="lp-card{lop}">'
+        f'<a class="lp-card-lk" href="{escape(_lp_url(loc, st=l["stage_id"], lead=l["id"]))}">'
+        f'<span class="lp-c-top"><span class="lp-c-name">{_e(l["full_name"])}</span>'
+        f"{nhiet}</span>"
+        f'<span class="lp-c-meta">{"".join(meta)}</span></a>'
+        f"{chat}</div>"
     )
-    # cuộn ngang tới cột được tô (kanban 13 cột tràn màn hình)
-    js = ("var c=document.querySelector('.kcol.hl');"
-          "if(c)c.scrollIntoView({block:'nearest',inline:'center'});") if st else ""
-    return render_shell("Pipeline Sale", "crm-pipeline", body,
-                        heading="Pipeline Sale",
-                        sub="Màn 11 — Kanban 13 giai đoạn (đã seed từ BRD)",
-                        script=js)
+
+
+def _lp_cot(s: dict, loc: dict, mau: str, dang_chon: int) -> str:
+    """Một cột giai đoạn: đầu cột (màu riêng) + thẻ chia theo dải mốc."""
+    nhom: dict[str, list[str]] = {}
+    for l in s["leads"]:
+        band, _, _ = _lp_dai(l)
+        nhom.setdefault(band, []).append(_lp_the(l, loc, dang_chon))
+    than = ""
+    for ma, nhan in _LP_BAND:
+        if ma in nhom:
+            than += (f'<div class="lp-band">{escape(nhan)}'
+                     f"<span>{len(nhom[ma])}</span></div>" + "".join(nhom[ma]))
+    if not than:
+        than = '<div class="lp-col-e">Không có khách nào ở cột này</div>'
+    con = s["so_lead"] - len(s["leads"])
+    if con > 0:
+        than += (f'<div class="lp-band">'
+                 f'<a href="{escape(_lp_url(loc, st=s["id"], lead=0))}">'
+                 f"còn {con} khách nữa — xem cả cột →</a></div>")
+    return (
+        f'<section class="lp-col{" closed" if s["is_closed"] else ""}" '
+        f'style="--c:{mau}">'
+        f'<header class="lp-col-h"><span>{_LP_ICON.get(s["code"], "●")}</span>'
+        f'<a class="lp-col-t" href="{escape(_lp_url(loc, st=s["id"], lead=0))}">'
+        f'{escape(s["name"])}</a>'
+        f'<span class="lp-col-n">{s["so_lead"]}</span></header>'
+        f'<div class="lp-col-b">{than}</div></section>'
+    )
+
+
+def _lp_khung_lam_viec(lead: dict | None, loc: dict, nhan_vien: list[dict],
+                       ly_do: list[dict]) -> str:
+    """Khung làm việc bên phải — hồ sơ khách đang chọn + thao tác thật.
+
+    Mỗi thao tác là một form POST riêng (không JS): chuyển giai đoạn đi qua đủ
+    luật chặn FR-040 ở lead_service, sai luật thì route đẩy lỗi lên dải flash.
+    """
+    if lead is None:
+        return (
+            '<div class="lp-pane"><div class="lp-pane-empty">'
+            "<div style='font-size:34px'>🎯</div>"
+            "<h3>Chọn một khách để bắt đầu chăm</h3>"
+            "<p>Bấm vào thẻ khách bên trái để mở hồ sơ: đổi giai đoạn, đặt lịch "
+            "nhắc lại, chia lại cho nhân viên khác và xem nhật ký chuyển cột.</p>"
+            "</div></div>"
+        )
+    ve = _lp_url(loc, st=lead["stage_id"], lead=lead["id"])
+    goc = f"/crm/pipeline/{lead['id']}"
+    link = link_hoi_thoai(lead.get("external_page_id") or "",
+                          lead.get("external_conversation_id") or "")
+
+    # --- đầu khung: tên + lối tắt sang hồ sơ 360° / hội thoại Pancake ---
+    nut = (f'<a class="lp-btn ghost" href="/crm/khach-hang/{lead["customer_id"]}">'
+           "👤 Hồ sơ 360°</a>")
+    if link:
+        nut += (f'<a class="lp-btn ghost" href="{escape(link)}" target="_blank" '
+                'rel="noopener">💬 Pancake</a>')
+    bieu, nhan, mau = _LP_NHIET.get(lead.get("temperature") or "", ("", "", ""))
+    nhiet = f'<span class="lp-pill {mau}">{bieu} {escape(nhan)}</span>' if bieu else ""
+    dau = (
+        '<div class="lp-dw-h"><div class="lp-dw-h1">'
+        f'<h2>{_e(lead["full_name"])}</h2>{nhiet}'
+        f'<span style="margin-left:auto">{nut}</span></div>'
+        '<div class="lp-dw-h2">'
+        f'<span>📞 {_e(lead["primary_phone"])}</span>'
+        f'<span>📍 {_e(lead["province"])}</span>'
+        f'<span>👤 {_e(lead.get("owner_name"))}</span>'
+        f'<span>🏷️ {_e(lead.get("page_name") or lead.get("source"))}</span>'
+        "</div></div>"
+    )
+
+    # --- giai đoạn: mỗi nút là một lần chuyển cột, kèm lý do + lịch hẹn ---
+    buoc = ""
+    for s in lead["stages"]:
+        bieu_gd = _LP_ICON.get(s["code"], "●")
+        if s["id"] == lead["stage_id"]:
+            buoc += (f'<span class="lp-step on">{bieu_gd} '
+                     f'{escape(s["name"])}</span>')
+        else:
+            buoc += (f'<button class="lp-step" name="stage_id" value="{s["id"]}">'
+                     f'{bieu_gd} {escape(s["name"])}</button>')
+    o_ly_do = "".join(
+        f'<option value="{r["id"]}">{escape(r["name"])}</option>'
+        for r in (ly_do or [])
+    )
+    khoi_gd = (
+        '<div class="lp-dw-s"><div class="lp-dw-lbl">Giai đoạn theo dõi</div>'
+        f'<form method="post" action="{goc}/giai-doan">'
+        f'<input type="hidden" name="ve" value="{escape(ve)}">'
+        f'<div class="lp-steps">{buoc}</div>'
+        '<div class="lp-inl" style="margin-top:10px">'
+        '<input type="text" name="reason" style="flex:1;min-width:200px" '
+        'placeholder="Lý do / ghi chú (bắt buộc với Đã báo giá · Đang cân nhắc)">'
+        '<input type="datetime-local" name="next_action_at" '
+        'title="Lịch hẹn tiếp theo — bắt buộc với Đang cân nhắc">'
+        f'<select name="lost_reason_id" title="Lý do chuẩn khi đóng hồ sơ">'
+        f'<option value="">— Lý do chưa mua (khi Từ chối / Không phù hợp / '
+        f"Mất liên lạc) —</option>{o_ly_do}</select>"
+        "</div>"
+        '<p class="lp-mut" style="margin:8px 0 0">Luật FR-040: '
+        '<b>Đã chốt</b> phải có đơn hàng · <b>Từ chối / Không phù hợp / Mất liên '
+        "lạc</b> phải chọn lý do chuẩn ở ô trên.</p>"
+        "</form></div>"
+    )
+
+    # --- các con số của lead ---
+    _, han, _ = _lp_dai(lead)
+    o_cot = ""
+    if lead.get("stage_entered_at"):
+        ngay = (datetime.now().astimezone()
+                - lead["stage_entered_at"].astimezone()).days
+        o_cot = f"{ngay} ngày"
+    khoi_so = (
+        '<div class="lp-dw-s"><div class="lp-dw-lbl">Thông tin &amp; mốc</div>'
+        '<div class="lp-facts">'
+        f'<div><span>Vào ngày</span><b>{_d(lead["created_at"])}</b></div>'
+        f'<div><span>Ở cột này</span><b>{o_cot or "—"}</b></div>'
+        f'<div><span>Mốc chăm tiếp</span><b>{escape(han)}</b></div>'
+        f'<div><span>Chạm đầu tiên</span>'
+        f'<b>{_dt(lead["first_contact_at"]) if lead.get("first_contact_at") else "chưa"}</b></div>'
+        f'<div><span>Tin nhắn</span><b>{lead.get("message_count") or 0}</b></div>'
+        f'<div><span>Mã khách</span><b>{_e(lead["customer_code"])}</b></div>'
+        "</div></div>"
+    )
+
+    # --- thao tác nhanh: đặt nhắc · đổi nhiệt độ · chia lại ---
+    o_nv = "".join(
+        f'<option value="{u["id"]}">{escape(u["name"])}</option>'
+        for u in nhan_vien
+    )
+    o_nhiet = (
+        '<option value="" disabled'
+        f'{" selected" if not lead.get("temperature") else ""}>— chưa chấm —</option>'
+        + "".join(
+            f'<option value="{ma}"'
+            f'{" selected" if lead.get("temperature") == ma else ""}>'
+            f"{bieu} {escape(ten)}</option>"
+            for ma, (bieu, ten, _) in _LP_NHIET.items()
+        )
+    )
+    khoi_tt = (
+        '<div class="lp-dw-s"><div class="lp-dw-lbl">Thao tác nhanh</div>'
+        f'<form class="lp-inl" method="post" action="{goc}/hen">'
+        f'<input type="hidden" name="ve" value="{escape(ve)}">'
+        '<input type="datetime-local" name="next_action_at" required>'
+        '<button class="lp-btn">⏰ Đặt nhắc lại</button></form>'
+        f'<form class="lp-inl" method="post" action="{goc}/nhiet" '
+        'style="margin-top:9px">'
+        f'<input type="hidden" name="ve" value="{escape(ve)}">'
+        f'<select name="temperature">{o_nhiet}</select>'
+        '<button class="lp-btn ghost">🌡️ Đổi nhiệt độ</button></form>'
+        f'<form class="lp-inl" method="post" action="{goc}/chia-lai" '
+        'style="margin-top:9px">'
+        f'<input type="hidden" name="ve" value="{escape(ve)}">'
+        f'<select name="owner_id" required>'
+        f'<option value="">— Chia lại cho… —</option>{o_nv}</select>'
+        '<input type="text" name="reason" placeholder="Lý do chuyển (FR-031)">'
+        '<button class="lp-btn ghost">🤝 Chuyển người</button></form>'
+        "</div>"
+    )
+
+    # --- nhật ký chuyển cột (lead_stage_history) ---
+    dong = "".join(
+        f"<li><time>{_dt(h['changed_at'])}</time><div>"
+        + (f"{_e(h['from_stage_name'])} → " if h.get("from_stage_name") else "Tạo mới → ")
+        + f"<b>{_e(h['to_stage_name'])}</b>"
+        + (f" · {escape(h['changed_by_name'])}" if h.get("changed_by_name") else "")
+        + (f"<div class='lp-mut'>{escape(h['reason'])}</div>" if h.get("reason") else "")
+        + "</div></li>"
+        for h in lead["lich_su"]
+    )
+    khoi_ls = (
+        '<div class="lp-dw-s"><div class="lp-dw-lbl">Nhật ký chăm sóc</div>'
+        + (f'<ul class="lp-log">{dong}</ul>' if dong
+           else '<div class="lp-mut">Chưa có hoạt động nào được ghi lại.</div>')
+        + "</div>"
+    )
+    return f'<div class="lp-pane">{dau}{khoi_gd}{khoi_so}{khoi_tt}{khoi_ls}</div>'
+
+
+def _lp_thanh_loc(loc: dict, nhan_vien: list[dict]) -> str:
+    """Thanh lọc: tìm kiếm · nhân viên · nhiệt độ · thời điểm tạo · Pipeline|Bảng."""
+    from datetime import date, timedelta
+
+    o_nv = "".join(
+        f'<option value="{u["id"]}"'
+        f'{" selected" if str(loc.get("owner_id")) == str(u["id"]) else ""}>'
+        f"{escape(u['name'])}</option>" for u in nhan_vien
+    )
+    o_nhiet = "".join(
+        f'<option value="{ma}"{" selected" if loc.get("temperature") == ma else ""}>'
+        f"{escape(nhan)}</option>"
+        for ma, nhan in [("", "— Mọi nhiệt độ —"), ("nong", "🔥 Nóng"),
+                         ("am", "🌤️ Ấm"), ("lanh", "❄️ Lạnh")]
+    )
+    o_moc = "".join(
+        f'<option value="{ma}"{" selected" if loc.get("moc") == ma else ""}>'
+        f"{escape(nhan)}</option>"
+        for ma, nhan in [("", "— Mọi mốc chăm —"), ("qua_han", "⏰ Quá hạn"),
+                         ("hom_nay", "📅 Hẹn hôm nay"),
+                         ("chua_hen", "❔ Chưa đặt hẹn")]
+    )
+    # Nút sẵn cho khoảng ngày: là LIÊN KẾT (giữ nguyên bộ lọc còn lại) nên
+    # không cần một dòng JS nào.
+    hom_nay = date.today()
+    dau_thang = hom_nay.replace(day=1)
+    thang_truoc_cuoi = dau_thang - timedelta(days=1)
+    san = [
+        ("Hôm nay", hom_nay, hom_nay),
+        ("Hôm qua", hom_nay - timedelta(days=1), hom_nay - timedelta(days=1)),
+        ("7 ngày qua", hom_nay - timedelta(days=6), hom_nay),
+        ("30 ngày qua", hom_nay - timedelta(days=29), hom_nay),
+        ("90 ngày qua", hom_nay - timedelta(days=89), hom_nay),
+        ("Đầu tháng đến nay", dau_thang, hom_nay),
+        ("Tháng trước", thang_truoc_cuoi.replace(day=1), thang_truoc_cuoi),
+    ]
+    chip = "".join(
+        f'<a class="lp-chip'
+        f'{" on" if loc.get("tu") == a.isoformat() and loc.get("den") == b.isoformat() else ""}"'
+        f' href="{escape(_lp_url(loc, tu=a.isoformat(), den=b.isoformat(), lead=0))}">'
+        f"{escape(ten)}</a>"
+        for ten, a, b in san
+    )
+    nhan_ky = (f'{loc["tu"] or "…"} → {loc["den"] or "…"}'
+               if (loc.get("tu") or loc.get("den")) else "Mọi thời điểm")
+    an = "".join(
+        f'<input type="hidden" name="{k}" value="{escape(str(loc.get(k) or ""))}">'
+        for k in ("st", "xem") if loc.get(k)
+    )
+    xem = loc.get("xem") or "pipeline"
+    return (
+        '<div class="lp-fbar">'
+        '<form class="lp-frow" method="get" action="/crm/pipeline">'
+        f"{an}"
+        '<span class="lp-search">🔍<input type="text" name="q" '
+        f'value="{escape(str(loc.get("q") or ""))}" '
+        'placeholder="Tìm tên · SĐT · mã khách"></span>'
+        f'<select class="lp-sel" name="owner_id">'
+        f'<option value="">— Mọi nhân viên —</option>{o_nv}</select>'
+        f'<select class="lp-sel" name="temperature">{o_nhiet}</select>'
+        f'<select class="lp-sel" name="moc">{o_moc}</select>'
+        '<details class="lp-ct"><summary>📅 '
+        f"<b>{escape(nhan_ky)}</b> ▾</summary>"
+        '<div class="lp-ctpop"><div class="lp-ctpop-h">Lọc theo thời điểm tạo'
+        "<span> · ngày khách vào hội thoại</span></div>"
+        f'<div class="lp-ctpre">{chip}</div>'
+        '<div class="lp-ctrange">'
+        f'<label>Từ ngày<input type="date" name="tu" '
+        f'value="{escape(str(loc.get("tu") or ""))}"></label>'
+        f'<label>Đến ngày<input type="date" name="den" '
+        f'value="{escape(str(loc.get("den") or ""))}"></label></div>'
+        '<div class="lp-ctpop-f"><button class="lp-btn">Áp dụng</button>'
+        f'<a class="lp-btn ghost" href="{escape(_lp_url(loc, tu=0, den=0, lead=0))}">'
+        "Xoá khoảng ngày</a></div></div></details>"
+        '<button class="lp-btn">Lọc</button>'
+        f'<a class="lp-btn ghost" href="{escape(_lp_url({"st": loc.get("st")}))}">'
+        "Xoá lọc</a>"
+        '<span style="margin-left:auto"></span>'
+        '<span class="lp-toggle">'
+        f'<a class="{"on" if xem != "bang" else ""}" '
+        f'href="{escape(_lp_url(loc, xem=0))}">▦ Pipeline</a>'
+        f'<a class="{"on" if xem == "bang" else ""}" '
+        f'href="{escape(_lp_url(loc, xem="bang", lead=0))}">☰ Bảng</a></span>'
+        "</form></div>"
+    )
+
+
+def _lp_bang(stages: list[dict], loc: dict) -> str:
+    """Chế độ 'Bảng' — mỗi giai đoạn một khối xổ/thu, bên trong là danh sách."""
+    from app.web.shell import mau_giai_doan
+
+    khoi = ""
+    dau_tien = True                       # khối đầu tiên xổ sẵn cho đỡ trống trơn
+    for i, s in enumerate(stages):
+        if not s["so_lead"]:
+            continue
+        dong = ""
+        for l in s["leads"]:
+            _, han, tone = _lp_dai(l)
+            bieu, nhan, mau = _LP_NHIET.get(l.get("temperature") or "", ("", "", ""))
+            dong += (
+                '<div class="lp-tr">'
+                f'<span><a href="{escape(_lp_url(loc, st=s["id"], lead=l["id"], xem=0))}">'
+                f'<b>{_e(l["full_name"])}</b></a></span>'
+                f'<span>{_e(l["primary_phone"])}</span>'
+                f'<span>{_e(l.get("owner_name"))}</span>'
+                f'<span class="{tone}">⏰ {escape(han)}</span>'
+                + (f'<span class="lp-pill {mau}">{bieu} {escape(nhan)}</span>'
+                   if bieu else "<span>—</span>")
+                + "</div>"
+            )
+        con = s["so_lead"] - len(s["leads"])
+        if con > 0:
+            dong += (f'<div class="lp-tr"><span><a href="'
+                     f'{escape(_lp_url(loc, st=s["id"], xem=0))}">'
+                     f"còn {con} khách nữa — mở cột →</a></span></div>")
+        st = int(loc.get("st") or 0)
+        xo = s["id"] == st if st else dau_tien
+        dau_tien = False
+        khoi += (
+            f'<details class="lp-acc" style="--c:{mau_giai_doan(i)}"'
+            f'{" open" if xo else ""}>'
+            f'<summary><span>{_LP_ICON.get(s["code"], "●")}</span>'
+            f'<span class="lp-acc-t">{escape(s["name"])}</span>'
+            f'<span class="lp-acc-n">{s["so_lead"]} khách</span><span>▾</span></summary>'
+            '<div class="lp-th"><span>Khách</span><span>Điện thoại</span>'
+            "<span>Phụ trách</span><span>Mốc chăm</span><span>Nhiệt độ</span></div>"
+            f"{dong}</details>"
+        )
+    return (f'<div class="lp-tbl">{khoi}</div>' if khoi else
+            '<div class="lp-empty">Không có khách tiềm năng nào khớp bộ lọc.</div>')
+
+
+def render_pipeline(board: dict, *, st: int = 0, lead: dict | None = None,
+                    loc: dict | None = None, nhan_vien: list[dict] | None = None,
+                    ly_do: list[dict] | None = None,
+                    ok_msg: str = "", error: str = "") -> str:
+    """Màn 11 — bảng chăm sóc theo mốc (bố cục Kallet).
+
+    board  — `crm_screens_repo.pipeline_board()`: {"stages": [...], "kpi": {...}}
+    st     — cột đang mở (0 = xem hết các cột); có `st` thì bày thêm khung làm
+             việc bên phải cho khách đang chọn.
+    lead   — `crm_screens_repo.pipeline_lead()` của khách đang chọn (có thể None)
+    loc    — bộ lọc hiện hành (q/owner_id/temperature/moc/tu/den/xem) để dựng lại
+             mọi liên kết mà không mất lọc.
+    ly_do  — danh mục lý do chưa mua (crm.lead_reasons) cho ô đóng hồ sơ.
+    """
+    from app.web.shell import flash, mau_giai_doan
+
+    loc = dict(loc or {})
+    nhan_vien = nhan_vien or []
+    ly_do = ly_do or []
+    stages = board.get("stages") or []
+    kpi = board.get("kpi") or {}
+    xem = loc.get("xem") or "pipeline"
+    # Màu cột = màu chấm cùng giai đoạn ở menu trái (theo sort_order)
+    mau_cot = {s["id"]: mau_giai_doan(i) for i, s in enumerate(stages)}
+
+    tong = kpi.get("tong") or 0
+    ti_le = f"{(kpi.get('da_chot') or 0) * 100 / tong:.1f}%" if tong else "—"
+    cot_chot = next((s for s in stages if s["code"] == "da_chot"), None)
+    url_chot = _lp_url(loc, st=(cot_chot or {}).get("id") or 0,
+                       moc=0, temperature=0, lead=0)
+    dai_kpi = (
+        '<div class="lp-kpi">'
+        f'<a class="{"on" if not (loc.get("temperature") or loc.get("moc")) else ""}" '
+        f'href="{escape(_lp_url(loc, temperature=0, moc=0, lead=0))}">'
+        f'<b>{tong}</b><span>Tất cả khách tiềm năng</span></a>'
+        f'<a class="{"on" if loc.get("temperature") == "nong" else ""}" '
+        f'href="{escape(_lp_url(loc, temperature="nong", moc=0, lead=0))}">'
+        f'<b>{kpi.get("nong") or 0}</b><span>🔥 Đang nóng</span></a>'
+        f'<a class="{"on" if loc.get("moc") == "qua_han" else ""}" '
+        f'href="{escape(_lp_url(loc, moc="qua_han", temperature=0, lead=0))}">'
+        f'<b>{kpi.get("qua_han") or 0}</b><span>⏰ Quá hạn chăm</span></a>'
+        f'<a class="{"on" if cot_chot and st == cot_chot["id"] else ""}" '
+        f'href="{escape(url_chot)}">'
+        f'<b>{kpi.get("da_chot") or 0}</b><span>✅ Đã chốt</span></a>'
+        f'<div class="lp-kpi-flat"><b>{ti_le}</b><span>Tỉ lệ chốt</span></div>'
+        "</div>"
+    )
+
+    dang_xem = ""
+    cot = next((s for s in stages if s["id"] == st), None) if st else None
+    if cot:
+        mau = mau_cot[cot["id"]]
+        dang_xem = (
+            '<div class="lp-fbar"><div class="lp-frow">'
+            '<span class="lp-flbl">Đang xem cột:</span>'
+            f'<span class="lp-chip on" style="background:{mau};border-color:{mau}">'
+            f'{_LP_ICON.get(cot["code"], "●")} '
+            f'{escape(cot["name"])} · {cot["so_lead"]}</span>'
+            f'<a class="lp-chip" href="{escape(_lp_url(loc, st=0, lead=0))}">'
+            "Xem tất cả cột</a></div></div>"
+        )
+
+    quy_tac = (
+        '<details class="lp-rules"><summary>⚙️ <b>Quy tắc tự động</b>'
+        '<span class="lp-mut"> — luật đang chạy khi chuyển cột, bấm để xem</span>'
+        '<span style="margin-left:auto">▾</span></summary>'
+        '<div class="lp-rules-b"><ul>'
+        "<li>Khách mới phải có người nhận trong <b>5 phút</b>, "
+        "phải chạm được khách trong <b>15 phút</b> (FR-042) — quá hạn thì thẻ "
+        "hiện <b>chưa ai nhận</b>.</li>"
+        "<li>Chuyển <b>Đã báo giá</b> phải ghi liệu trình + giá đã báo vào lý do.</li>"
+        "<li>Chuyển <b>Đang cân nhắc</b> phải có lý do <i>và</i> lịch hẹn tiếp theo.</li>"
+        "<li>Chuyển <b>Đã chốt</b> chỉ được khi khách <b>đã có đơn hàng</b>.</li>"
+        "<li>Đóng ở <b>Từ chối · Không phù hợp · Mất liên lạc</b> phải có "
+        "lý do chuẩn (danh mục lý do chưa mua).</li>"
+        "<li>Sang <b>Đã kết nối</b> hệ thống tự ghi mốc <b>chạm đầu tiên</b>.</li>"
+        "</ul>"
+        '<div class="lp-rules-n">Mọi lần chuyển cột đều ghi <b>nhật ký</b> '
+        "(ai chuyển, từ cột nào, lý do) — xem ở khung làm việc bên phải.</div>"
+        "</div></details>"
+    )
+
+    if xem == "bang":
+        than = _lp_bang(stages, loc)
+    else:
+        hien = [s for s in stages if s["id"] == st] if st else stages
+        cot_html = "".join(
+            _lp_cot(s, loc, mau_cot[s["id"]], (lead or {}).get("id") or 0)
+            for s in hien
+        )
+        if not cot_html:
+            cot_html = ('<div class="lp-empty">Chưa có giai đoạn nào — chạy '
+                        "<code>scripts/seed_danh_muc.py</code> để nạp pipeline "
+                        "Bán mới.</div>")
+        khung = _lp_khung_lam_viec(lead, loc, nhan_vien, ly_do) if st else ""
+        than = (f'<div class="lp-board{" one" if st else ""}">'
+                f"{cot_html}{khung}</div>")
+
+    body = (flash(ok_msg, error) + dai_kpi + _lp_thanh_loc(loc, nhan_vien)
+            + dang_xem + quy_tac + than)
+    hom_nay = datetime.now().astimezone().strftime("%d/%m/%Y")
+    return render_shell(
+        "Khách tiềm năng", "crm-pipeline", body,
+        heading="Bảng chăm sóc theo mốc",
+        sub=f"Khách tiềm năng của Sale, xếp theo giai đoạn bám đuổi · {hom_nay}",
+    )
 
 
 # ------------------------------------------------------------ Công việc (màn 12/26)
@@ -1294,6 +2070,6 @@ def render_thong_bao(rows: list[dict], total: int, dem: dict,
     )
     return render_shell("Thông báo", "crm-notify", body,
                         heading="Trung tâm thông báo",
-                        sub="Màn 3 — 11 loại: lead mới · việc đến hạn/quá hạn · "
+                        sub="Màn 3 — 11 loại: khách tiềm năng mới · việc đến hạn/quá hạn · "
                             "khách cần gọi lại · phản ứng · chuyển chuyên môn · "
                             "đơn giao/hoàn · mua lại · chờ duyệt · lỗi đồng bộ")

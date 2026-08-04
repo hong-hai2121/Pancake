@@ -34,7 +34,7 @@ from app.db.client import get_pg_pool  # noqa: E402
 # ============================================================
 PIPELINE_SALE = ("ban_moi", "Bán mới", "new_sale")
 SALE_STAGES: list[tuple[str, str, bool]] = [
-    ("lead_moi",       "Lead mới",        False),
+    ("lead_moi",       "Khách tiềm năng mới", False),
     ("chua_lien_he",   "Chưa liên hệ",    False),
     ("da_ket_noi",     "Đã kết nối",      False),
     ("dang_khai_thac", "Đang khai thác",  False),

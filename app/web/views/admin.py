@@ -297,8 +297,9 @@ def render_user_detail(
 
 <div class="card form" style="margin-top:14px">
   <h3>Chuyển toàn bộ khách / việc (FR-002)</h3>
-  <p class="note">Bắt buộc làm trước khi khoá tài khoản nghỉ việc. Lead, kế hoạch
-  chăm, cơ hội mua lại và việc đang mở sẽ sang người nhận; lịch sử người cũ vẫn giữ.</p>
+  <p class="note">Bắt buộc làm trước khi khoá tài khoản nghỉ việc. Khách tiềm năng,
+  kế hoạch chăm, cơ hội mua lại và việc đang mở sẽ sang người nhận; lịch sử người
+  cũ vẫn giữ.</p>
   <form method="post" action="/quan-tri/nhan-vien/{u['id']}/chuyen-khach">
     <div class="grid2">
       <label>Chuyển cho<select name="new_owner_id" required>

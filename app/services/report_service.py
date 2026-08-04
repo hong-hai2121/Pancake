@@ -78,7 +78,7 @@ def dashboard(tu: str = "", den: str = "", *, user: dict | None = None) -> dict:
             "doanh_thu_theo_ngay": (report_repo.doanh_thu_theo_ngay(ts)
                                     if _co_quyen(user, "revenue.view") else []),
             "pheu": [{"buoc": b, "metric": m, "n": so.get(m, _so(m, ts))}
-                     for b, m in (("Lead mới", "lead_moi"),
+                     for b, m in (("Khách tiềm năng mới", "lead_moi"),
                                   ("Liên hệ được", "lead_lien_he"),
                                   ("Đã tư vấn", "lead_tu_van"),
                                   ("Đã báo giá", "lead_bao_gia"),
@@ -281,3 +281,43 @@ def dashboard_cskh(user_id: int, tu: str = "", den: str = "") -> dict:
             "user_id": user_id, "so": so,
             "ti_le": {"moc_dung_han": _ti_le(so["moc_dung_han"],
                                              so["moc_hoan_thanh"])}}
+
+
+# ============================================================ Trang chủ (màn 2)
+def bao_cao_ca_doi(tu: str = "", den: str = "", *, user: dict | None = None) -> dict:
+    """Báo cáo CẢ TEAM Sale & CSKH cho Trang chủ của Chủ DN / Admin.
+
+    Gom sẵn 4 mảng trang chủ cần: chỉ số 2 đội · doanh thu toàn công ty (lên đơn
+    vs đã thu) · chuỗi doanh thu theo ngày (vẽ cột) · xếp hạng nhân viên.
+    Ô tiền chỉ trả cho người có `revenue.view`; không có quyền thì khoá `tien`
+    rỗng và trang chủ tự bỏ khối doanh thu (KHÔNG hiện số 0 gây hiểu nhầm).
+    """
+    ky = _ky(tu, den)
+    ts = {"tu": ky["tu"], "den": ky["den"], "uid": None}
+    doi = {m: _so(m, ts) for m in (
+        "lead_moi", "lead_lien_he", "lead_chot", "don_tao", "don_giao",
+        "moc_den_han", "moc_hoan_thanh", "moc_dung_han", "co_hoi_mo",
+        "ban_giao_moi", "viec_qua_han",
+    )}
+    ket_qua: dict = {
+        "ky": {"tu": ky["tu_str"], "den": ky["den_str"]},
+        "doi": doi,
+        "ti_le": {"chot": _ti_le(doi["lead_chot"], doi["lead_moi"]),
+                  "lien_he": _ti_le(doi["lead_lien_he"], doi["lead_moi"]),
+                  "dung_han": _ti_le(doi["moc_dung_han"], doi["moc_hoan_thanh"])},
+        "tien": {},
+        "theo_ngay": [],
+        "xh_sale": [],
+        "xh_cskh": [],
+    }
+    if _co_quyen(user, "revenue.view"):
+        ket_qua["tien"] = {m: _so(m, ts) for m in (
+            "doanh_thu_len_don", "doanh_thu_len_don_sale",
+            "doanh_thu_len_don_cskh", "doanh_thu_giao", "doanh_thu_mua_lai",
+        )}
+        ket_qua["theo_ngay"] = report_repo.doanh_thu_theo_ngay(ts)
+        ket_qua["xh_sale"] = report_repo.theo_nhan_vien_sale(ts)[:8]
+        ket_qua["xh_cskh"] = sorted(
+            report_repo.theo_nhan_vien_cskh(ts),
+            key=lambda r: float(r["doanh_thu_mua_lai"] or 0), reverse=True)[:8]
+    return ket_qua

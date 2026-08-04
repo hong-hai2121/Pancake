@@ -38,3 +38,9 @@ data/*.sql
 data/*.db
 data/*.db-wal
 data/*.db-shm
+
+# Trang web đã lưu về máy để tham khảo, chỉ dùng cục bộ
+web-da-noi/
+
+# Template mẫu (PHP) chỉ dùng để tham khảo giao diện, không đẩy lên git
+templatemaux/

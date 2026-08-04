@@ -17,9 +17,9 @@ from app.web.views.crm import _bang, _dt, _e, _tien
 # Automation ĐANG chạy thật trong hệ thống (worker + hook trong service).
 # Sửa danh sách này khi thêm/bớt automation — màn 69 đọc từ đây.
 AUTOMATION = [
-    ("Chia lead cho Sale", "Lead mới về (Pancake/tay)",
+    ("Chia khách tiềm năng cho Sale", "Khách tiềm năng mới về (Pancake/tay)",
      "Chia vòng tròn theo tải + đặt SLA 5'/15'", "B3 · lead_service", "luôn bật"),
-    ("Cảnh báo lead quá SLA", "Quá hạn nhận / hạn hành động",
+    ("Cảnh báo khách tiềm năng quá SLA", "Quá hạn nhận / hạn hành động",
      "Đánh dấu quá hạn, hiện ở Pipeline + Thông báo", "B3 · worker", "luôn bật"),
     ("Báo việc quá hạn", "Việc tới hạn mà chưa đóng",
      "Đánh dấu escalated + audit báo quản lý", "B4 · worker tasks-qua-han", "luôn bật"),
@@ -111,9 +111,10 @@ def render_bam_duoi(rows: list[dict], ly_do: list[dict], loc: int) -> str:
         + f'<div style="margin:14px 0 10px">{chip}</div>'
         + _bang(["Khách", "Sale", "Giai đoạn", "Lý do chưa mua", "Nhiệt",
                  "Số lần chạm", "Chạm cuối", "Hẹn kế tiếp", ""], dong,
-                "Không có lead nào đang mở")
+                "Không có khách tiềm năng nào đang mở")
         + '<p class="note" style="margin-top:8px">Lý do chưa mua ghi ở màn tư vấn / '
-          "khi đóng lead. Chuỗi bám đuổi TỰ ĐỘNG theo mốc ngày 0/1/3/7/14/30 (FR-070) "
+          "khi đóng hồ sơ khách tiềm năng. Chuỗi bám đuổi TỰ ĐỘNG theo mốc ngày "
+          "0/1/3/7/14/30 (FR-070) "
           "chưa có engine — hiện bám bằng công việc thủ công (B4).</p>"
     )
     return render_shell("Bám đuổi", "crm-pipeline", body,
@@ -192,8 +193,8 @@ def render_bao_cao_ly_do(d: dict, tu: str, den: str) -> str:
         + '<div class="card" style="margin-top:14px">'
           "<h3>Tỷ trọng lý do chưa chốt (màn 58)</h3>"
         + _bang(["Lý do", "Số lượt", "Tỷ trọng", ""], ly_do,
-                "Chưa có lead nào được ghi lý do chưa mua — Sale ghi ở màn tư vấn "
-                "hoặc khi đóng lead")
+                "Chưa có khách tiềm năng nào được ghi lý do chưa mua — Sale ghi "
+                "ở màn tư vấn hoặc khi đóng hồ sơ")
         + "</div>"
         + '<div class="card" style="margin-top:14px">'
           "<h3>Băn khoăn theo Sale (màn 57)</h3>"
@@ -202,7 +203,7 @@ def render_bao_cao_ly_do(d: dict, tu: str, den: str) -> str:
         + '<div class="card" style="margin-top:14px">'
           "<h3>Băn khoăn theo quảng cáo (chạm cuối)</h3>"
         + _bang(["Quảng cáo", "Lý do / băn khoăn", "Số lượt"], ad,
-                "Chưa quy được nguồn cho lead có lý do")
+                "Chưa quy được nguồn cho khách tiềm năng có lý do")
         + '<p class="note" style="margin-top:8px">Bấm sang '
           '<a href="/crm/quang-cao">Nguồn quảng cáo</a> để xem chi phí/ROAS của '
           "từng quảng cáo trong bảng này.</p></div>"
@@ -334,14 +335,16 @@ def render_nhom_ca(nhom: list[dict], chua_nhom: list[dict]) -> str:
         + '<div class="card" style="margin-top:14px"><h3>Chưa vào nhóm nào</h3>'
         + _bang(["Nhân viên", "Vai trò"], le, "Mọi người đều đã có nhóm")
         + "</div>"
-        + '<div class="card" style="margin-top:14px"><h3>Quy tắc chia lead</h3>'
-          '<p>Lead mới chia <b>vòng tròn theo tải</b>: ai đang giữ ít lead đang mở '
-          "nhất thì nhận trước (không phải chia đều theo lượt). Không ai đủ điều "
-          "kiện thì lead nằm ở <b>hàng đợi</b> chờ trưởng nhóm gán tay.</p>"
+        + '<div class="card" style="margin-top:14px">'
+          "<h3>Quy tắc chia khách tiềm năng</h3>"
+          "<p>Khách tiềm năng mới chia <b>vòng tròn theo tải</b>: ai đang giữ ít "
+          "hồ sơ đang mở nhất thì nhận trước (không phải chia đều theo lượt). "
+          "Không ai đủ điều kiện thì hồ sơ nằm ở <b>hàng đợi</b> chờ trưởng nhóm "
+          "gán tay.</p>"
           '<p class="note">Ca trực theo khung giờ (FR-031) chưa cấu hình được trên '
           "web — hiện chia không phân biệt ca. Tạo/sửa nhóm ở "
           '<a href="/quan-tri/phan-quyen">Vai trò &amp; phân quyền</a>.</p></div>'
     )
     return render_shell("Nhóm & ca làm việc", "admin", body,
                         heading="Phân nhóm và ca làm việc",
-                        sub="Màn 68 — nhóm · trưởng nhóm · quy tắc chia lead")
+                        sub="Màn 68 — nhóm · trưởng nhóm · quy tắc chia khách tiềm năng")

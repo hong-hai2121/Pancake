@@ -224,6 +224,46 @@ def hoi_thoai_cho_dong_bo(limit: int = 20) -> list[dict]:
         ).fetchall()
 
 
+def doi_chieu_pancake(external_conversation_id: str) -> dict | None:
+    """Một hội thoại Pancake đã đổ vào CRM thành những gì — màn Thử API.
+
+    Trả đúng 5 thứ crm_sync sinh ra (khách · hội thoại · thẻ · nhân viên xử lý ·
+    tin nhắn) để đối chiếu tận mắt với JSON gốc Pancake vừa gọi ở trên.
+    """
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            """
+            select c.id                      as conversation_id,
+                   c.external_conversation_id,
+                   c.snippet, c.message_count, c.unread_count,
+                   c.last_message_at, c.external_updated_at, c.messages_synced_at,
+                   c.source,
+                   p.external_page_id, p.name as page_name, p.sync_enabled,
+                   k.id                      as customer_id,
+                   k.full_name               as khach,
+                   k.primary_phone           as sdt,
+                   k.status                  as trang_thai_khach,
+                   k.created_at              as khach_tao_luc,
+                   c.assignee_external_id,
+                   u.name                    as nhan_vien_xu_ly,
+                   (select count(*) from crm.messages m
+                     where m.conversation_id = c.id)            as so_tin_da_luu,
+                   (select coalesce(json_agg(t.name order by t.name), '[]'::json)
+                      from crm.customer_tags ct
+                      join crm.tags t on t.id = ct.tag_id
+                     where ct.customer_id = k.id)               as the
+              from crm.conversations c
+              join crm.pages p on p.id = c.page_id
+              left join crm.customers k on k.id = c.customer_id
+              left join crm.users u on u.id = c.assignee_user_id
+             where c.external_conversation_id = %s
+             limit 1
+            """,
+            (str(external_conversation_id),),
+        ).fetchone()
+
+
 def dem_ton_dong() -> dict:
     """Đếm hội thoại chưa kéo tin / đã tươi — cho màn Tích hợp + backfill."""
     pool = get_pg_pool()

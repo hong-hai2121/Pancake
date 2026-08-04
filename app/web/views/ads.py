@@ -1,7 +1,8 @@
 """Dựng HTML màn NGUỒN QUẢNG CÁO (BRD mục 4 · màn 7 + 53-55 + phiếu 56).
 
 Ba tab = ba cấp của cây quảng cáo (Chiến dịch · Nhóm · Quảng cáo), cùng một bộ
-cột để so ngang được: Chi phí · Khách · Lead · Đơn · Giao TC · Doanh thu · ROAS · LTV.
+cột để so ngang được: Chi phí · Khách · Khách tiềm năng · Đơn · Giao TC · Doanh thu ·
+ROAS · LTV.
 
 Quy ước hiển thị quan trọng: ad chưa nối tài khoản quảng cáo vào POS thì KHÔNG có
 chi phí — cột chi phí/ROAS hiện "—" (chưa biết), tuyệt đối không hiện 0 (biết là
@@ -140,7 +141,7 @@ def render_quang_cao(
 </form>
 
 <div class="tblwrap card"><table class="tbl">
-<thead><tr><th>{cot_ten}</th><th>Chi phí</th><th>Khách</th><th>Lead</th><th>Đơn</th>
+<thead><tr><th>{cot_ten}</th><th>Chi phí</th><th>Khách</th><th>Khách tiềm năng</th><th>Đơn</th>
 <th>Giao TC</th><th>Doanh thu</th><th>ROAS</th><th>LTV</th></tr></thead>
 <tbody>{dong or '<tr><td colspan="9">Chưa có dữ liệu trong kỳ — bật POS_SYNC_ENABLED để đơn về, và nối tài khoản quảng cáo vào POS để có chi phí</td></tr>'}</tbody>
 </table></div>
@@ -170,7 +171,8 @@ def render_chi_tiet_ad(data: dict, *, window: int = 30) -> str:
         + stat("LTV / khách", _tien(hq.get("ltv")), f'{_so(hq.get("so_khach") or 0)} khách')
     )
 
-    buoc = [("Khách quy nguồn", ph.get("khach")), ("Thành lead", ph.get("lead")),
+    buoc = [("Khách quy nguồn", ph.get("khach")),
+            ("Thành khách tiềm năng", ph.get("lead")),
             ("Được tư vấn", ph.get("tu_van")), ("Có đơn", ph.get("co_don")),
             ("Giao thành công", ph.get("giao_thanh_cong")), ("Mua lại", ph.get("mua_lai"))]
     goc = max([b[1] or 0 for b in buoc] + [1])
@@ -214,8 +216,8 @@ def render_chi_tiet_ad(data: dict, *, window: int = 30) -> str:
 <div class="card" style="margin-top:14px">
   <h3>Lý do chưa chốt</h3>
   <div class="tblwrap"><table class="tbl">
-  <thead><tr><th>Lý do</th><th>Nhóm</th><th>Số lead</th></tr></thead>
-  <tbody>{ly_do or '<tr><td colspan="3">Chưa có lead nào ghi lý do</td></tr>'}</tbody>
+  <thead><tr><th>Lý do</th><th>Nhóm</th><th>Số khách tiềm năng</th></tr></thead>
+  <tbody>{ly_do or '<tr><td colspan="3">Chưa có khách tiềm năng nào ghi lý do</td></tr>'}</tbody>
   </table></div>
 </div>
 

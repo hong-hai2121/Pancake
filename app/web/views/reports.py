@@ -93,7 +93,7 @@ def _pheu(pheu: list[dict], ky: dict) -> str:
             f'<a class="fun-row" href="/crm/bao-cao/chi-tiet?metric={p["metric"]}'
             f'&tu={ky["tu"]}&den={ky["den"]}" style="display:flex;gap:10px;'
             'align-items:center;text-decoration:none;margin:4px 0">'
-            f'<span style="width:130px">{escape(p["buoc"])}</span>'
+            f'<span style="width:165px;flex:none">{escape(p["buoc"])}</span>'
             f'<span style="flex:1;background:var(--soft);border-radius:6px">'
             f'<span style="display:block;width:{max(rong, 2)}%;height:18px;'
             'background:var(--accent);border-radius:6px;opacity:0.8"></span></span>'
@@ -109,10 +109,11 @@ def render_tong_quan(data: dict, user: dict | None) -> str:
         '<div class="stats">'
         + _o("khach_moi", "Khách mới", so["khach_moi"], ky)
         + _o("hoi_thoai_moi", "Hội thoại mới", so["hoi_thoai_moi"], ky)
-        + _o("lead_moi", "Lead mới", so["lead_moi"], ky)
-        + _o("lead_chua_lien_he", "Lead chưa liên hệ", so["lead_chua_lien_he"],
+        + _o("lead_moi", "Khách tiềm năng mới", so["lead_moi"], ky)
+        + _o("lead_chua_lien_he", "Khách tiềm năng chưa liên hệ",
+             so["lead_chua_lien_he"],
              ky, tone="warn" if so["lead_chua_lien_he"] else "")
-        + _o("lead_qua_sla", "Lead quá SLA", so["lead_qua_sla"], ky,
+        + _o("lead_qua_sla", "Khách tiềm năng quá SLA", so["lead_qua_sla"], ky,
              tone="err" if so["lead_qua_sla"] else "")
         + _o("don_tao", "Đơn mới", so["don_tao"], ky)
         + _o("don_giao", "Đơn giao TC", so["don_giao"], ky, tone="ok")
@@ -144,7 +145,7 @@ def render_tong_quan(data: dict, user: dict | None) -> str:
     tl = (
         f'<div class="stats" style="margin-top:14px">'
         + stat("Tỷ lệ liên hệ", f"{ti_le['lien_he'] or 0}%")
-        + stat("Tỷ lệ chốt / lead mới", f"{ti_le['chot'] or 0}%")
+        + stat("Tỷ lệ chốt / khách tiềm năng mới", f"{ti_le['chot'] or 0}%")
         + stat("Tỷ lệ giao TC / đơn tạo", f"{ti_le['giao_tc'] or 0}%")
         + "</div>"
     )
@@ -186,10 +187,11 @@ def render_dashboard_sale(data: dict, users: list[dict], chon_id: int) -> str:
     body = (
         _chon_nguoi("/crm/dashboard-sale", users, chon_id, ky)
         + '<div class="stats">'
-        + _o("lead_moi", "Lead mới được giao", so["lead_moi"], ky, user_id=u)
+        + _o("lead_moi", "Khách tiềm năng được giao", so["lead_moi"], ky,
+             user_id=u)
         + _o("lead_chua_lien_he", "Chưa liên hệ", so["lead_chua_lien_he"], ky,
              tone="warn" if so["lead_chua_lien_he"] else "", user_id=u)
-        + _o("lead_nong", "Lead nóng", so["lead_nong"], ky, user_id=u)
+        + _o("lead_nong", "Khách tiềm năng nóng", so["lead_nong"], ky, user_id=u)
         + _o("lead_qua_sla", "Quá SLA", so["lead_qua_sla"], ky,
              tone="err" if so["lead_qua_sla"] else "", user_id=u)
         + _o("lead_bao_gia", "Đã báo giá", so["lead_bao_gia"], ky, user_id=u)
@@ -269,11 +271,12 @@ def render_bao_cao(tab: str, data: dict, *, loi: str = "") -> str:
             f"<td>{r['don_giao']}</td><td>{r['don_hoan']}</td>"
             f"<td><b>{_tien(r['doanh_thu'])}</b></td></tr>"
             for r in data["rows"])
-        ruot = _bang(["Sale", "Lead", "Liên hệ", "Tư vấn", "Báo giá", "Chốt",
-                      "Giao TC", "Hoàn", "Doanh thu"], dong,
+        ruot = _bang(["Sale", "Khách tiềm năng", "Liên hệ", "Tư vấn", "Báo giá",
+                      "Chốt", "Giao TC", "Hoàn", "Doanh thu"], dong,
                      "Chưa có Sale nào hoạt động trong kỳ") + \
             ('<p class="note">Điểm AI chấm chat/gọi — chờ C-MVP3. Tỷ lệ tính '
-             "trên lead MỚI trong kỳ; lead vào bước đếm theo lịch sử FR-041.</p>")
+             "trên khách tiềm năng MỚI trong kỳ; khách vào bước đếm theo lịch "
+             "sử FR-041.</p>")
     elif tab == "cskh":
         dong = "".join(
             f"<tr><td><b>{_e(r['name'])}</b></td><td>{r['khach_phu_trach']}</td>"
@@ -296,7 +299,7 @@ def render_bao_cao(tab: str, data: dict, *, loi: str = "") -> str:
             + stat("Chi phí QC", _tien(so["chi_phi_qc"]))
             + stat("Hội thoại mới", _so_hien(so["hoi_thoai_moi"]))
             + stat("Khách mới", _so_hien(so["khach_moi"]))
-            + stat("Lead mới", _so_hien(so["lead_moi"]))
+            + stat("Khách tiềm năng mới", _so_hien(so["lead_moi"]))
             + stat("Chốt", _so_hien(so["lead_chot"]))
             + stat("Đơn giao TC", _so_hien(so["don_giao"]))
             + stat("Hoàn", _so_hien(so["don_hoan"]))
@@ -305,7 +308,7 @@ def render_bao_cao(tab: str, data: dict, *, loi: str = "") -> str:
             + stat("LTV/khách mua", _tien(so["ltv"]))
             + "</div>"
             + '<div class="card" style="margin-top:14px"><h3>Lý do chưa chốt '
-              "(lead đóng-thua + cơ hội mất, FR-172)</h3>"
+              "(khách tiềm năng đóng-thua + cơ hội mất, FR-172)</h3>"
             + _bang(["Lý do", "Số ca"], ly_do, "Kỳ này không có ca thua nào 🎉")
             + '</div><p class="note">Chi tiết theo từng campaign/adset/ad: '
               '<a href="/crm/quang-cao">màn Nguồn quảng cáo (53-56)</a>.</p>'
