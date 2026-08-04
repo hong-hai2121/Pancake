@@ -162,8 +162,13 @@ def main() -> None:
     hs = dang_nhap(f"{DAU}sale")
 
     r = client.get("/api/v1/settings", headers=ha)
-    ok("SYSTEM-001 trả cài đặt theo nhóm", r.status_code == 200
-       and len(r.json()["data"]["nhom"]) == 3, r.text[:200])
+    # CỐ Ý không khoá cứng SỐ nhóm: thêm một cài đặt mới là bài này đỏ oan
+    # (đã xảy ra khi port C1-C4). Kiểm cấu trúc + các nhóm PHẢI có thay vì đếm.
+    nhom = {n["ma"] for n in r.json().get("data", {}).get("nhom", [])} \
+        if r.status_code == 200 else set()
+    ok("SYSTEM-001 trả cài đặt theo nhóm",
+       r.status_code == 200 and {"dong_bo", "quang_cao", "bot"} <= nhom,
+       r.text[:200])
     r = client.get("/api/v1/settings?nhom=false", headers=ha)
     ok("SYSTEM-001 bản phẳng", r.status_code == 200
        and len(r.json()["data"]["items"]) >= 15)

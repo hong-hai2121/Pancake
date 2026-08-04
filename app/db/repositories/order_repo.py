@@ -16,6 +16,10 @@ _COT_DON = {
     "pos_shop_id", "pos_order_id", "pos_status", "pos_conversation_id",
     "pos_page_id", "pos_inserted_at", "pos_updated_at", "pos_raw",
     "synced_at",   # mục 4: lần cuối dòng này được đồng bộ về
+    # C7 — bản sao rút từ pos_raw để màn Đơn hàng lọc/xuất được (xem
+    # init_crm.sql khối "C7 — MÀN ĐƠN HÀNG"); pos_sync._cot_pos_rut dựng bộ này
+    "pos_display_id", "cod_amount", "prepaid_amount", "pos_ad_id",
+    "pos_seller_id", "pos_seller_name",
 }
 # jsonb phải đi qua json.dumps + ::jsonb (giống catalog_repo)
 _COT_JSONB = {"pos_raw"}

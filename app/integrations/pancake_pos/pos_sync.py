@@ -46,6 +46,40 @@ def _tien(don_pos: dict):
     return 0
 
 
+def _so_tien_pos(v) -> float | None:
+    """Tiền POS trả về dạng chuỗi ('3440000') — ép số, rác thì None (KHÔNG 0).
+
+    Phân biệt "POS không gửi" (None) với "POS gửi số 0" (0.0): cột COD/trả
+    trước hiện 0đ trên màn, để 0 cho cái chưa biết là nói dối người dùng.
+    """
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cot_pos_rut(don_pos: dict) -> dict:
+    """6 cột rút từ pos_raw cho màn Đơn hàng (C7) — xem init_crm.sql.
+
+    Bản sao thuần tuý: hỏng thì backfill lại được bằng khối update ở init_crm.
+    Dựng ở CẢ hai đường (tạo mới + cập nhật) để đơn cũ đổi tay bên POS là cột
+    theo kịp ngay, không phải đợi chạy lại backfill.
+    """
+    nv = don_pos.get("assigning_seller") or {}
+    return {
+        # Mã NGƯỜI DÙNG THẤY bên POS — khác pos_order_id (system_id, khoá kỹ
+        # thuật); giữ nguyên dạng chuỗi vì đơn nhập từ hệ cũ có mã 'C4302…88'.
+        "pos_display_id": str(don_pos.get("id") or "") or None,
+        "cod_amount": _so_tien_pos(don_pos.get("cod")),
+        "prepaid_amount": _so_tien_pos(don_pos.get("prepaid")),
+        "pos_ad_id": str(don_pos.get("ad_id") or "") or None,
+        "pos_seller_id": str(nv.get("id") or "") or None,
+        "pos_seller_name": str(nv.get("name") or "").strip() or None,
+    }
+
+
 def _pos_order_id(don_pos: dict) -> int:
     """Khoá đơn phía POS. Dùng `system_id`, KHÔNG dùng `id`.
 
@@ -227,6 +261,7 @@ def sync_row(don_pos: dict, anh_xa: dict[int, str],
             "pos_updated_at": _thoi_diem(don_pos.get("updated_at")),
             "pos_raw": don_pos,
             "synced_at": datetime.now(timezone.utc),
+            **_cot_pos_rut(don_pos),
         })
         if don_cu["status"] != crm_status:
             # Mốc giao đóng dấu TRƯỚC change_status: hook bàn giao B8 chạy
@@ -283,6 +318,7 @@ def sync_row(don_pos: dict, anh_xa: dict[int, str],
         "pos_updated_at": _thoi_diem(don_pos.get("updated_at")),
         "pos_raw": don_pos,
         "synced_at": datetime.now(timezone.utc),
+        **_cot_pos_rut(don_pos),
         "_reason": ly_do,
     }
     don_moi = order_repo.create_order(don, [])

@@ -318,7 +318,9 @@ def main() -> None:  # noqa: PLR0915 — script nghiệm thu
     r = web.get("/crm/don-hang/99999999")
     ok("đơn không tồn tại -> 404", r.status_code == 404)
     r = web.get("/crm/don-hang")
-    ok("màn 21 có link Chi tiết", "Chi tiết</a>" in r.text)
+    # C7 thay bảng 8 cột bằng bản port từ mẫu: ô "Chi tiết" thành nút biểu
+    # tượng, nên kiểm ĐƯỜNG DẪN chứ không kiểm chữ trên nút nữa.
+    ok("màn 21 có lối sang chi tiết đơn", 'href="/crm/don-hang/' in r.text)
 
     print("== 5. Màn 10 — dò trùng + gộp ==")
     r = web.get("/crm/khach-hang/gop-trung")

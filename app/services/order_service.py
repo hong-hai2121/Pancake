@@ -222,7 +222,47 @@ def change_status(
         from app.services import repurchase_service
 
         repurchase_service.hook_don_giao_thanh_cong(don["customer_id"])
+        _hook_tien(order_id, don["customer_id"], row)
     return row
+
+
+def _hook_tien(order_id: int, customer_id: int, don: dict) -> None:
+    """Giao thành công → hai việc bên "tiền" (C1 + C2). Nuốt lỗi có in cảnh
+    báo: đây là luồng BỒI, hỏng ở đây không được làm hỏng việc giao hàng.
+
+      * C2 — ghi CỨNG kỳ lương cho đơn + phân loại trục công sức/quảng cáo.
+        Ghi cứng vì ngày giao còn sửa được về sau, mà đơn thì không được phép
+        tự nhảy sang kỳ lương khác sau khi kỳ cũ đã chốt.
+      * C1 — cập nhật tổng chi tiêu + hạng thẻ của khách (CHỈ NÂNG).
+      * C6 — tiêu voucher cũ rồi xét tặng voucher mới (quy trình CSKH). Chỉ
+        chạy khi công tắc `cskh_flow_enabled` đang bật.
+    """
+    import sys
+
+    try:
+        from app.services import payroll_service
+
+        payroll_service.ghi_ky_luong(
+            order_id, (don.get("delivered_at") or None)
+            and don["delivered_at"].date())
+    except Exception as err:  # noqa: BLE001 — xem docstring
+        print(f"[order] khong ghi duoc ky luong don {order_id}: {err}",
+              file=sys.stderr)
+    try:
+        from app.services import voucher_service
+
+        voucher_service.cap_nhat_hang_mot_khach(customer_id)
+    except Exception as err:  # noqa: BLE001
+        print(f"[order] khong cap nhat duoc hang the khach {customer_id}: {err}",
+              file=sys.stderr)
+    try:
+        # Thứ tự BÊN TRONG hook: tiêu mã cũ TRƯỚC, tặng mã mới SAU — luật "mỗi
+        # khách 1 mã sống" sẽ tự chặn nếu làm ngược. Xem cskh_service LUẬT 1-2.
+        from app.services import cskh_service
+
+        cskh_service.hook_don_giao_thanh_cong(order_id)
+    except Exception as err:  # noqa: BLE001
+        print(f"[order] hook CSKH don {order_id} loi: {err}", file=sys.stderr)
 
 
 # ------------------------------------------------------------------ đọc

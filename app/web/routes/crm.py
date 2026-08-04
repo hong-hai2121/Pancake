@@ -15,7 +15,13 @@ from app.core.errors import ApiError
 from app.db.repositories import crm_screens_repo as repo
 from app.services import ads_service
 from app.web.views import ads as views_ads
+from app.web.views import chien_dich as views_cd
 from app.web.views import crm as views
+from app.web.views import cskh as views_cskh
+from app.web.views import giam_sat as views_gs
+from app.web.views import luong as views_luong
+from app.web.views import sale as views_sale
+from app.web.views import uu_dai as views_uu_dai
 from app.web.views.admin import render_403
 
 router = APIRouter(prefix="/crm", tags=["web-crm"])
@@ -283,7 +289,7 @@ def _so_tien(v: str) -> float | None:
 @router.get("/khach-hang", response_class=HTMLResponse)
 async def khach_hang(q: str = "", tt: str = "", bucket: str = "",
                      owner_id: int = 0, page_id: int = 0, mua: str = "",
-                     chi_tu: str = "", chi_den: str = "",
+                     chi_tu: str = "", chi_den: str = "", tier: str = "",
                      size: int = 30, trang: int = 1) -> HTMLResponse:
     """Màn 8 — danh sách khách CRM (khác /khach-hang của bot Pancake).
 
@@ -292,13 +298,14 @@ async def khach_hang(q: str = "", tt: str = "", bucket: str = "",
     phần mẫu có mà dữ liệu chưa dựng nổi thì view khoá lại (lớp `ht-todo`).
     """
     from app.db.repositories import user_repo
+    from app.services import voucher_service
 
     size = size if size in (30, 50, 100) else 30
     trang = max(1, trang)
     tien_tu, tien_den = _so_tien(chi_tu), _so_tien(chi_den)
     rows, total = repo.khach_hang_bang(
         q=q, tt=tt, bucket=bucket, owner_id=owner_id, page_id=page_id,
-        so_mua=mua, chi_tu=tien_tu, chi_den=tien_den,
+        so_mua=mua, chi_tu=tien_tu, chi_den=tien_den, tier=tier,
         limit=size, offset=(trang - 1) * size)
     # Bấm nút "trang sau" rồi siết bộ lọc lại: trang đang đứng có thể vượt quá
     # số trang mới -> bảng trống hoác dù vẫn còn khách. Kéo về trang cuối.
@@ -307,7 +314,7 @@ async def khach_hang(q: str = "", tt: str = "", bucket: str = "",
         trang = so_trang
         rows, total = repo.khach_hang_bang(
             q=q, tt=tt, bucket=bucket, owner_id=owner_id, page_id=page_id,
-            so_mua=mua, chi_tu=tien_tu, chi_den=tien_den,
+            so_mua=mua, chi_tu=tien_tu, chi_den=tien_den, tier=tier,
             limit=size, offset=(trang - 1) * size)
     nv = user_repo.list_users(status="active", limit=200)[0]
     return HTMLResponse(views.render_khach_hang(
@@ -315,8 +322,9 @@ async def khach_hang(q: str = "", tt: str = "", bucket: str = "",
         dem=repo.khach_hang_dem(),
         loc={"q": q, "tt": tt, "bucket": bucket, "owner_id": owner_id,
              "page_id": page_id, "mua": mua, "chi_tu": chi_tu,
-             "chi_den": chi_den, "size": size, "trang": trang},
-        nhan_vien=nv, fanpages=repo.khach_hang_fanpages()))
+             "chi_den": chi_den, "tier": tier, "size": size, "trang": trang},
+        nhan_vien=nv, fanpages=repo.khach_hang_fanpages(),
+        hang_the=voucher_service.bac_thang()))
 
 
 # ------------------------------------------------------- hồ sơ 360° (màn 9-10)
@@ -701,33 +709,135 @@ async def cong_viec(request: Request, pham_vi: str = "minh") -> HTMLResponse:
     ))
 
 
+# ------------------------------------------------------------ Đơn hàng (màn 21)
+# Bộ lọc của màn — TÊN Ở ĐÂY LÀ HỢP ĐỒNG với view (`_url` dựng lại link từ
+# chính bộ này) và với don_hang_repo._loc. Thêm ô lọc thì thêm cả ba chỗ.
+_DH_LOC = ("q", "status", "order_type", "effort", "ads", "nv", "nv_pos",
+           "page", "ky", "ky_han", "tu", "den")
+
+
+def _dh_doc_loc(tham: dict) -> tuple[dict, dict]:
+    """(bộ lọc gửi xuống repo, bộ lọc để vẽ lại màn) từ tham số URL.
+
+    Khoảng thời gian: ô chọn nhanh (`ky_han`) đặt tu/den; người gõ tay ngày thì
+    `ky_han` tự thành 'tuy_chon'. `den` cộng 1 ngày trước khi xuống repo vì SQL
+    so `<` — không cộng là mất trọn đơn của chính ngày cuối kỳ.
+    """
+    from datetime import date, timedelta
+
+    from app.services import don_hang_service as dv
+
+    tu, den = (tham.get("tu") or ""), (tham.get("den") or "")
+    ma_ky = tham.get("ky_han") or ("tuy_chon" if (tu or den) else "all")
+    _, tu, den = dv.khoang_ngay(ma_ky, tu, den)
+    ve = {k: (tham.get(k) or "") for k in _DH_LOC}
+    ve.update({"ky_han": ma_ky, "tu": tu, "den": den})
+    den_sql = ""
+    if den:
+        try:
+            den_sql = (date.fromisoformat(den) + timedelta(days=1)).isoformat()
+        except ValueError:
+            den_sql = ""
+    xuong = {k: ve[k] for k in ("q", "status", "order_type", "effort", "ads",
+                                "nv_pos", "ky")}
+    xuong.update({"nv": int(ve["nv"]) if str(ve["nv"]).isdigit() else 0,
+                  "page": ve["page"], "tu": tu, "den": den_sql})
+    return xuong, ve
+
+
 @router.get("/don-hang", response_class=HTMLResponse)
-async def don_hang(q: str = "", status: str = "", order_type: str = "",
-                   tu: str = "") -> HTMLResponse:
-    """Màn 21 — danh sách đơn + đếm theo trạng thái + bộ lọc.
+async def don_hang(request: Request, q: str = "", status: str = "",
+                   order_type: str = "", effort: str = "", ads: str = "",
+                   nv: str = "", nv_pos: str = "", page: str = "",
+                   ky: str = "", ky_han: str = "", tu: str = "", den: str = "",
+                   sort: str = "ngay", dir: str = "desc",  # noqa: A002
+                   size: int = 30, trang: int = 1) -> HTMLResponse:
+    """Màn 21 — danh sách đơn (C7, port `don-hang.php` của mẫu Kallet).
 
-    Có lọc thì đi `order_repo.list_orders` (bộ lọc của B7); không lọc thì giữ
-    đường cũ (30 đơn mới nhất) cho nhẹ."""
-    from app.db.repositories import order_repo
+    5 thẻ chỉ số · dải lọc 10 ô · bảng 11 cột · phân trang · tích chọn hàng
+    loạt · xuất Excel chọn cột. Phạm vi xem do `don_hang_service.pham_vi` quyết
+    (không có `revenue.view` thì chỉ thấy đơn mình phụ trách).
+    """
+    from app.db.repositories import don_hang_repo, user_repo
+    from app.services import don_hang_service as dv
+    from app.web.views import don_hang as views_dh
 
-    data = repo.orders_summary()
-    if q or status or order_type or tu:
-        from app.db.repositories import user_repo
+    user = _nguoi(request)
+    xuong, ve = _dh_doc_loc(locals())
+    try:
+        data = dv.man_hinh(xuong, sort=sort, dir_=dir, size=size,
+                           trang=trang, user=user)
+    except ApiError as err:
+        return HTMLResponse(render_403(err.message, heading="Đơn hàng"),
+                            status_code=403)
+    ve.update({"sort": sort, "dir": dir, "size": data["size"],
+               "trang": data["trang"]})
+    return HTMLResponse(views_dh.render(
+        data, ve,
+        nhan_vien=user_repo.list_users(limit=500)[0],
+        nv_pos=don_hang_repo.nhan_vien_pos(),
+        pages=don_hang_repo.fanpages(),
+        ky_luong=don_hang_repo.ky_luong(),
+        co_xuat=co_quyen(user, "data.export"),
+    ))
 
-        rows, tong = order_repo.list_orders(
-            status=status, order_type=order_type, q=q, tu=tu, limit=100)
-        # list_orders (B7) trả `customer_name` + `sale_owner_id`, còn view dùng
-        # khuôn `khach`/`sale` — quy về một khuôn, tra tên Sale một lần cho cả mẻ
-        ten_nv = {u["id"]: u["name"]
-                  for u in user_repo.list_users(limit=500)[0]}
-        data["rows"] = [
-            {**r, "khach": r.get("customer_name"),
-             "sale": ten_nv.get(r.get("sale_owner_id"))}
-            for r in rows
-        ]
-        data["tong"] = tong
-    return HTMLResponse(views.render_don_hang(
-        data, loc={"q": q, "status": status, "order_type": order_type, "tu": tu}))
+
+@router.get("/don-hang/xuat")
+async def don_hang_xuat(request: Request, q: str = "", status: str = "",
+                        order_type: str = "", effort: str = "", ads: str = "",
+                        nv: str = "", nv_pos: str = "", page: str = "",
+                        ky: str = "", ky_han: str = "", tu: str = "",
+                        den: str = "", sort: str = "ngay",
+                        dir: str = "desc") -> HTMLResponse:  # noqa: A002
+    """Xuất CSV TOÀN BỘ đơn khớp bộ lọc (nút ở dải lọc). `cols` lặp nhiều lần.
+
+    Đọc `cols` từ request.query_params chứ không khai tham số: FastAPI cần
+    `Query(...)` cho danh sách, mà cả màn này đang dùng tham số trơn — đọc tay
+    một chỗ gọn hơn đổi chữ ký cả hai route.
+    """
+    from fastapi.responses import PlainTextResponse
+
+    from app.services import don_hang_service as dv
+
+    xuong, _ = _dh_doc_loc(locals())
+    try:
+        noi_dung, ten = dv.xuat_csv(
+            xuong, request.query_params.getlist("cols"),
+            sort=sort, dir_=dir, user=_nguoi(request))
+    except ApiError as err:
+        return HTMLResponse(render_403(err.message, heading="Xuất đơn hàng"),
+                            status_code=403)
+    return PlainTextResponse(
+        noi_dung, media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{ten}"'})
+
+
+@router.post("/don-hang/xuat")
+async def don_hang_xuat_tich(request: Request):
+    """Xuất CSV những đơn ĐÃ TÍCH (thanh nổi). `ca_bo_loc=1` thì bỏ qua danh
+    sách id và xuất cả bộ lọc — 53k id nhét vào form POST là request vài trăm
+    KB, để server tự truy vấn lại nhẹ hơn nhiều."""
+    from fastapi.responses import PlainTextResponse
+
+    from app.services import don_hang_service as dv
+
+    form = await request.form()
+    tham = {k: (form.get(k) or "") for k in (*_DH_LOC, "sort", "dir")}
+    xuong, _ = _dh_doc_loc(tham)
+    ids = None
+    if form.get("ca_bo_loc") != "1":
+        ids = [int(x) for x in form.getlist("ids") if str(x).isdigit()]
+    try:
+        noi_dung, ten = dv.xuat_csv(
+            xuong, form.getlist("cols"), ids=ids,
+            sort=tham.get("sort") or "ngay", dir_=tham.get("dir") or "desc",
+            user=_nguoi(request))
+    except ApiError as err:
+        return HTMLResponse(render_403(err.message, heading="Xuất đơn hàng"),
+                            status_code=403)
+    return PlainTextResponse(
+        noi_dung, media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{ten}"'})
 
 
 @router.get("/don-hang/{order_id}", response_class=HTMLResponse)
@@ -1383,3 +1493,1030 @@ async def quang_cao_chi_tiet(
         return HTMLResponse(
             render_403(err.message, heading="Nguồn quảng cáo"), status_code=404)
     return HTMLResponse(views_ads.render_chi_tiet_ad(data, window=window))
+
+
+# =============================================================== C1 — ƯU ĐÃI
+# Voucher + Hạng thẻ, port từ mẫu Kallet (voucher.php · hang-the.php).
+# Luật ở services/voucher_service.py; SQL ở db/repositories/voucher_repo.py.
+_VC_TRANG = 30          # voucher / trang — mẫu chốt 30, giữ nguyên
+
+
+@router.get("/voucher", response_class=HTMLResponse)
+async def voucher(request: Request, tt: str = "", kw: str = "", by: str = "",
+                  nv: int = 0, tang: int = 0, trang: int = 1,
+                  ok: str = "", error: str = "") -> HTMLResponse:
+    """Màn Voucher — theo dõi voucher đã tặng.
+
+    Voucher là việc của người được cấp quyền `voucher.grant` (CSKH); Sale/
+    Marketing không cần. Người KHÔNG có `customer.view_all` chỉ thấy voucher
+    của khách mình phụ trách — chặn ở tầng dữ liệu, không phải ẩn nút.
+    """
+    from app.db.repositories import user_repo, voucher_repo
+    from app.services import voucher_service
+
+    user = _nguoi(request)
+    if not co_quyen(user, "voucher.grant"):
+        return HTMLResponse(
+            render_403("Màn Voucher cần quyền voucher.grant", heading="Voucher"),
+            status_code=403,
+        )
+    # Quản lý (user.manage) xem hết; còn lại bó về khách mình phụ trách.
+    pham_vi = None if co_quyen(user, "user.manage") else int(user.get("sub") or 0)
+    trang = max(1, trang)
+    rows, tong = voucher_repo.danh_sach(
+        status=tt, kind=by, granted_by=nv or None, tu_khoa=kw.strip(),
+        owner_id=pham_vi, limit=_VC_TRANG, offset=(trang - 1) * _VC_TRANG)
+    so_trang = max(1, -(-tong // _VC_TRANG))
+    if trang > so_trang:                       # siết lọc xong trang cũ hết dòng
+        trang = so_trang
+        rows, tong = voucher_repo.danh_sach(
+            status=tt, kind=by, granted_by=nv or None, tu_khoa=kw.strip(),
+            owner_id=pham_vi, limit=_VC_TRANG, offset=(trang - 1) * _VC_TRANG)
+    return HTMLResponse(views_uu_dai.render_voucher(
+        rows, tong,
+        so=voucher_repo.o_so(owner_id=pham_vi),
+        loc={"tt": tt, "kw": kw, "by": by, "nv": nv, "trang": trang},
+        nhan_vien=voucher_repo.nguoi_tang(owner_id=pham_vi)
+                  or user_repo.list_users(status="active", limit=200)[0],
+        user=user, mo_form=bool(tang), flash=ok, loi=error))
+
+
+@router.post("/voucher/tang")
+async def voucher_tang(request: Request):
+    """Tạo & tặng voucher. KHÔNG gửi tin cho khách — báo mã là việc của người."""
+    from app.services import voucher_service
+
+    user = _nguoi(request)
+    if not co_quyen(user, "voucher.grant"):
+        return HTMLResponse(
+            render_403("Cần quyền voucher.grant để tặng voucher",
+                       heading="Voucher"), status_code=403)
+    f = await request.form()
+    try:
+        v = voucher_service.tang_voucher(
+            sdt=str(f.get("sdt") or ""),
+            menh_gia=str(f.get("menh_gia") or "0"),
+            ma=str(f.get("ma") or ""),
+            han_ngay=int(str(f.get("han_ngay") or "0") or 0),
+            ghi_chu=str(f.get("ghi_chu") or ""),
+            nguoi_tang=int(user.get("sub") or 0) or None,
+            la_admin=co_quyen(user, "user.manage"))
+    except (ApiError, ValueError) as err:
+        return _ve("/crm/voucher?tang=1",
+                   error=getattr(err, "message", str(err)))
+    from app.db.repositories import audit_repo
+
+    audit_repo.ghi(action="tang_voucher", object_type="voucher",
+                   object_id=int(v["id"]), user_id=int(user.get("sub") or 0),
+                   new_value={"khach": v.get("customer_name"),
+                              "menh_gia": str(v.get("amount")),
+                              "ma": v.get("code") or "(chưa báo mã)"})
+    return _ve("/crm/voucher",
+               ok=f'Đã tặng voucher cho {v.get("customer_name") or "khách"}.')
+
+
+@router.post("/voucher/{voucher_id}/bao-ma")
+async def voucher_bao_ma(request: Request, voucher_id: int):
+    """Báo mã cho voucher đang ở trạng thái 'chưa báo mã' → 'còn hạn'."""
+    from app.services import voucher_service
+
+    user = _nguoi(request)
+    if not co_quyen(user, "voucher.grant"):
+        return HTMLResponse(render_403("Cần quyền voucher.grant",
+                                       heading="Voucher"), status_code=403)
+    f = await request.form()
+    try:
+        voucher_service.bao_ma(voucher_id, str(f.get("ma") or ""),
+                               nguoi_sua=int(user.get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/voucher", error=err.message)
+    return _ve("/crm/voucher", ok="Đã lưu mã voucher.")
+
+
+@router.post("/voucher/{voucher_id}/trang-thai")
+async def voucher_trang_thai(request: Request, voucher_id: int):
+    from app.services import voucher_service
+
+    user = _nguoi(request)
+    if not co_quyen(user, "voucher.grant"):
+        return HTMLResponse(render_403("Cần quyền voucher.grant",
+                                       heading="Voucher"), status_code=403)
+    f = await request.form()
+    try:
+        voucher_service.doi_trang_thai(
+            voucher_id, str(f.get("trang_thai") or ""),
+            nguoi_sua=int(user.get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/voucher", error=err.message)
+    return _ve("/crm/voucher", ok="Đã đổi tình trạng voucher.")
+
+
+@router.get("/hang-the", response_class=HTMLResponse)
+async def hang_the(request: Request, ok: str = "") -> HTMLResponse:
+    """Màn Hạng thẻ — toàn cảnh 6 hạng (5 bậc + "Chưa xếp hạng")."""
+    from app.services import voucher_service
+
+    return HTMLResponse(views_uu_dai.render_hang_the(
+        voucher_service.toan_canh(), _nguoi(request), flash=ok))
+
+
+@router.post("/hang-the/nguong")
+async def hang_the_nguong(request: Request):
+    """Sửa ngưỡng một hạng. Ô để TRỐNG = xoá ngưỡng ("chưa điền") — hạng đó
+    ngừng nhận khách mới cho tới khi điền lại, KHÔNG hiểu là ngưỡng 0đ."""
+    from app.db.repositories import audit_repo, voucher_repo
+
+    user = _nguoi(request)
+    if not co_quyen(user, "user.manage"):
+        return HTMLResponse(render_403("Sửa ngưỡng hạng thẻ cần quyền "
+                                       "user.manage", heading="Hạng thẻ"),
+                            status_code=403)
+    f = await request.form()
+    ma = str(f.get("ma") or "")
+    thoi = str(f.get("nguong") or "").strip()
+    try:
+        nguong = float(thoi.replace(".", "").replace(",", "")) if thoi else None
+    except ValueError:
+        return _ve("/crm/hang-the", error="Ngưỡng phải là một con số.")
+    voucher_repo.dat_nguong(ma, nguong)
+    audit_repo.ghi(action="sua_nguong_hang_the", object_type="card_rank",
+                   user_id=int(user.get("sub") or 0),
+                   new_value={"ma": ma, "nguong": thoi or "(chưa điền)"})
+    return _ve("/crm/hang-the",
+               ok=f"Đã lưu ngưỡng hạng {ma}. Bấm “Tính lại hạng” để áp cho "
+                  "khách cũ.")
+
+
+@router.post("/hang-the/tinh-lai")
+async def hang_the_tinh_lai(request: Request):
+    """Xếp lại hạng toàn bộ khách — CHỈ NÂNG, không ai bị tụt (xem luật 1 ở
+    services/voucher_service.py)."""
+    from app.services import voucher_service
+
+    user = _nguoi(request)
+    if not co_quyen(user, "user.manage"):
+        return HTMLResponse(render_403("Tính lại hạng thẻ cần quyền "
+                                       "user.manage", heading="Hạng thẻ"),
+                            status_code=403)
+    kq = voucher_service.tinh_lai_hang(nguoi_chay=int(user.get("sub") or 0))
+    return _ve("/crm/hang-the",
+               ok=f'Đã tính lại: {kq["chi_tieu"]} khách cập nhật chi tiêu, '
+                  f'{kq["len_hang"]} khách LÊN hạng (không ai bị tụt).')
+
+
+# ================================================= C2 — LƯƠNG · THƯỞNG · ĐỐI SOÁT
+# Port từ mẫu Kallet (luong.php · luong-thuong.php · doi-soat.php).
+# Ba luật tiền bạc nằm ở services/payroll_service.py — route chỉ là lớp mỏng.
+def _chan(request: Request, quyen: str, ten_man: str):
+    """Chặn theo quyền, trả nguyên trang 403 (không phải JSON) cho màn web."""
+    if not co_quyen(_nguoi(request), quyen):
+        return HTMLResponse(
+            render_403(f"Màn {ten_man} cần quyền {quyen}", heading=ten_man),
+            status_code=403)
+    return None
+
+
+@router.get("/thu-nhap", response_class=HTMLResponse)
+async def thu_nhap(request: Request, ky: str = "", nv: int = 0,
+                   ok: str = "", error: str = "") -> HTMLResponse:
+    """Màn "Thu nhập của tôi" — mặc định CHỈ xem của chính mình.
+
+    `?nv=` xem người khác: đòi `payroll.manage` (quản lý lương). Không có quyền
+    đó thì tham số bị bỏ qua, không báo lỗi — người dùng gõ tay URL cũng chỉ
+    thấy lương mình.
+    """
+    from app.db.repositories import payroll_repo
+    from app.services import payroll_service
+
+    if chan := _chan(request, "payroll.view_own", "Thu nhập của tôi"):
+        return chan
+    user = _nguoi(request)
+    uid = int(user.get("sub") or 0)
+    if nv and nv != uid and co_quyen(user, "payroll.manage"):
+        uid = nv
+    ky = payroll_service.ky_hop_le(ky)
+    try:
+        data = payroll_service.tinh_luong(uid, ky)
+    except ApiError as err:
+        return HTMLResponse(render_403(err.message, heading="Thu nhập của tôi"),
+                            status_code=404)
+    return HTMLResponse(views_luong.render_thu_nhap(
+        data, cac_ky=payroll_repo.cac_ky(),
+        don=payroll_repo.don_trong_ky(uid, ky),
+        muc_tieu=payroll_repo.muc_tieu(uid, ky) or 0.0,
+        flash=ok, loi=error))
+
+
+@router.post("/thu-nhap/muc-tieu")
+async def thu_nhap_muc_tieu(request: Request):
+    """Mục tiêu do CHÍNH nhân viên đặt — luôn ghi cho người đang đăng nhập."""
+    from app.db.repositories import payroll_repo
+    from app.services import payroll_service
+
+    if chan := _chan(request, "payroll.view_own", "Thu nhập của tôi"):
+        return chan
+    f = await request.form()
+    ky = payroll_service.ky_hop_le(str(f.get("ky") or ""))
+    try:
+        trieu = max(1, min(999, int(str(f.get("trieu") or "0") or 0)))
+    except ValueError:
+        return _ve(f"/crm/thu-nhap?ky={ky}", error="Mục tiêu phải là số.")
+    payroll_repo.dat_muc_tieu(int(_nguoi(request).get("sub") or 0), ky,
+                              trieu * 1_000_000)
+    return _ve(f"/crm/thu-nhap?ky={ky}", ok=f"Đã đặt mục tiêu {trieu} triệu.")
+
+
+@router.get("/luong", response_class=HTMLResponse)
+async def luong(request: Request, ky: str = "", ok: str = "") -> HTMLResponse:
+    """Màn Lương thưởng — bảng lương CẢ ĐỘI theo kỳ (đòi payroll.manage)."""
+    from app.db.repositories import payroll_repo
+    from app.services import payroll_service
+
+    if chan := _chan(request, "payroll.manage", "Lương thưởng"):
+        return chan
+    ky = payroll_service.ky_hop_le(ky)
+    return HTMLResponse(views_luong.render_bang_luong(
+        payroll_repo.bang_luong(ky), ky, cac_ky=payroll_repo.cac_ky(),
+        co_chot=True, flash=ok))
+
+
+@router.post("/luong/tinh-lai")
+async def luong_tinh_lai(request: Request):
+    from app.services import payroll_service
+
+    if chan := _chan(request, "payroll.manage", "Lương thưởng"):
+        return chan
+    f = await request.form()
+    ky = payroll_service.ky_hop_le(str(f.get("ky") or ""))
+    ds = payroll_service.tinh_ca_doi(ky, ghi=True)
+    return _ve(f"/crm/luong?ky={ky}",
+               ok=f"Đã tính lại kỳ {ky} cho {len(ds)} người.")
+
+
+@router.post("/luong/chot")
+async def luong_chot(request: Request):
+    """Chốt kỳ = ĐÓNG BĂNG. Sai lệch sau đó ghi vào kỳ sau, không sửa ngược."""
+    from app.services import payroll_service
+
+    if chan := _chan(request, "payroll.manage", "Lương thưởng"):
+        return chan
+    f = await request.form()
+    ky = payroll_service.ky_hop_le(str(f.get("ky") or ""))
+    kq = payroll_service.chot_ky(ky, int(_nguoi(request).get("sub") or 0))
+    return _ve(f"/crm/luong?ky={ky}",
+               ok=f'Đã chốt kỳ {ky} — {kq["so_dong"]} dòng lương đóng băng.')
+
+
+@router.get("/doi-soat", response_class=HTMLResponse)
+async def doi_soat(request: Request, ro: str = "all", ok: str = "",
+                   error: str = "") -> HTMLResponse:
+    """Màn Đối soát & duyệt thưởng chăm sóc — 3 rổ suy từ dữ liệu."""
+    from app.services import payroll_service
+
+    if chan := _chan(request, "payroll.approve", "Đối soát & duyệt thưởng"):
+        return chan
+    if ro not in ("all", "fixed", "wonder", "done"):
+        ro = "all"
+    return HTMLResponse(views_luong.render_doi_soat(
+        payroll_service.bang_doi_soat(ro), flash=ok, loi=error))
+
+
+@router.post("/doi-soat/{order_id}/duyet")
+async def doi_soat_duyet(request: Request, order_id: int):
+    from app.services import payroll_service
+
+    if chan := _chan(request, "payroll.approve", "Đối soát & duyệt thưởng"):
+        return chan
+    try:
+        kq = payroll_service.duyet_thuong_cham(
+            order_id, nguoi=int(_nguoi(request).get("sub") or 0))
+    except ApiError as err:
+        return _ve("/crm/doi-soat", error=err.message)
+    return _ve("/crm/doi-soat",
+               ok=f'Đã duyệt thưởng +{float(kq["amount"]):,.0f}đ.'
+                  .replace(",", "."))
+
+
+@router.post("/doi-soat/{order_id}/bac")
+async def doi_soat_bac(request: Request, order_id: int):
+    from app.services import payroll_service
+
+    if chan := _chan(request, "payroll.approve", "Đối soát & duyệt thưởng"):
+        return chan
+    f = await request.form()
+    try:
+        payroll_service.bac_thuong_cham(
+            order_id, str(f.get("ly_do") or ""),
+            nguoi=int(_nguoi(request).get("sub") or 0))
+    except ApiError as err:
+        return _ve("/crm/doi-soat", error=err.message)
+    return _ve("/crm/doi-soat", ok="Đã bác thưởng (có ghi lý do).")
+
+
+@router.post("/doi-soat/{order_id}/phan-loai")
+async def doi_soat_phan_loai(request: Request, order_id: int):
+    """Đổi phân loại đơn — "đổi phân loại thì TIỀN ĐI THEO"."""
+    from app.services import payroll_service
+
+    if chan := _chan(request, "payroll.approve", "Đối soát & duyệt thưởng"):
+        return chan
+    f = await request.form()
+    try:
+        payroll_service.doi_phan_loai(
+            order_id, str(f.get("sang") or ""),
+            nguoi=int(_nguoi(request).get("sub") or 0),
+            ly_do=str(f.get("ly_do") or ""))
+    except ApiError as err:
+        return _ve("/crm/doi-soat", error=err.message)
+    return _ve("/crm/doi-soat", ok="Đã đổi phân loại đơn — thưởng đi theo.")
+
+
+@router.get("/bac-luong", response_class=HTMLResponse)
+async def bac_luong(request: Request, ok: str = "",
+                    error: str = "") -> HTMLResponse:
+    """Cấu hình bậc hoa hồng · thưởng chăm · thưởng nóng theo VAI TRÒ."""
+    from app.db.repositories import org_repo, payroll_repo
+
+    if chan := _chan(request, "payroll.manage", "Bậc lương & thưởng"):
+        return chan
+    return HTMLResponse(views_luong.render_bac_luong(
+        payroll_repo.bac_hoa_hong(), payroll_repo.bac_thuong_cham(),
+        payroll_repo.bac_thuong_nong(), org_repo.list_roles(),
+        flash=ok, loi=error))
+
+
+@router.post("/bac-luong/them")
+async def bac_luong_them(request: Request):
+    from app.db.repositories import payroll_repo
+
+    if chan := _chan(request, "payroll.manage", "Bậc lương & thưởng"):
+        return chan
+    f = await request.form()
+    bang = str(f.get("bang") or "")
+    try:
+        nguong = float(str(f.get("nguong") or "0").replace(".", "").replace(",", ""))
+        gia_tri = float(str(f.get("value") or "0").replace(".", "").replace(",", ""))
+        du = {"role_id": int(f.get("role_id") or 0),
+              "kind": str(f.get("kind") or "phan_tram"),
+              "value": gia_tri, "sort_order": 0}
+        if bang == "hot_bonus_tiers":
+            du.update({"basis": str(f.get("basis") or "doanh_thu_ngay"),
+                       "threshold": nguong})
+        else:
+            du["min_revenue"] = nguong
+        payroll_repo.luu_bac(bang, **du)
+    except (ValueError, KeyError) as err:
+        return _ve("/crm/bac-luong", error=f"Số nhập không hợp lệ: {err}")
+    return _ve("/crm/bac-luong", ok="Đã thêm bậc.")
+
+
+@router.post("/bac-luong/xoa")
+async def bac_luong_xoa(request: Request):
+    from app.db.repositories import payroll_repo
+
+    if chan := _chan(request, "payroll.manage", "Bậc lương & thưởng"):
+        return chan
+    f = await request.form()
+    try:
+        payroll_repo.xoa_bac(str(f.get("bang") or ""), int(f.get("id") or 0))
+    except ValueError as err:
+        return _ve("/crm/bac-luong", error=str(err))
+    return _ve("/crm/bac-luong", ok="Đã xoá bậc.")
+
+
+# ============================================ C3 — CHIẾN DỊCH 2 TẦNG & MẪU TIN
+# Port từ mẫu Kallet (chien-dich.php · mau-tin.php). Luật ở
+# services/campaign_service.py; công tắc gửi tin ở Cài đặt → Gửi tin hàng loạt.
+@router.get("/chien-dich", response_class=HTMLResponse)
+async def chien_dich(request: Request, xem: int = 0, nhom: str = "",
+                     hang: str = "", so_mua: str = "", ok: str = "",
+                     error: str = "") -> HTMLResponse:
+    """Danh sách chiến dịch + form tạo. `?xem=1` chỉ ĐẾM XEM TRƯỚC, không ghi gì."""
+    from app.db.repositories import campaign_repo
+    from app.services import campaign_service
+
+    if chan := _chan(request, "campaign.manage", "Chiến dịch"):
+        return chan
+    loc = campaign_service.chuan_hoa_loc(
+        {"nhom": nhom, "hang": hang, "so_mua": so_mua})
+    truoc = campaign_service.xem_truoc(loc) if xem else None
+    return HTMLResponse(views_cd.render_chien_dich(
+        campaign_service.so_sanh(), xem_truoc=truoc, loc=loc,
+        mau=campaign_repo.mau_tin(), flash=ok, loi=error))
+
+
+@router.post("/chien-dich/tao")
+async def chien_dich_tao(request: Request):
+    from app.services import campaign_service
+
+    if chan := _chan(request, "campaign.manage", "Chiến dịch"):
+        return chan
+    f = await request.form()
+    try:
+        cd = campaign_service.tao(
+            ten=str(f.get("ten") or ""),
+            loc={"nhom": str(f.get("nhom") or ""),
+                 "hang": str(f.get("hang") or ""),
+                 "so_mua": str(f.get("so_mua") or "")},
+            template_id=int(f.get("template_id") or 0) or None,
+            moi_dot=int(str(f.get("moi_dot") or "500") or 500),
+            cach_ngay=int(str(f.get("cach_ngay") or "7") or 7),
+            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except (ApiError, ValueError) as err:
+        return _ve("/crm/chien-dich", error=getattr(err, "message", str(err)))
+    return _ve("/crm/chien-dich",
+               ok=f'Đã tạo "{cd["name"]}" với {cd["so_khach"]} khách. '
+                  "Bấm Chạy rồi Chạy 1 đợt để bắt đầu tầng 1.")
+
+
+@router.get("/chien-dich/{campaign_id}", response_class=HTMLResponse)
+async def chien_dich_chi_tiet(request: Request, campaign_id: int,
+                              ok: str = "") -> HTMLResponse:
+    from app.db.repositories import campaign_repo
+
+    if chan := _chan(request, "campaign.manage", "Chiến dịch"):
+        return chan
+    cd = campaign_repo.get(campaign_id)
+    if not cd:
+        return HTMLResponse(render_403("Không tìm thấy chiến dịch",
+                                       heading="Chiến dịch"), status_code=404)
+    return HTMLResponse(views_cd.render_chi_tiet(
+        dict(cd), campaign_repo.thanh_vien(campaign_id, tang="1"),
+        campaign_repo.thanh_vien(campaign_id, tang="2"), flash=ok))
+
+
+@router.post("/chien-dich/{campaign_id}/trang-thai")
+async def chien_dich_trang_thai(request: Request, campaign_id: int):
+    from app.services import campaign_service
+
+    if chan := _chan(request, "campaign.manage", "Chiến dịch"):
+        return chan
+    f = await request.form()
+    try:
+        kq = campaign_service.doi_trang_thai(
+            campaign_id, str(f.get("tt") or ""),
+            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/chien-dich", error=err.message)
+    them = (f' Đã NHẢ {kq["nha_khach"]} khách chưa chốt để họ vào được chiến '
+            "dịch khác." if kq.get("nha_khach") else "")
+    return _ve("/crm/chien-dich", ok="Đã đổi trạng thái chiến dịch." + them)
+
+
+@router.post("/chien-dich/{campaign_id}/chay-dot")
+async def chien_dich_chay_dot(request: Request, campaign_id: int):
+    """Chạy MỘT đợt tầng 1. Công tắc TẮT thì chỉ chạy nháp (không gửi gì)."""
+    from app.services import campaign_service
+
+    if chan := _chan(request, "campaign.manage", "Chiến dịch"):
+        return chan
+    f = await request.form()
+    try:
+        kq = await campaign_service.chay_dot(
+            campaign_id, int(str(f.get("so_luong") or "0") or 0),
+            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except (ApiError, ValueError) as err:
+        return _ve("/crm/chien-dich", error=getattr(err, "message", str(err)))
+    if not kq["gui_that"]:
+        return _ve("/crm/chien-dich",
+                   ok=f'✏️ Chạy NHÁP: chọn được {kq["chon"]} khách, KHÔNG gửi '
+                      "tin nào và không đánh dấu ai. Bật công tắc ở Cài đặt "
+                      "để gửi thật.")
+    return _ve("/crm/chien-dich",
+               ok=f'Đã gửi {kq["da_gui"]}/{kq["chon"]} tin'
+                  + (f', {kq["loi"]} lỗi.' if kq["loi"] else "."))
+
+
+@router.get("/mau-tin", response_class=HTMLResponse)
+async def mau_tin(request: Request, ok: str = "", error: str = "",
+                  thu: str = "") -> HTMLResponse:
+    from app.db.repositories import campaign_repo
+
+    if chan := _chan(request, "campaign.manage", "Mẫu tin"):
+        return chan
+    return HTMLResponse(views_cd.render_mau_tin(
+        campaign_repo.mau_tin(trang_thai=""), flash=ok, loi=error, xem_thu=thu))
+
+
+@router.post("/mau-tin")
+async def mau_tin_luu(request: Request):
+    from app.services import campaign_service
+
+    if chan := _chan(request, "campaign.manage", "Mẫu tin"):
+        return chan
+    f = await request.form()
+    try:
+        campaign_service.luu_mau_tin(
+            code=str(f.get("code") or ""), name=str(f.get("name") or ""),
+            body=str(f.get("body") or ""), kind=str(f.get("kind") or "tu_do"),
+            meta_status=str(f.get("meta_status") or "rong"),
+            variables=str(f.get("variables") or ""),
+            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/mau-tin", error=err.message)
+    return _ve("/crm/mau-tin", ok="Đã lưu mẫu tin.")
+
+
+@router.post("/mau-tin/{template_id}/xem-thu")
+async def mau_tin_xem_thu(request: Request, template_id: int):
+    from app.services import campaign_service
+
+    if chan := _chan(request, "campaign.manage", "Mẫu tin"):
+        return chan
+    try:
+        noi_dung = campaign_service.xem_thu(template_id)
+    except ApiError as err:
+        return _ve("/crm/mau-tin", error=err.message)
+    return RedirectResponse(f"/crm/mau-tin?thu={quote(noi_dung)}",
+                            status_code=303)
+
+
+@router.post("/mau-tin/{template_id}/trang-thai")
+async def mau_tin_trang_thai(request: Request, template_id: int):
+    """Mẫu cũ NGỪNG DÙNG chứ không xoá — tin đã gửi phải tra ngược được."""
+    from app.db.repositories import campaign_repo
+
+    if chan := _chan(request, "campaign.manage", "Mẫu tin"):
+        return chan
+    f = await request.form()
+    tt = str(f.get("tt") or "")
+    if tt not in ("active", "inactive"):
+        return _ve("/crm/mau-tin", error=f"Trạng thái lạ: {tt}")
+    campaign_repo.doi_trang_thai_mau(template_id, tt)
+    return _ve("/crm/mau-tin",
+               ok="Đã ngừng dùng mẫu." if tt == "inactive" else "Đã dùng lại mẫu.")
+
+
+# ================== C4 — THƯ VIỆN KỊCH BẢN · KHO DATA · GIÁM SÁT (SOI TIN)
+# Port từ mẫu Kallet (kich-ban.php · kho-data.php · lich-su.php ·
+# includes/xac_minh.php). Luật ở services/giam_sat_service.py.
+@router.get("/kich-ban", response_class=HTMLResponse)
+async def kich_ban(request: Request, q: str = "", kind: str = "",
+                   tinh_huong: str = "", chep: str = "", ok: str = "",
+                   error: str = "") -> HTMLResponse:
+    """📚 THƯ VIỆN câu mẫu để chép tay — mở màn này KHÔNG gửi gì cho ai.
+
+    Ai đăng nhập cũng xem được: đây là công cụ làm việc hằng ngày của Sale và
+    CSKH, khoá lại chỉ tổ vướng."""
+    from app.db.repositories import giam_sat_repo
+
+    rows, tong = giam_sat_repo.kich_ban(kind=kind, tu_khoa=q,
+                                        tinh_huong=tinh_huong)
+    return HTMLResponse(views_gs.render_kich_ban(
+        rows, tong, loc={"q": q, "kind": kind, "tinh_huong": tinh_huong},
+        tinh_huong=giam_sat_repo.tinh_huong_co(), da_chep=chep,
+        flash=ok, loi=error))
+
+
+@router.post("/kich-ban")
+async def kich_ban_luu(request: Request):
+    from app.services import giam_sat_service
+
+    f = await request.form()
+    try:
+        giam_sat_service.luu_kich_ban(
+            kind=str(f.get("kind") or "sale"),
+            situation=str(f.get("situation") or ""),
+            title=str(f.get("title") or ""), body=str(f.get("body") or ""),
+            tags=str(f.get("tags") or ""),
+            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/kich-ban", error=err.message)
+    return _ve("/crm/kich-ban", ok="Đã lưu câu mẫu.")
+
+
+@router.post("/kich-ban/{script_id}/chep")
+async def kich_ban_chep(request: Request, script_id: int):
+    """Chép một câu mẫu. CHỈ đếm lượt dùng — tuyệt đối không sinh tin nhắn."""
+    from app.services import giam_sat_service
+
+    try:
+        kq = giam_sat_service.chep(script_id)
+    except ApiError as err:
+        return _ve("/crm/kich-ban", error=err.message)
+    return RedirectResponse(f'/crm/kich-ban?chep={quote(kq["body"][:400])}',
+                            status_code=303)
+
+
+@router.post("/kich-ban/goi-y", response_class=HTMLResponse)
+async def kich_ban_goi_y(request: Request) -> HTMLResponse:
+    """💡 Gợi ý 3 câu theo TỪ KHOÁ trong tin khách (dò từ khoá, không AI)."""
+    from app.db.repositories import giam_sat_repo
+    from app.services import giam_sat_service
+
+    f = await request.form()
+    tin = str(f.get("tin") or "")
+    rows, tong = giam_sat_repo.kich_ban()
+    return HTMLResponse(views_gs.render_kich_ban(
+        rows, tong, loc={}, tinh_huong=giam_sat_repo.tinh_huong_co(),
+        goi_y=giam_sat_service.goi_y(tin)))
+
+
+@router.get("/kho-data", response_class=HTMLResponse)
+async def kho_data(request: Request, ok: str = "",
+                   error: str = "") -> HTMLResponse:
+    from app.db.repositories import user_repo
+    from app.services import giam_sat_service
+
+    if chan := _chan(request, "data.export", "Kho data"):
+        return chan
+    return HTMLResponse(views_gs.render_kho_data(
+        giam_sat_service.tong_quan_kho(),
+        nhan_vien=user_repo.list_users(status="active", limit=200)[0],
+        flash=ok, loi=error))
+
+
+@router.post("/kho-data/chia")
+async def kho_data_chia(request: Request):
+    from app.services import giam_sat_service
+
+    if chan := _chan(request, "data.export", "Kho data"):
+        return chan
+    f = await request.form()
+    try:
+        giam_sat_service.chia(
+            int(f.get("customer_id") or 0), int(f.get("user_id") or 0),
+            ly_do="chia tay ở màn Kho data",
+            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except (ApiError, ValueError) as err:
+        return _ve("/crm/kho-data", error=getattr(err, "message", str(err)))
+    return _ve("/crm/kho-data", ok="Đã chia khách.")
+
+
+@router.post("/kho-data/thu-hoi")
+async def kho_data_thu_hoi(request: Request):
+    """Thu hồi khách — BẮT BUỘC lý do, kèm khoá không chia lại cho người đó."""
+    from app.services import giam_sat_service
+
+    if chan := _chan(request, "data.export", "Kho data"):
+        return chan
+    f = await request.form()
+    try:
+        giam_sat_service.thu_hoi(
+            int(f.get("customer_id") or 0), int(f.get("user_id") or 0),
+            str(f.get("ly_do") or ""),
+            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except (ApiError, ValueError) as err:
+        return _ve("/crm/kho-data", error=getattr(err, "message", str(err)))
+    return _ve("/crm/kho-data", ok="Đã thu hồi khách (có ghi lý do).")
+
+
+@router.get("/giam-sat", response_class=HTMLResponse)
+async def giam_sat(request: Request, tt: str = "", ok: str = "",
+                   error: str = "") -> HTMLResponse:
+    """Vòng xác minh công — soi tin nhắn thật làm bằng chứng."""
+    from app.db.repositories import giam_sat_repo
+
+    if chan := _chan(request, "audit.view", "Giám sát & soi tin"):
+        return chan
+    if tt not in ("", "da_xac_minh", "tu_khai_chua_soi", "bac_bo"):
+        tt = ""
+    return HTMLResponse(views_gs.render_giam_sat(
+        giam_sat_repo.bang_cong(trang_thai=tt), giam_sat_repo.dem_cong(),
+        tab=tt, flash=ok, loi=error))
+
+
+@router.post("/giam-sat/soi")
+async def giam_sat_soi(request: Request):
+    from app.services import giam_sat_service
+
+    if chan := _chan(request, "audit.view", "Giám sát & soi tin"):
+        return chan
+    kq = giam_sat_service.soi_hang_loat()
+    return _ve("/crm/giam-sat",
+               ok=f'Đã soi {kq["soi"]} bản: {kq.get("da_xac_minh", 0)} xác '
+                  f'minh · {kq.get("bac_bo", 0)} bác · '
+                  f'{kq.get("cho_them", 0)} chờ thêm.')
+
+
+@router.post("/giam-sat/{cong_id}/duyet")
+async def giam_sat_duyet(request: Request, cong_id: int):
+    """Trưởng nhóm vớt/bác tay. Lý do BẮT BUỘC — công là tiền của người ta."""
+    from app.services import giam_sat_service
+
+    if chan := _chan(request, "audit.view", "Giám sát & soi tin"):
+        return chan
+    f = await request.form()
+    try:
+        giam_sat_service.duyet_tay(
+            cong_id, str(f.get("ok") or "0") == "1",
+            str(f.get("ly_do") or ""),
+            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/giam-sat", error=err.message)
+    return _ve("/crm/giam-sat", ok="Đã ghi quyết định (kèm lý do).")
+
+
+# ================================= C5 — BỘ PHẬN SALE: BẢNG VIỆC + THANG BÁM ĐUỔI
+# Port từ mẫu Kallet (trang-chu.php · includes/sale_buoc.php ·
+# includes/board_rules.php). Luật ở services/sale_service.py.
+@router.get("/bang-viec", response_class=HTMLResponse)
+async def bang_viec(request: Request, cd: str = "bang", q: str = "",
+                    loc: str = "", tatca: int = -1, hien_da_cham: int = 0,
+                    ok: str = "", error: str = "") -> HTMLResponse:
+    """Bảng việc Sale — cột do MÁY ĐỌC TIN NHẮN THẬT suy ra.
+
+    Phạm vi mặc định (`tatca=-1` = người dùng CHƯA bấm ô tích):
+      * **Quản lý (`user.manage`/`user.manage_team`) -> XEM HẾT CỦA TẤT CẢ.**
+        Admin không phải người ôm lead; mặc định "chỉ của tôi" khiến họ mở màn
+        ra thấy trống trơn mà không hiểu vì sao.
+      * Nhân viên -> khách CỦA MÌNH (đúng việc hằng ngày của họ).
+    Bấm ô tích thì `tatca` thành 0/1 và ý người dùng thắng — quản lý vẫn bó về
+    "chỉ của tôi" được nếu họ có ôm lead riêng.
+    """
+    from app.services import sale_service
+
+    user = _nguoi(request)
+    uid = int(user.get("sub") or 0) or None
+    quan_ly = (co_quyen(user, "user.manage")
+               or co_quyen(user, "user.manage_team"))
+    ca_doi = quan_ly if tatca < 0 else (bool(tatca) and quan_ly)
+    data = sale_service.bang_viec(
+        owner_id=None if ca_doi else uid, q=q, an_da_cham=not hien_da_cham)
+    # Lọc theo ô đếm (bấm ô nào thì bảng chỉ còn nhóm đó)
+    if loc:
+        chon = {
+            "hom_nay": lambda x: x["buoc_ke"] and x["buoc_ke"]["san_sang"],
+            "qua_han": lambda x: bool(x.get("qua_han")),
+            "vua_phan_hoi": lambda x: x["cho_dap"],
+            "yeu_cau_chia": lambda x: not x.get("owner_id"),
+        }.get(loc)
+        if chon:
+            data["the"] = [x for x in data["the"] if chon(x)]
+            giu = {x["id"] for x in data["the"]}
+            data["theo_cot"] = {k: [x for x in v if x["id"] in giu]
+                                for k, v in data["theo_cot"].items()}
+    return HTMLResponse(views_sale.render_bang_viec(
+        data, loc={"q": q, "loc": loc, "tatca": 1 if ca_doi else 0,
+                   "hien_da_cham": hien_da_cham},
+        che_do="pipeline" if cd == "pipeline" else "bang",
+        ca_doi=ca_doi, quan_ly=quan_ly, flash=ok, loi=error))
+
+
+@router.post("/bang-viec/{lead_id}/keo")
+async def bang_viec_keo(request: Request, lead_id: int):
+    """Kéo thẻ sang cột khác. Cột "Bước N" đặt luôn con trỏ = N-1."""
+    from app.services import sale_service
+
+    f = await request.form()
+    try:
+        sale_service.keo_the(lead_id, str(f.get("cot") or ""),
+                             nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/bang-viec", error=err.message)
+    return _ve("/crm/bang-viec", ok="Đã chuyển cột.")
+
+
+@router.post("/bang-viec/{lead_id}/tu-choi")
+async def bang_viec_tu_choi(request: Request, lead_id: int):
+    """🚫 Từ chối — đóng ĐỢT NÀY. CỐ Ý không hỏi xác nhận."""
+    from app.services import sale_service
+
+    try:
+        sale_service.tu_choi(lead_id,
+                             nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/bang-viec", error=err.message)
+    return _ve("/crm/bang-viec",
+               ok="Đã đóng đợt này — khách nhắn lại là thẻ tự quay về bảng.")
+
+
+@router.post("/bang-viec/{lead_id}/ngung")
+async def bang_viec_ngung(request: Request, lead_id: int):
+    """⛔ Ngừng chăm sóc — dừng HẲN, bắt buộc lý do."""
+    from app.services import sale_service
+
+    f = await request.form()
+    try:
+        sale_service.ngung_cham_soc(
+            lead_id, str(f.get("ly_do") or ""),
+            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/bang-viec", error=err.message)
+    return _ve("/crm/bang-viec",
+               ok="Đã ngừng chăm sóc — thẻ không tự quay lại, phải chờ khách "
+                  "nhắn trước.")
+
+
+@router.post("/bang-viec/{lead_id}/mo-lai")
+async def bang_viec_mo_lai(request: Request, lead_id: int):
+    from app.services import sale_service
+
+    try:
+        sale_service.mo_lai(lead_id,
+                            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/bang-viec", error=err.message)
+    return _ve("/crm/bang-viec", ok="Đã trả thẻ về cho máy xếp cột.")
+
+
+@router.post("/bang-viec/do-lai")
+async def bang_viec_do_lai(request: Request):
+    """Chạy lại bộ dò con trỏ ngay (không chờ worker)."""
+    from app.services import sale_service
+
+    kq = sale_service.quet_tat_ca()
+    return _ve("/crm/bang-viec",
+               ok=f'Đã dò lại: {kq["doi_con_tro"]} thẻ đổi con trỏ · '
+                  f'{kq["nha_cot"]} thẻ tự nhả khỏi cột đặt tay.')
+
+
+@router.get("/thang-sale", response_class=HTMLResponse)
+async def thang_sale(request: Request, ok: str = "",
+                     error: str = "") -> HTMLResponse:
+    """Cấu hình thang bám đuổi — từ khoá của từng bước."""
+    from app.db.repositories import sale_repo
+
+    if chan := _chan(request, "user.manage", "Thang bám đuổi Sale"):
+        return chan
+    return HTMLResponse(views_sale.render_thang(
+        sale_repo.thang(), flash=ok, loi=error))
+
+
+@router.post("/thang-sale")
+async def thang_sale_luu(request: Request):
+    from app.services import sale_service
+
+    if chan := _chan(request, "user.manage", "Thang bám đuổi Sale"):
+        return chan
+    f = await request.form()
+    try:
+        sale_service.luu_buoc(
+            int(str(f.get("step_no") or "0") or 0),
+            name=str(f.get("name") or ""), work=str(f.get("work") or ""),
+            kw_nv=str(f.get("kw_nv") or ""), kw_kh=str(f.get("kw_kh") or ""))
+    except (ApiError, ValueError) as err:
+        return _ve("/crm/thang-sale", error=getattr(err, "message", str(err)))
+    return _ve("/crm/thang-sale", ok="Đã lưu bước.")
+
+
+# =====================================================================
+# C6 — BẢNG VIỆC CSKH + đợt khuyến mãi (port mẫu Kallet cskh_quy_trinh.php).
+# Luật ở services/cskh_service.py; SQL ở db/repositories/cskh_repo.py.
+#
+# ⚠️ KHÔNG phải màn /crm/cham-soc (B9 — liệu trình C01-C09 của MỘT đơn). Đây là
+# vòng đời khách SAU khi nhận hàng: cảm ơn → voucher → thang mua lại.
+# =====================================================================
+@router.get("/bang-viec-cskh", response_class=HTMLResponse)
+async def bang_viec_cskh(request: Request, q: str = "", viec: int = 0,
+                         toi: int = 0, ok: str = "",
+                         error: str = "") -> HTMLResponse:
+    """Bảng việc CSKH — cột do máy suy ra từ NGÀY NHẬN HÀNG CUỐI."""
+    from app.services import cskh_service
+
+    if chan := _chan(request, "customer.view", "Bảng việc CSKH"):
+        return chan
+    user = _nguoi(request)
+    # "Khách của tôi": người không có customer.view_all luôn bị bó về khách mình
+    # phụ trách, dù có tick ô hay không — chặn ở tầng dữ liệu, không ẩn nút.
+    minh = int(user.get("sub") or 0) or None
+    pham_vi = minh if (toi or not co_quyen(user, "user.manage")) else None
+    data = cskh_service.bang_viec(owner_id=pham_vi, q=q.strip(),
+                                  chi_viec=bool(viec))
+    return HTMLResponse(views_cskh.render_bang_viec(
+        data, user, {"q": q, "viec": viec, "toi": toi},
+        sua=co_quyen(user, "customer.edit"), flash=ok, loi=error))
+
+
+@router.post("/bang-viec-cskh/{customer_id}/cot")
+async def cskh_keo_the(request: Request, customer_id: int):
+    """Kéo thẻ sang cột khác. Cột máy suy ra hoàn toàn thì service từ chối."""
+    from app.services import cskh_service
+
+    if chan := _chan(request, "customer.edit", "Bảng việc CSKH"):
+        return chan
+    f = await request.form()
+    cot = str(f.get("cot") or "").strip()
+    if not cot:
+        return _ve("/crm/bang-viec-cskh")
+    try:
+        cskh_service.keo_the(customer_id, cot,
+                             nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/bang-viec-cskh", error=err.message)
+    return _ve("/crm/bang-viec-cskh", ok="Đã chuyển cột.")
+
+
+@router.post("/bang-viec-cskh/{customer_id}/mo-lai")
+async def cskh_mo_lai(request: Request, customer_id: int):
+    from app.services import cskh_service
+
+    if chan := _chan(request, "customer.edit", "Bảng việc CSKH"):
+        return chan
+    try:
+        cskh_service.mo_lai(customer_id,
+                            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/bang-viec-cskh", error=err.message)
+    return _ve("/crm/bang-viec-cskh", ok="Đã trả thẻ về cho máy xếp.")
+
+
+@router.post("/bang-viec-cskh/{customer_id}/cham")
+async def cskh_ghi_cham(request: Request, customer_id: int):
+    """Ghi một lượt chăm — ĐÓNG mốc đang mở của khách."""
+    from app.services import cskh_service
+
+    if chan := _chan(request, "customer.edit", "Bảng việc CSKH"):
+        return chan
+    f = await request.form()
+    cskh_service.ghi_cham(customer_id,
+                          nguoi=int(_nguoi(request).get("sub") or 0) or None,
+                          tom_tat=str(f.get("tom_tat") or ""))
+    return _ve("/crm/bang-viec-cskh", ok="Đã ghi lượt chăm.")
+
+
+@router.post("/bang-viec-cskh/{customer_id}/goi")
+async def cskh_ghi_goi(request: Request, customer_id: int):
+    """Ghi kết quả cuộc gọi GĐ1 — "nghe máy" là tín hiệu đủ điều kiện tặng
+    voucher, "không nghe" thì việc gọi coi như đã làm (không gọi lần 2)."""
+    from app.services import cskh_service
+
+    if chan := _chan(request, "customer.edit", "Bảng việc CSKH"):
+        return chan
+    f = await request.form()
+    try:
+        cskh_service.ghi_goi(customer_id, str(f.get("ket_qua") or ""),
+                             nguoi=int(_nguoi(request).get("sub") or 0) or None,
+                             tom_tat=str(f.get("tom_tat") or ""))
+    except ApiError as err:
+        return _ve("/crm/bang-viec-cskh", error=err.message)
+    return _ve("/crm/bang-viec-cskh", ok="Đã ghi cuộc gọi.")
+
+
+@router.get("/cskh/khuyen-mai", response_class=HTMLResponse)
+async def cskh_khuyen_mai(request: Request, ok: str = "",
+                          error: str = "") -> HTMLResponse:
+    """Đợt khuyến mãi cho mốc CSKH có cờ khuyến mãi — NHẬP TAY từng đợt."""
+    from app.db.repositories import cskh_repo
+
+    if chan := _chan(request, "customer.view", "Đợt khuyến mãi CSKH"):
+        return chan
+    user = _nguoi(request)
+    return HTMLResponse(views_cskh.render_khuyen_mai(
+        cskh_repo.ctkm_ds(), user, sua=co_quyen(user, "campaign.manage"),
+        flash=ok, loi=error))
+
+
+@router.post("/cskh/khuyen-mai")
+async def cskh_khuyen_mai_luu(request: Request):
+    from app.services import cskh_service
+
+    if chan := _chan(request, "campaign.manage", "Đợt khuyến mãi CSKH"):
+        return chan
+    f = await request.form()
+    try:
+        cskh_service.luu_ctkm(
+            None, ten=str(f.get("ten") or ""),
+            noi_dung=str(f.get("noi_dung") or ""),
+            tu_ngay=str(f.get("tu_ngay") or "") or None,
+            den_ngay=str(f.get("den_ngay") or "") or None,
+            active=bool(f.get("bat")),
+            nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/cskh/khuyen-mai", error=err.message)
+    return _ve("/crm/cskh/khuyen-mai", ok="Đã lưu đợt khuyến mãi.")
+
+
+@router.post("/cskh/khuyen-mai/{promo_id}/bat")
+async def cskh_khuyen_mai_bat(request: Request, promo_id: int):
+    """Bật/tắt một đợt. Nhiều đợt cùng bật thì mốc lấy đợt MỚI NHẤT."""
+    from app.db.repositories import cskh_repo
+    from app.services import cskh_service
+
+    if chan := _chan(request, "campaign.manage", "Đợt khuyến mãi CSKH"):
+        return chan
+    cu = next((r for r in cskh_repo.ctkm_ds() if int(r["id"]) == promo_id), None)
+    if not cu:
+        return _ve("/crm/cskh/khuyen-mai", error="Không thấy đợt khuyến mãi.")
+    cskh_service.luu_ctkm(
+        promo_id, ten=cu["name"], noi_dung=cu["content"],
+        tu_ngay=cu["start_on"], den_ngay=cu["end_on"],
+        active=not cu["active"])
+    return _ve("/crm/cskh/khuyen-mai",
+               ok="Đã tắt đợt." if cu["active"] else "Đã bật đợt.")
+
+
+@router.post("/cskh/khuyen-mai/{promo_id}/xoa")
+async def cskh_khuyen_mai_xoa(request: Request, promo_id: int):
+    from app.services import cskh_service
+
+    if chan := _chan(request, "campaign.manage", "Đợt khuyến mãi CSKH"):
+        return chan
+    cskh_service.xoa_ctkm(promo_id)
+    return _ve("/crm/cskh/khuyen-mai", ok="Đã xoá đợt.")
+
+
+@router.post("/cskh/dung-thang")
+async def cskh_dung_thang(request: Request):
+    """Dựng lại thang mốc từ 3 con số ở Cài đặt.
+
+    Đây là dữ liệu điều khiển bảng việc của cả đội nên đóng sau quyền quản trị,
+    và luôn kể ra đã sửa mấy mốc để người bấm biết mình vừa làm gì.
+    """
+    from app.services import cskh_service
+
+    if chan := _chan(request, "user.manage", "Bảng việc CSKH"):
+        return chan
+    viec = cskh_service.seed_thang(dry=False)
+    return _ve("/crm/bang-viec-cskh",
+               ok=f"Đã dựng lại thang mốc ({len(viec)} thay đổi).")

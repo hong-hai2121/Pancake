@@ -519,9 +519,16 @@ KH_BUCKET: dict[str, tuple[int, int | None]] = {
 
 
 def _kh_loc(q: str, tt: str, bucket: str, owner_id: int, page_id: int,
-            so_mua: str, chi_tu, chi_den) -> tuple[list[str], list]:
+            so_mua: str, chi_tu, chi_den, tier: str = "") -> tuple[list[str], list]:
     """Dựng mệnh đề WHERE + tham số cho bảng khách (dùng lại ở câu đếm tổng)."""
     dk, ts = [_KH_SONG], []
+    # C1 — hạng thẻ. 'chua_xep' là hạng thứ 6 (card_rank NULL), KHÔNG phải một
+    # dòng trong card_ranks: xem đầu scripts/seed_uu_dai.py.
+    if tier == "chua_xep":
+        dk.append("c.card_rank is null")
+    elif tier:
+        dk.append("c.card_rank = %s")
+        ts.append(tier)
     if q:
         dk.append("(c.full_name ilike %s or c.primary_phone like %s"
                   " or c.customer_code ilike %s)")
@@ -564,6 +571,7 @@ def _kh_loc(q: str, tt: str, bucket: str, owner_id: int, page_id: int,
 def khach_hang_bang(*, q: str = "", tt: str = "", bucket: str = "",
                     owner_id: int = 0, page_id: int = 0, so_mua: str = "",
                     chi_tu: float | None = None, chi_den: float | None = None,
+                    tier: str = "",
                     limit: int = 30, offset: int = 0) -> tuple[list[dict], int]:
     """Một trang của bảng khách + TỔNG số khách khớp bộ lọc (để phân trang).
 
@@ -571,7 +579,8 @@ def khach_hang_bang(*, q: str = "", tt: str = "", bucket: str = "",
     mới bồi mấy thứ chỉ để hiển thị. Gộp một câu thì Postgres phải chạy toàn bộ
     lateral cho cả chục nghìn khách rồi mới LIMIT — chậm gấp mấy lần.
     """
-    dk, ts = _kh_loc(q, tt, bucket, owner_id, page_id, so_mua, chi_tu, chi_den)
+    dk, ts = _kh_loc(q, tt, bucket, owner_id, page_id, so_mua, chi_tu, chi_den,
+                     tier)
     where = " and ".join(dk)
     loc_join = _kh_join_loc(owner_id, page_id)
     pool = get_pg_pool()
@@ -594,6 +603,13 @@ def khach_hang_bang(*, q: str = "", tt: str = "", bucket: str = "",
             )
             select c.id, c.customer_code, c.full_name, c.primary_phone,
                    c.province, c.status, c.source, c.created_at,
+                   c.card_rank, c.last_delivered_at,
+                   -- C1: khách có hạng mà quá hạn không nhận hàng thì quyền lợi
+                   -- tụt 1 bậc (hạng hiển thị GIỮ NGUYÊN) — cột này để bảng gắn
+                   -- dấu, tuyệt đối không dùng để đổi c.card_rank.
+                   (c.card_rank is not null and c.last_delivered_at is not null
+                    and c.last_delivered_at
+                        < now() - make_interval(days => %s)) as giam_quyen_loi,
                    t.so_lan_mua, t.tong_chi, t.nhan_hang_cuoi, t.ngay_tu_mua,
                    hc.last_message_at, hc.external_conversation_id,
                    p.external_page_id, p.name as page_name,
@@ -605,9 +621,22 @@ def khach_hang_bang(*, q: str = "", tt: str = "", bucket: str = "",
               {_kh_join_hien(_co_kho_hoi_thoai(conn))}
              order by t.nhan_hang_cuoi desc nulls last, c.id desc
             """,
-            [*ts, limit, offset],
+            # Thứ tự tham số theo THỨ TỰ XUẤT HIỆN trong câu: WHERE của CTE →
+            # limit/offset → mốc giảm quyền lợi ở SELECT ngoài.
+            [*ts, limit, offset, _ngay_giam_quyen_loi()],
         ).fetchall()
     return rows, total
+
+
+def _ngay_giam_quyen_loi() -> int:
+    """Mốc "180 ngày không nhận hàng thì tụt quyền lợi" — đọc cài đặt chạy để
+    admin đổi được, hỏng thì lùi về 180 (xem services/voucher_service)."""
+    try:
+        from app.core import runtime_config
+
+        return int(runtime_config.so("card_rank_downgrade_days", 180))
+    except Exception:  # noqa: BLE001 — bảng khách không được chết vì cài đặt
+        return 180
 
 
 def khach_hang_dem() -> dict:

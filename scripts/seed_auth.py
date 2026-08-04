@@ -53,6 +53,20 @@ PERMISSIONS: list[tuple[str, str]] = [
     # B7 — đơn hàng (màn 21-23): xem tách khỏi sửa vì Kế toán/Marketing chỉ cần đọc
     ("order.view", "Xem đơn hàng"),
     ("order.edit", "Tạo/sửa đơn & chuyển trạng thái"),
+    # C1 — voucher (màn /crm/voucher). Tặng voucher = phát tiền: quyền RIÊNG,
+    # cấp cho CSKH chứ không phải ai xem được khách cũng tặng được.
+    ("voucher.grant", "Tặng voucher cho khách"),
+    # C2 — lương. TÁCH BA mức vì lộ lương là chuyện lớn:
+    #   payroll.view_own  — ai cũng có, chỉ xem thu nhập CỦA MÌNH
+    #   payroll.manage    — bảng lương cả đội + chốt kỳ + cấu hình bậc
+    #   payroll.approve   — duyệt/bác thưởng chăm sóc ở màn Đối soát
+    ("payroll.view_own", "Xem thu nhập của chính mình"),
+    ("payroll.manage", "Xem bảng lương cả đội & chốt kỳ"),
+    ("payroll.approve", "Duyệt/bác thưởng chăm sóc"),
+    # C3 — chiến dịch + mẫu tin. Gộp MỘT quyền vì cùng một việc: người dựng
+    # chiến dịch cũng là người soạn nội dung tầng 1. Bấm "Chạy đợt" là bắn tin
+    # tới hàng nghìn khách thật nên KHÔNG mở cho nhân viên thường.
+    ("campaign.manage", "Tạo & chạy chiến dịch, soạn mẫu tin"),
     # A5 — FR-002/003 cần quyền riêng cho quản trị tài khoản + xem audit (màn 65-67, 77)
     ("user.manage", "Quản lý nhân viên & phân quyền"),
     ("user.manage_team", "Quản lý tài khoản trong đội (trưởng nhóm)"),
@@ -69,22 +83,32 @@ _ALL = [code for code, _ in PERMISSIONS]
 ROLE_PERMS: dict[str, list[str]] = {
     "Chủ doanh nghiệp": _ALL,
     "Admin": _ALL,
+    # Trưởng nhóm có payroll.approve (duyệt thưởng đội mình) nhưng KHÔNG có
+    # payroll.manage — chốt kỳ lương là việc của Kế toán/Admin.
     "Trưởng nhóm Sale": ["customer.view", "customer.edit", "customer.view_phone",
                           "call.listen", "health.view", "revenue.view",
-                          "user.manage_team", "order.view", "order.edit"],
+                          "user.manage_team", "order.view", "order.edit",
+                          "payroll.view_own", "payroll.approve"],
     "Sale": ["customer.view", "customer.edit", "customer.view_phone",
-             "health.view", "treatment.edit", "order.view", "order.edit"],
+             "health.view", "treatment.edit", "order.view", "order.edit",
+             "payroll.view_own"],
     "Trưởng nhóm CSKH": ["customer.view", "customer.edit", "customer.view_phone",
                           "call.listen", "health.view", "user.manage_team",
-                          "order.view", "order.edit"],
-    # CSKH có order.edit vì bước CS01 là "Xác nhận đơn" (đổi trạng thái đơn)
+                          "order.view", "order.edit", "voucher.grant",
+                          "payroll.view_own", "payroll.approve"],
+    # CSKH có order.edit vì bước CS01 là "Xác nhận đơn" (đổi trạng thái đơn);
+    # voucher.grant vì tặng voucher là việc chăm khách cũ (C1), không phải Sale
     "CSKH": ["customer.view", "customer.edit", "customer.view_phone", "health.view",
-             "order.view", "order.edit"],
+             "order.view", "order.edit", "voucher.grant", "payroll.view_own"],
     # Marketing: xem khách (chất lượng lead) + báo cáo quảng cáo (mục 4)
-    "Marketing": ["customer.view", "ads.view"],
-    "Kế toán": ["customer.view", "revenue.view", "data.export", "order.view"],
+    # + dựng chiến dịch/mẫu tin (C3) — đúng nghề của họ
+    "Marketing": ["customer.view", "ads.view", "payroll.view_own",
+                  "campaign.manage"],
+    # Kế toán là người CHỐT KỲ LƯƠNG → payroll.manage
+    "Kế toán": ["customer.view", "revenue.view", "data.export", "order.view",
+                "payroll.view_own", "payroll.manage", "payroll.approve"],
     "Người chuyên môn": ["customer.view", "health.view", "treatment.edit",
-                          "content.approve"],
+                          "content.approve", "payroll.view_own"],
 }
 
 

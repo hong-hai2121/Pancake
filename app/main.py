@@ -47,12 +47,16 @@ async def lifespan(_app: FastAPI):
     tasks: list[asyncio.Task] = []
     from app.workers import (
         care_steps_loop,
+        luong_loop,
         messages_loop,
         notifications_loop,
         poll_loop,
+        sale_buoc_loop,
         sentiment_loop,
+        soi_tin_loop,
         sync_retry_loop,
         task_escalation_loop,
+        voucher_han_loop,
     )
 
     tasks.append(asyncio.create_task(poll_loop(), name="inbox-poller"))
@@ -67,6 +71,14 @@ async def lifespan(_app: FastAPI):
     tasks.append(asyncio.create_task(notifications_loop(), name="notify-scan"))
     # B9: mốc chăm tới hạn → due + việc nhắc CSKH (nhẹ, chạy luôn như B4).
     tasks.append(asyncio.create_task(care_steps_loop(), name="care-steps"))
+    # C1: đóng voucher quá hạn + xếp lại hạng thẻ (VOUCHER_EXPIRE_SCAN_ENABLED).
+    tasks.append(asyncio.create_task(voucher_han_loop(), name="voucher-han"))
+    # C2: tính lại lương kỳ hiện tại + truy thu đơn hoàn của kỳ đã chốt.
+    tasks.append(asyncio.create_task(luong_loop(), name="luong"))
+    # C4: soi tin nhắn thật xác minh công (VERIFY_SCAN_ENABLED).
+    tasks.append(asyncio.create_task(soi_tin_loop(), name="soi-tin"))
+    # C5: dò con trỏ thang bám đuổi Sale từ tin nhắn (SALE_SCAN_ENABLED).
+    tasks.append(asyncio.create_task(sale_buoc_loop(), name="sale-buoc"))
     # B7 + mục 4 (quảng cáo): cần cấu hình POS mới tạo được task.
     if settings.pancake_pos_api_key and settings.pancake_pos_shop_id:
         from app.workers import ads_cost_loop, pos_orders_loop

@@ -171,6 +171,16 @@ _ICONS = {
                  '<path d="M9 3v18"/><path d="M15 3v18"/>',
     "check-square": '<path d="M21 10.656V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12.344"/>'
                     '<path d="m9 11 3 3L22 4"/>',
+    # C1 — nhóm Ưu đãi
+    "gift": '<rect x="3" y="8" width="18" height="4" rx="1"/>'
+            '<path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/>'
+            '<path d="M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8s1-5 4.5-5a2.5 2.5 0 0 1 0 5"/>',
+    "award": '<circle cx="12" cy="8" r="6"/>'
+             '<path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/>',
+    # C2 — nhóm Tiền
+    "wallet": '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4"/>'
+              '<path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>'
+              '<path d="M18 12a2 2 0 0 0 0 4h4v-4z"/>',
 }
 
 # Menu bên trái, chia NHÓM. Mỗi mục: (đường dẫn, nhãn, khoá `active`, icon,
@@ -210,18 +220,37 @@ MENU_GROUPS: list[tuple[str, list[tuple[str, str, str, str, str]]]] = [
         # BRD mục 4 (nguồn quảng cáo) — màn 7 + 53-55: chi phí · ROAS · LTV
         ("/crm/quang-cao", "Nguồn quảng cáo", "crm-ads", "sentiment", "ads.view"),
     ]),
-    # Mẫu Kallet: Voucher · Chiến dịch · Hạng thẻ · Sản phẩm · Mẫu tin. Ta mới có
-    # Automation (đứng chỗ "Chiến dịch") và Sản phẩm; các mục còn lại chờ dựng màn.
+    # Mẫu Kallet: Voucher · Chiến dịch · Hạng thẻ · Sản phẩm · Mẫu tin.
+    # C1 đã port Voucher + Hạng thẻ; Chiến dịch/Mẫu tin chờ lát cắt sau.
     ("Ưu đãi", [
+        # C1 — voucher.php của mẫu. Quyền riêng: tặng voucher là phát tiền.
+        ("/crm/voucher", "Voucher", "crm-voucher", "gift", "voucher.grant"),
+        # C4 — kich-ban.php: THƯ VIỆN chép tay, KHÔNG gửi gì (khác Chiến dịch)
+        ("/crm/kich-ban", "Thư viện kịch bản", "crm-scripts", "products", ""),
+        # C1 — hang-the.php: 5 bậc + "Chưa xếp hạng", tính theo tổng chi tiêu
+        ("/crm/hang-the", "Hạng thẻ", "crm-rank", "award", ""),
+        # C3 — chien-dich.php: 2 tầng, máy gửi tầng 1 · người chăm tầng 2
+        ("/crm/chien-dich", "Chiến dịch", "crm-campaign", "messages",
+         "campaign.manage"),
+        # C3 — mau-tin.php: nội dung dùng cho chiến dịch & gửi hàng loạt
+        ("/crm/mau-tin", "Mẫu tin", "crm-template", "data", "campaign.manage"),
         # Màn 69 + 71 — bảng theo dõi automation đang chạy (không phải builder)
         ("/crm/automation", "Automation", "crm-automation", "tasks", ""),
         ("/crm/san-pham", "Sản phẩm", "crm-products", "products", ""),
     ]),
     # Mẫu Kallet: Thu nhập của tôi · Báo cáo · Lương thưởng · Đối soát & duyệt
-    # thưởng. Ta mới có Báo cáo doanh thu; ba mục kia lát cắt sau làm.
+    # thưởng — C2 đã port đủ cả 4.
     ("Tiền", [
+        # C2 — luong.php: CHỈ xem của chính mình, không lộ lương người khác
+        ("/crm/thu-nhap", "Thu nhập của tôi", "crm-income", "wallet",
+         "payroll.view_own"),
         # B11 — màn 60-64 + drill-down FR-173 (màn 5-6 vào từ đây/trang chủ)
         ("/crm/bao-cao", "Báo cáo", "crm-reports", "sentiment", ""),
+        # C2 — luong-thuong.php: bảng lương cả đội + chốt kỳ
+        ("/crm/luong", "Lương thưởng", "crm-payroll", "wallet", "payroll.manage"),
+        # C2 — doi-soat.php: duyệt/bác thưởng chăm sóc theo 3 rổ
+        ("/crm/doi-soat", "Đối soát thưởng", "crm-recon", "check-square",
+         "payroll.approve"),
     ]),
     # Cả nhóm đòi bot.view (chỉ Chủ DN/Admin có) — middleware trong app/main.py
     # chặn thật theo tiền tố _KHU_BOT, đây chỉ ẩn menu.
@@ -243,6 +272,11 @@ MENU_GROUPS: list[tuple[str, list[tuple[str, str, str, str, str]]]] = [
          "user.manage|user.manage_team"),
         # Màn 3 — trung tâm thông báo (chuông ở góc phải cũng trỏ về đây)
         ("/crm/thong-bao", "Thông báo", "crm-notify", "bell", ""),
+        # C4 — lich-su.php: vòng xác minh công (soi tin nhắn thật)
+        ("/crm/giam-sat", "Giám sát", "crm-audit-work", "search",
+         "audit.view"),
+        # C4 — kho-data.php: khách chưa chia · khách kẹt · nhật ký
+        ("/crm/kho-data", "Kho data", "crm-data", "data", "data.export"),
         # BRD mục 4 — khu Tích hợp Pancake (kết nối, nhật ký/lỗi đồng bộ, ánh xạ)
         ("/quan-tri/tich-hop", "Tích hợp", "tich-hop", "data", "integration.manage"),
     ]),
@@ -287,12 +321,15 @@ def _sale_dept(active: str, perms: list) -> str:
     cần JS (PJAX chỉ bắt thẻ <a>, bấm tiêu đề xổ/thu không bị chặn); DB lỗi
     thì lùi về link phẳng như cũ."""
     on = " on" if active == "crm-pipeline" else ""
+    on_bv = " on" if active == "crm-board" else ""
     try:
         from app.db.repositories.crm_screens_repo import sale_menu
 
         stages = sale_menu()
     except Exception:  # noqa: BLE001 — DB chưa lên vẫn phải có menu dùng được
-        return (f'<a class="nav-item{on}" href="/crm/pipeline">'
+        return (f'<a class="nav-item{on_bv}" href="/crm/bang-viec">'
+                f'{_icon("pipeline")}<span>Bảng việc Sale</span></a>'
+                f'<a class="nav-item{on}" href="/crm/pipeline">'
                 f'{_icon("pipeline")}<span>Pipeline Sale</span></a>')
 
     cot = "".join(
@@ -302,18 +339,26 @@ def _sale_dept(active: str, perms: list) -> str:
         f'<span class="nd-count">{s["so_lead"]}</span></a>'
         for i, s in enumerate(stages)
     )
-    cong_cu = ""
-    if "bot.view" in perms:
-        cong_cu += ('<a class="nd-link" href="/data/kich-ban">'
-                    "<span>📖 Thư viện kịch bản</span></a>")
+    # C4 — thư viện câu mẫu để CHÉP TAY (khác hẳn /data/kich-ban của bot)
+    cong_cu = ('<a class="nd-link" href="/crm/kich-ban">'
+               "<span>📖 Thư viện kịch bản</span></a>")
     cong_cu += ('<a class="nd-link" href="/crm/san-pham">'
                 "<span>🏷️ Bảng giá &amp; liệu trình</span></a>")
+    # C5 — cấu hình thang bám đuổi (chỉ người quản lý mới cần)
+    if "user.manage" in perms:
+        cong_cu += ('<a class="nd-link" href="/crm/thang-sale">'
+                    "<span>⚙️ Thang bám đuổi</span></a>")
 
     return (
         f'<details class="nav-dept"{" open" if on else ""}>'
         f'<summary>{_icon("pipeline")}<span>Sale</span>'
         '<span class="nd-chev">▾</span></summary>'
         '<div class="nd-group">Nhiệm vụ</div>'
+        # C5 — bảng việc theo THANG BÁM ĐUỔI (máy đọc tin nhắn thật). Đứng
+        # TRƯỚC Pipeline vì đây mới là màn nhân viên mở suốt ngày; Pipeline
+        # giai đoạn là bản do người tự kéo, xem để đối chiếu.
+        f'<a class="nd-link{on_bv}" href="/crm/bang-viec">'
+        "<span>📋 Bảng việc (thang bám đuổi)</span></a>"
         f'<a class="nd-link{on}" href="/crm/pipeline"><span>🎯 Bảng chăm sóc</span></a>'
         '<div class="nd-group">Cột trên bảng</div>'
         f"{cot}"
@@ -330,7 +375,7 @@ def _dept_cskh(active: str) -> str:
 
     DB lỗi thì vẫn hiện khối, chỉ thiếu số. Màn hẹp (<900px) khối xổ bị ẩn —
     hiện 2 link phẳng mobile-only thay (Chăm sóc/Mua lại không còn mục phẳng)."""
-    on = " on" if active in ("crm-care", "crm-repurchase") else ""
+    on = " on" if active in ("crm-care", "crm-repurchase", "crm-cskh-board") else ""
     flat = (
         f'<a class="nav-item{" on" if active == "crm-care" else ""} mobile-only" '
         f'href="/crm/cham-soc">{_icon("care")}<span>Chăm sóc</span></a>'
@@ -361,6 +406,10 @@ def _dept_cskh(active: str) -> str:
         f'<span class="dot" style="background:#1565c0"></span>Sắp tới{n("sap_toi")}</a>'
         '<div class="sm-group">Chăm &amp; mua lại</div>'
         f'<a class="sm-link" href="/crm/cham-soc">💚 Chăm sóc C01-C09{n("cham_soc")}</a>'
+        # C6 — vòng đời khách SAU khi nhận hàng (cảm ơn → voucher → thang mua
+        # lại), khác hẳn "Chăm sóc C01-C09" (liệu trình của MỘT đơn) ở trên.
+        f'<a class="sm-link{" on" if active == "crm-cskh-board" else ""}" '
+        'href="/crm/bang-viec-cskh">🎯 Bảng việc CSKH</a>'
         f'<a class="sm-link" href="/crm/mua-lai">🔄 Cơ hội mua lại{n("mua_lai")}</a>'
         '<a class="sm-link" href="/crm/khach-ngu">😴 Khách ngủ (màn 41)</a>'
         "</div></details>"
@@ -1930,6 +1979,10 @@ code.pm-pid:hover{background:var(--soft)}
 .kh-st.fading{background:var(--warn-bg);color:var(--warn)}
 .kh-st.sleep{background:var(--in);color:var(--sub)}
 .kh-st.chua{background:var(--soft);color:var(--accent)}
+/* pill hạng thẻ (C1) — nền/chữ do voucher_service.mat_hang() gắn inline vì mỗi
+   hạng một cặp màu; ở đây chỉ lo hình khối cho đồng bộ với .kh-st */
+.kh-tier{display:inline-flex;align-items:center;gap:4px;font-size:11px;
+  font-weight:700;border-radius:999px;padding:2px 9px;white-space:nowrap}
 /* cụm 3 nút thao tác cuối hàng */
 .kh-acts{display:flex;align-items:center;gap:6px;justify-content:flex-end}
 .kh-ic{width:30px;height:30px;border:1px solid var(--border);border-radius:8px;
@@ -1963,6 +2016,273 @@ code.pm-pid:hover{background:var(--soft)}
   .kh-find{max-width:none}
   .kh-filters select{max-width:none;flex:1 1 150px}
 }
+
+/* ---------- C7 · Đơn hàng (app/web/views/don_hang.py) ----------
+   Màn này mượn nguyên bộ .kh-* ở trên (thẻ chỉ số · dải lọc · bảng · chân
+   trang) — dưới đây CHỈ là phần mẫu có riêng ở màn Đơn hàng. */
+/* khoảng thời gian: nhãn kỳ + select phủ trong suốt lên trên (giữ menu gốc của
+   trình duyệt, khỏi tự dựng lịch — bấm đâu cũng ra danh sách kỳ) */
+.dh-range{position:relative;display:inline-flex;align-items:center;gap:6px;
+  height:34px;padding:0 10px;border:1px solid var(--border);border-radius:9px;
+  background:var(--card);font-size:12.5px;color:var(--text)}
+.dh-range .ico{width:14px;height:14px;color:var(--sub)}
+.dh-range b{font-weight:600;white-space:nowrap}
+.dh-range select{position:absolute;inset:0;width:100%;height:100%;opacity:0;
+  border:0;cursor:pointer}
+.dh-day{display:inline-flex;align-items:center;gap:5px;height:34px;padding:0 10px;
+  border:1px solid var(--border);border-radius:9px;background:var(--card);
+  font-size:11.5px;color:var(--sub)}
+.dh-day input{border:0;background:transparent;font:inherit;font-size:12px;
+  color:var(--text);outline:none;width:120px}
+/* mã đơn + tiêu đề cột bấm được để đổi sắp xếp */
+.dh-ma{font-weight:700;color:var(--accent);text-decoration:none;white-space:nowrap}
+.dh-ma[href]{text-decoration:underline dotted;text-underline-offset:3px}
+.dh-sort{color:inherit;text-decoration:none}
+.dh-sort:hover{color:var(--accent)}
+.dh-tbl td{vertical-align:middle}
+.dh-tbl .money{text-align:right}
+.dh-0{color:var(--sub);font-weight:600}
+/* viên trạng thái/phân loại — mỗi trục một họ màu, đọc lướt là phân biệt được */
+.dh-pill{display:inline-flex;align-items:center;font-size:10.5px;font-weight:600;
+  border-radius:999px;padding:3px 9px;white-space:nowrap}
+.dh-pill.mo{background:var(--in);color:var(--sub)}
+.dh-pill.tin{background:var(--in);color:var(--out)}
+.dh-pill.cho{background:var(--warn-bg);color:var(--warn)}
+.dh-pill.xong{background:var(--ok-bg);color:var(--ok)}
+.dh-pill.hong{background:var(--err-bg);color:var(--err)}
+.dh-pill.no{background:var(--soft);color:var(--sub)}
+.dh-pill.ads{background:var(--in);color:var(--out)}
+.dh-pill.lm-new{background:var(--soft);color:var(--accent)}
+.dh-pill.lm-repurchase{background:var(--ok-bg);color:var(--ok)}
+.dh-pill.lm-upsell{background:var(--hot-bg);color:var(--hot)}
+.dh-pill.lm-exchange{background:var(--warn-bg);color:var(--warn)}
+.dh-pill.cs-cham_soc{background:var(--soft);color:var(--accent)}
+.dh-pill.cs-tu_nhien{background:var(--in);color:var(--sub)}
+/* thanh tổng nằm cùng hàng với "đang xem x–y / n" */
+.dh-sum{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap}
+.dh-sum span{display:flex;align-items:baseline;gap:5px;font-size:11.5px;
+  color:var(--sub)}
+.dh-sum b{font-size:15px;font-weight:800;color:var(--text)}
+.dh-sum b.ok{color:var(--ok)}
+.dh-scope{background:var(--warn-bg);border-radius:10px;padding:9px 12px;
+  margin-top:10px}
+/* popover chọn cột xuất — hai bản (dải lọc mở xuống, thanh nổi mở lên) */
+.dh-wrap{position:relative;display:inline-flex}
+.dh-pop{display:none;position:absolute;top:calc(100% + 8px);right:0;width:360px;
+  max-width:calc(100vw - 48px);background:var(--card);color:var(--text);
+  border:1px solid var(--border);border-radius:12px;padding:12px;
+  box-shadow:var(--shadow-lg);z-index:80;text-align:left}
+.dh-pop.up{top:auto;bottom:calc(100% + 10px)}
+.dh-pop.on{display:block}
+.dh-pop-h{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  margin-bottom:8px;font-size:11.5px;font-weight:700;color:var(--sub)}
+.dh-pop-h a{color:var(--accent);text-decoration:none;font-weight:600}
+.dh-cols{max-height:258px;overflow-y:auto;display:grid;
+  grid-template-columns:1fr 1fr;gap:1px 10px}
+.dh-cols label{display:flex;align-items:center;gap:7px;min-width:0;
+  font-size:12px;padding:4px 3px;border-radius:6px;cursor:pointer}
+.dh-cols span{min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.dh-go{width:100%;border:0;background:var(--grad-brand);color:#fff;font:inherit;
+  font-size:12.5px;font-weight:700;padding:9px 12px;border-radius:9px;
+  cursor:pointer;margin-top:8px}
+/* thanh nổi khi tích chọn đơn — 3 luật của mẫu: không tràn ngang, không đè
+   menu trái (--dhL = bề rộng sidebar), không che chân phân trang */
+.dh-bar{position:fixed;left:var(--dhL,12px);right:12px;bottom:18px;margin:0 auto;
+  width:max-content;max-width:var(--dhMax,calc(100vw - 24px));display:none;
+  align-items:center;justify-content:center;gap:8px 12px;flex-wrap:wrap;
+  background:var(--text);color:var(--card);border-radius:14px;padding:10px 14px;
+  box-shadow:var(--shadow-lg);z-index:90}
+.dh-bar-n{font-size:13px;font-weight:700;white-space:nowrap}
+.dh-bar-o{display:none;align-items:center;font-size:11.5px;font-weight:700;
+  border-radius:999px;padding:3px 9px;background:rgba(255,255,255,.16)}
+.dh-bar-all{border:1px solid rgba(255,255,255,.28);background:rgba(255,255,255,.08);
+  color:inherit;font:inherit;font-size:12px;font-weight:600;padding:6px 11px;
+  border-radius:8px;cursor:pointer;white-space:nowrap}
+.dh-bar-vach{width:1px;height:20px;background:rgba(255,255,255,.2)}
+.dh-bar-btn{display:inline-flex;align-items:center;gap:6px;border:0;
+  background:transparent;color:inherit;font:inherit;font-size:12.5px;
+  font-weight:600;padding:7px 12px;border-radius:9px;cursor:pointer;
+  white-space:nowrap}
+.dh-bar-btn.off{opacity:.45;cursor:not-allowed}
+.dh-bar-btn .ico{width:15px;height:15px}
+.dh-bar-x{border:0;background:transparent;color:inherit;opacity:.7;font-size:18px;
+  line-height:1;cursor:pointer;padding:0 4px}
+/* popover trong thanh nổi nằm trên nền tối — trả lại nền sáng cho dễ đọc */
+.dh-bar .dh-pop{background:var(--card);color:var(--text)}
+
+/* ---------- C1 · Voucher (app/web/views/uu_dai.py) ---------- */
+.vc-tiles{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.vc-tile{flex:1 1 160px;min-width:0;position:relative;overflow:hidden;
+  border-radius:14px;padding:14px 16px 13px 18px;text-decoration:none;
+  background:var(--card);box-shadow:var(--shadow);display:block}
+.vc-tile.warn{background:var(--warn-bg);box-shadow:none}
+.vc-tile.on{outline:2px solid var(--c,var(--accent));outline-offset:-1px}
+.vc-vach{position:absolute;left:0;top:0;bottom:0;width:5px}
+.vc-num{font-weight:800;font-size:24px;line-height:1.1}
+.vc-lbl{font-size:11.5px;color:var(--sub);margin-top:3px}
+.vc-sub{font-size:10.5px;color:var(--sub);opacity:.8;margin-top:2px}
+.vc-form{background:var(--card);border:1px solid var(--accent);border-radius:12px;
+  padding:14px 16px;margin-bottom:16px;box-shadow:var(--shadow)}
+.vc-form-t{font-size:13px;font-weight:700;margin-bottom:10px}
+.vc-form-r{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.vc-form-r label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;
+  color:var(--sub);flex:1 1 150px}
+.vc-form-r input{height:34px;border:1px solid var(--border);background:var(--bg);
+  border-radius:9px;padding:0 10px;font:inherit;font-size:13px;color:var(--text)}
+/* mã voucher: bấm là chép — trông như chữ nhưng phải rõ là bấm được */
+.vc-ma{display:inline-flex;align-items:center;gap:5px;border:0;background:none;
+  font:inherit;font-weight:700;color:var(--accent);cursor:pointer;padding:0}
+.vc-ma .ico{width:12px;height:12px;opacity:.6}
+.vc-lech{margin-left:5px;cursor:help;color:var(--warn);font-weight:700}
+.vc-inline{display:flex;gap:6px;justify-content:flex-end}
+.vc-inline input{height:30px;width:130px;border:1px solid var(--border);
+  border-radius:8px;padding:0 8px;font:inherit;font-size:12px;background:var(--card)}
+.vc-inline .kh-btn{height:30px}
+
+/* ---------- C1 · Hạng thẻ ---------- */
+.ht-cots{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.ht-cot{flex:1 1 120px;min-width:0;text-align:center;border-radius:14px;
+  padding:16px 10px;text-decoration:none}
+.ht-cot .ic{font-size:24px;line-height:1}
+.ht-cot .n{font-weight:800;font-size:24px;margin-top:6px}
+.ht-cot .l{font-size:11.5px;font-weight:600;margin-top:2px}
+.ht-cot.chua{background:var(--soft);border:1.5px dashed var(--border)}
+.ht-cot.chua .n,.ht-cot.chua .l{color:var(--sub)}
+.ht-cot.chua .l{font-style:italic}
+.ht-warn{background:var(--warn-bg);border-radius:16px;padding:16px 18px;
+  margin-bottom:16px}
+.ht-warn-h{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  font-size:15px;font-weight:700;color:var(--warn)}
+.ht-warn-h .kh-btn{margin-left:auto;background:var(--card)}
+.ht-warn p{font-size:12.5px;line-height:1.55;margin:10px 0 0;max-width:640px}
+.ht-warn .ht-cam{font-weight:700;color:var(--err)}
+.ht-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.ht-chip{display:inline-flex;align-items:center;gap:6px;background:var(--card);
+  border-radius:10px;padding:7px 12px;font-size:12px;color:var(--sub)}
+.ht-chip.off{background:var(--soft);border:1px dashed var(--border);
+  font-style:italic}
+.ht-h{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  font-size:15px;font-weight:700;margin-bottom:14px}
+.ht-rows{display:flex;flex-direction:column;gap:8px}
+.ht-row{display:flex;align-items:center;gap:12px;border:1px solid var(--border);
+  border-radius:11px;padding:9px 14px;flex-wrap:wrap}
+.ht-row .ic{font-size:18px}
+.ht-row .ten{font-weight:600;font-size:13px;width:110px;flex:0 0 auto}
+.ht-row .tu{font-size:11.5px;color:var(--sub)}
+.ht-row .mo{font-size:12px;color:var(--sub);flex:1 1 auto}
+.ht-row-f{display:flex;align-items:center;gap:8px}
+.ht-in{width:140px;height:32px;display:inline-flex;align-items:center;
+  justify-content:flex-end;border:1px solid var(--border);background:var(--soft);
+  border-radius:8px;padding:0 10px;font:inherit;font-size:13px;color:var(--text)}
+/* "chưa điền" phải là CHỮ màu cam, không phải số 0 — xem luật B3.3 của mẫu */
+.ht-chua{color:var(--warn);font-style:normal;font-weight:600;font-size:12px}
+.ht-qlrow{display:flex;gap:12px;align-items:flex-start;border:1px solid
+  var(--border);border-radius:12px;padding:11px 14px;margin-bottom:9px}
+.ht-qlrow .ten{flex:0 0 140px;font-weight:700;font-size:13px}
+.ht-qlrow .ds{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;gap:7px}
+.ht-ql{display:inline-flex;align-items:center;gap:6px;border-radius:9px;
+  padding:5px 11px;font-size:12px}
+
+/* ---------- C2 · Lương · Thưởng · Đối soát (app/web/views/luong.py) ---------- */
+.lg-top{display:flex;gap:14px;flex-wrap:wrap;align-items:stretch;margin-bottom:12px}
+.lg-net{flex:1 1 260px;background:var(--grad-brand);color:#fff;border-radius:16px;
+  padding:18px 20px;box-shadow:var(--shadow-lg)}
+.lg-net-l{font-size:12.5px;opacity:.85}
+.lg-net-v{font-weight:800;font-size:30px;line-height:1.15;margin-top:4px}
+.lg-net-s{font-size:11.5px;opacity:.8;margin-top:4px}
+.lg-goal{flex:2 1 320px;background:var(--card);border:1px solid var(--border);
+  border-radius:16px;padding:16px 18px}
+.lg-goal-h{display:flex;align-items:baseline;justify-content:space-between;
+  gap:10px;font-size:13px}
+.lg-bar{height:10px;border-radius:999px;background:var(--soft);overflow:hidden;
+  margin-top:9px}
+.lg-bar i{display:block;height:100%;background:var(--grad-brand)}
+.lg-goal .note{margin-top:8px}
+.lg-goal .note.ok{color:var(--ok)}
+.lg-goal-f{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;
+  margin-bottom:14px}
+.lg-goal-f label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;
+  color:var(--sub)}
+.lg-goal-f input{height:34px;width:120px;border:1px solid var(--border);
+  border-radius:9px;padding:0 10px;font:inherit;font-size:13px;
+  background:var(--card);color:var(--text)}
+.lg-h4{font-size:12.5px;font-weight:700;margin:14px 0 7px;color:var(--sub)}
+.lg-act{display:inline-block;margin:0}
+/* dấu ✎ = người đã sửa phân loại đơn, máy thôi tự đổi */
+.lg-sua{color:var(--warn);font-weight:700;cursor:help}
+.ds-chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.ds-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;
+  border:1px solid var(--border);border-radius:999px;background:var(--card);
+  font-size:12.5px;color:var(--text);text-decoration:none}
+.ds-chip b{color:var(--sub);font-size:11.5px}
+.ds-chip.on{background:var(--grad-brand);color:#fff;border-color:transparent}
+.ds-chip.on b{color:rgba(255,255,255,.85)}
+.ds-acts{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+
+/* ---------- C3 · Chiến dịch & Mẫu tin (app/web/views/chien_dich.py) ---------- */
+/* Dải "hai tầng" — vẽ ra để không ai gộp 2 tầng lại làm một */
+.cd-tang{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  margin-bottom:14px;font-size:12.5px}
+.cd-t1,.cd-t2{flex:1 1 240px;border-radius:12px;padding:11px 14px}
+.cd-t1{background:var(--soft);color:var(--accent)}
+.cd-t2{background:var(--ok-bg);color:var(--ok)}
+.cd-mui{color:var(--sub);font-weight:600;white-space:nowrap}
+.cd-preview{margin-top:12px;background:var(--soft);border-radius:11px;
+  padding:11px 14px;font-size:13px}
+.cd-preview.warn{background:var(--warn-bg);color:var(--warn)}
+.vc-form-r textarea{border:1px solid var(--border);background:var(--bg);
+  border-radius:9px;padding:8px 10px;font:inherit;font-size:13px;
+  color:var(--text);resize:vertical}
+.mt-body{font-size:11.5px;color:var(--sub);white-space:pre-wrap;
+  word-break:break-word;display:block;max-width:340px}
+
+/* ---------- C4 · Thư viện kịch bản (app/web/views/giam_sat.py) ---------- */
+.kb-list{display:flex;flex-direction:column;gap:10px}
+.kb-card{background:var(--card);border:1px solid var(--border);
+  border-radius:12px;padding:12px 14px}
+.kb-h{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+.kb-loai{font-size:11px;font-weight:700;background:var(--soft);
+  color:var(--accent);border-radius:999px;padding:2px 9px}
+.kb-th{font-size:11.5px;color:var(--sub)}
+.kb-body{margin-top:7px;font-size:13px;line-height:1.55;white-space:pre-wrap;
+  background:var(--soft);border-radius:9px;padding:9px 11px}
+.kb-f{display:flex;align-items:center;gap:8px;margin-top:9px}
+.gy-item{border-left:3px solid var(--accent);padding-left:10px;margin-bottom:10px}
+
+/* ---------- C5 · Bảng việc Sale (app/web/views/sale.py) ---------- */
+.bv-board{display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;
+  align-items:flex-start}
+.bv-cot{flex:0 0 260px;background:var(--soft);border-radius:12px;padding:8px}
+.bv-cot-h{display:flex;align-items:center;gap:8px;font-size:12.5px;
+  padding:6px 8px;border-left:3px solid var(--accent);background:var(--card);
+  border-radius:8px}
+.bv-dem{margin-left:auto;font-size:11px;color:var(--sub);font-weight:700}
+.bv-cot-h2{font-size:10.5px;color:var(--sub);padding:5px 8px 7px}
+.bv-khoa{font-size:10.5px;color:var(--sub);font-style:italic;padding:0 8px 6px}
+.bv-rong{text-align:center;color:var(--sub);font-size:12px;padding:14px 0}
+.bv-the{background:var(--card);border:1px solid var(--border);border-radius:10px;
+  padding:9px 11px;margin-bottom:8px}
+.bv-the.nong{border-color:var(--hot)}
+.bv-h{display:flex;align-items:center;gap:6px;font-size:13px}
+.bv-nong{font-size:10px;font-weight:700;color:var(--hot);background:var(--hot-bg);
+  border-radius:999px;padding:1px 7px}
+/* câu 📌 "việc cần làm" — thứ nhân viên đọc đầu tiên, đừng làm mờ đi */
+.bv-viec{margin-top:7px;font-size:12px;line-height:1.5;background:var(--soft);
+  border-radius:8px;padding:6px 9px}
+.bv-viec.urgent{background:var(--warn-bg);color:var(--warn);font-weight:600}
+.bv-cho{color:var(--sub);font-size:11px;font-style:italic;margin-left:4px}
+.bv-qh{margin-top:6px;font-size:11.5px;color:var(--err);font-weight:600}
+.bv-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.bv-chip{font-size:10.5px;background:var(--card);border:1px solid var(--border);
+  border-radius:999px;padding:2px 8px;color:var(--sub)}
+.bv-f{display:flex;align-items:center;gap:6px;margin-top:8px}
+.bv-f select{height:28px;flex:1;min-width:0;border:1px solid var(--border);
+  border-radius:8px;background:var(--card);font:inherit;font-size:11.5px;
+  color:var(--text)}
+.bv-nut{margin-top:6px}
+.bv-nut summary{font-size:11px;color:var(--sub);cursor:pointer}
+.bv-nut .ds-acts{margin-top:6px}
 
 /* ---------- điều hướng kiểu AJAX (_NAV_JS) ---------- */
 html.pjax-loading{cursor:progress}

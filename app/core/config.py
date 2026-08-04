@@ -51,6 +51,62 @@ class Settings(BaseSettings):
     ads_sync_interval: float = 21600.0   # 6 giờ — cấu trúc + chi phí đổi chậm
     ads_sync_tree_days: int = 90         # cửa sổ kéo cây quảng cáo mỗi lượt
 
+    # --- Voucher & hạng thẻ (C1 — port mẫu Kallet voucher.php/hang-the.php) ---
+    # 180 ngày ở đây là mốc GIẢM QUYỀN LỢI của hạng thẻ. Hệ thống còn ba con số
+    # 180/180/210 khác nghĩa (nhắc cuối · thôi phân công · rời bảng việc) — sửa
+    # nhầm là hỏng nghiệp vụ khác, đọc kỹ tên biến trước khi đổi.
+    voucher_expiry_days: int = 30
+    voucher_warn_days: int = 3
+    card_rank_downgrade_days: int = 180
+    voucher_expire_scan_enabled: bool = True
+
+    # --- Gửi tin hàng loạt (C3 — chiến dịch 2 tầng) ---
+    # 🔴 GIỮ False. Bật là tin bay tới khách THẬT và không thu hồi được; đây là
+    # bước cuối cùng của quy trình triển khai, không phải mặc định.
+    outbound_messaging_enabled: bool = False
+    campaign_batch_max: int = 500        # trần tin mỗi lượt bấm tay
+    campaign_auto_run: bool = False      # tự chạy đợt theo lịch
+
+    # --- Giám sát & soi tin (C4 — vòng xác minh công) ---
+    # Cửa sổ ±1 NGÀY là con số đã chốt của mẫu: nhân viên nhắn buổi sáng, tối
+    # mới ngồi tick, soi gọn trong ngày là bác oan hàng loạt.
+    verify_scan_enabled: bool = True
+    verify_window_days: int = 1
+    verify_reject_hours: int = 72
+
+    # --- Thang bám đuổi Sale (C5 — con trỏ đọc tin nhắn thật) ---
+    # 🚩 sale_ladder_start TRỐNG = lấy hôm nay. Đây là chốt chặn: bộ dò chỉ đọc
+    # tin TỪ ngày này, nếu không khách nhắn qua lại vài tháng sẽ nhảy thẳng
+    # bước cuối rồi rơi khỏi bảng việc.
+    sale_ladder_start: str = ""
+    sale_scan_enabled: bool = True
+    sale_step_rest_hours: int = 6      # nghỉ giữa 2 bước
+    sale_step_max_per_day: int = 2     # trần bước/ngày
+    sale_step_hour_from: int = 8       # cửa giờ nhắn
+    sale_step_hour_to: int = 21
+    sale_hot_hours: int = 24           # giai đoạn nóng của khách mới
+    sale_hot_max_steps: int = 3
+    sale_step_window: int = 2          # mỗi tin nhảy tối đa mấy bước
+    sale_step_skip_max: int = 3        # trần nhảy cóc
+    sale_stuck_days: int = 3           # kẹt bao lâu thì Quá hạn
+
+    # --- Quy trình CSKH ba giai đoạn (C6 — port mẫu cskh_quy_trinh.php) ---
+    # 🔒 cskh_flow_enabled GIỮ False cho tới khi thang mốc đã dựng và mệnh giá
+    # voucher đã điền: bật giữa chừng là cả đội thấy khách nhảy cột trong giờ làm.
+    cskh_flow_enabled: bool = False
+    cskh_first_milestone: int = 45     # mốc chăm định kỳ ĐẦU TIÊN
+    cskh_milestone_gap: int = 15       # hai mốc cách nhau
+    cskh_leave_days: int = 210         # quá bấy nhiêu ngày thì khách rời bảng
+    cskh_overdue_days: int = 3         # mốc mở quá bấy nhiêu ngày chưa chăm = quá hạn
+    cskh_safety_days: int = 3          # lưới an toàn: im đủ ngần này vẫn tặng voucher
+    cskh_call_after_days: int = 1      # khách im mấy ngày thì sinh việc GỌI
+    cskh_promo_days: int = 3           # đợt bám đuổi khuyến mãi dài mấy ngày
+    # Nhịp nhắc voucher — số ngày TRƯỚC ngày hết hạn (0 = đúng ngày hết hạn).
+    voucher_remind_days: str = "15,7,3,0"
+    # 🔴 0 = MÁY KHÔNG TỰ TẶNG. Voucher là tiền: thà không phát còn hơn phát bừa
+    # một mệnh giá đoán mò. Điền số ở màn Cài đặt khi đã chốt mệnh giá.
+    voucher_first_value: int = 0
+
     # --- Tích hợp (BRD mục 4): hàng đợi lỗi + cảnh báo token ---
     # Worker chạy lại các bản ghi đồng bộ hỏng (crm.sync_errors) và định kỳ kiểm
     # token còn sống không. Bật mặc định vì nó chỉ dọn dẹp: hàng đợi rỗng thì

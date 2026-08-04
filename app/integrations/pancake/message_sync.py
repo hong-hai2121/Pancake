@@ -50,7 +50,28 @@ def ghi_mot_me(conv_crm_id: int, rows: list[dict]) -> int:
     """Ghi 1 mẻ tin + đóng dấu tươi. Tách riêng để retry phát lại được y hệt."""
     them = conversation_repo.upsert_messages(conv_crm_id, rows)
     conversation_repo.danh_dau_msg_sync(conv_crm_id)
+    if them and any(r.get("sender_type") == "customer" for r in rows):
+        _hook_khach_nhan_tin(conv_crm_id)
     return them
+
+
+def _hook_khach_nhan_tin(conv_crm_id: int) -> None:
+    """C3 TẦNG 2 — khách trong chiến dịch nhắn lại thì sinh việc cho nhân viên.
+
+    Đây là toàn bộ ý nghĩa của chiến dịch 2 tầng: máy gửi cho cả tệp, chỉ ai
+    TRẢ LỜI mới thành việc của người. Luồng BỒI nên nuốt lỗi có in cảnh báo —
+    hỏng ở đây không được làm hỏng việc đồng bộ tin nhắn.
+    """
+    try:
+        conv = conversation_repo.get(conv_crm_id)
+        if not (conv and conv.get("customer_id")):
+            return
+        from app.services import campaign_service
+
+        campaign_service.hook_khach_tra_loi(int(conv["customer_id"]))
+    except Exception as err:  # noqa: BLE001 — xem docstring
+        print(f"[msg_sync] hook chien dich loi (conv {conv_crm_id}): {err}",
+              file=sys.stderr)
 
 
 async def dong_bo_mot(conv: dict) -> int:

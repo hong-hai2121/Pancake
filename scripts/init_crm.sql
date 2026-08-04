@@ -1861,12 +1861,19 @@ comment on table app_settings is
 
 -- Nhật ký/hàng đợi lỗi nhận thêm loại 'ad' (đồng bộ cây + chi phí quảng cáo)
 -- và 'message' (FR-012 — đồng bộ nội dung tin nhắn về crm.messages)
+--
+-- ⚠️ ĐÂY LÀ LẦN SỬA CUỐI của CHECK này trong file — nó GHI ĐÈ lệnh ở mục 4
+-- (dòng ~1701). Danh sách dưới phải là HỢP của cả hai chỗ, thiếu giá trị nào là
+-- DB đang chạy có dòng đó sẽ làm cả script rollback. Lần trước rơi mất 'staff'
+-- và mọi máy đã đồng bộ nhân viên đều không nạp lại được schema.
 alter table sync_logs   drop constraint if exists sync_logs_entity_check;
 alter table sync_logs   add constraint sync_logs_entity_check
-    check (entity in ('conversation','order','customer','tag','page','ad','message'));
+    check (entity in ('conversation','message','order','customer','tag','page',
+                      'staff','ad'));
 alter table sync_errors drop constraint if exists sync_errors_entity_check;
 alter table sync_errors add constraint sync_errors_entity_check
-    check (entity in ('conversation','order','customer','tag','page','ad','message'));
+    check (entity in ('conversation','message','order','customer','tag','page',
+                      'staff','ad'));
 
 
 -- ------------------------------------------------------------
@@ -2050,6 +2057,728 @@ comment on column repurchase_opportunities.lost_note is
     '9 mã BRD); cột này giữ diễn giải thêm + bằng chứng chat/call';
 comment on column repurchase_opportunities.stage_moved_at is
     'Mốc vào stage hiện tại — màn 40 hiện "ở trạng thái bao lâu"';
+
+
+-- ============================================================
+-- C1 — HẠNG THẺ & VOUCHER (port từ mẫu Kallet: hang-the.php · voucher.php)
+--
+--   Mẫu PHP để hạng thẻ ở cột `customers.hang_the` + tổng chi tiêu ở
+--   `customers.tong_chi_tieu`. Ta giữ NGUYÊN nếp đó (denormalise 2 cột) vì:
+--     * màn Khách hàng lọc theo hạng, đếm theo hạng — tính lại mỗi lần đọc
+--       thì mọi truy vấn phải quét cả bảng orders;
+--     * "chỉ NÂNG hạng, không ai bị tụt" là luật CÓ TRẠNG THÁI — phải nhớ hạng
+--       cũ mới biết có được đổi hay không, suy từ đơn hàng là mất luật này.
+--   Nguồn số vẫn là orders (đơn `delivered`); dịch vụ card_service tính lại.
+-- ============================================================
+alter table customers add column if not exists card_rank text;
+alter table customers add column if not exists total_spent numeric(14,2) not null default 0;
+alter table customers add column if not exists last_delivered_at timestamptz;
+comment on column customers.card_rank is
+    'Mã hạng thẻ hiện tại (crm.card_ranks.code). NULL = chưa xếp hạng. '
+    'CHỈ NÂNG — xem services/card_service.tinh_lai_hang';
+comment on column customers.total_spent is
+    'Tổng tiền đơn đã giao thành công. Cột đệm, tính lại từ orders';
+comment on column customers.last_delivered_at is
+    'Ngày nhận hàng gần nhất — nền cho luật "180 ngày không mua thì giảm '
+    'quyền lợi ngầm 1 bậc" (hạng HIỂN THỊ giữ nguyên)';
+create index if not exists idx_customers_card_rank on customers (card_rank);
+
+create table if not exists card_ranks (
+    id         bigint generated always as identity primary key,
+    code       text not null unique,
+    name       text not null,
+    emoji      text not null default '',
+    min_spent  numeric(14,2),
+    max_spent  numeric(14,2),
+    sort_order int not null default 0,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+comment on table card_ranks is
+    'Bậc thang hạng thẻ. min_spent NULL = CHƯA ĐIỀN (màn Cài đặt tô cam "chưa '
+    'điền", KHÔNG hiểu là 0) — hạng chưa có ngưỡng thì không xếp ai vào.';
+comment on column card_ranks.sort_order is
+    'Cao hơn = hạng to hơn. Luật "chỉ nâng" so bằng cột này, không so tiền';
+
+create table if not exists card_rank_benefits (
+    id            bigint generated always as identity primary key,
+    rank_code     text not null references card_ranks(code) on delete cascade,
+    benefit_key   text not null,
+    benefit_value text not null default '',
+    sort_order    int not null default 0,
+    created_at    timestamptz not null default now()
+);
+create index if not exists idx_card_rank_benefits on card_rank_benefits (rank_code);
+
+create table if not exists vouchers (
+    id            bigint generated always as identity primary key,
+    customer_id   bigint not null references customers(id) on delete cascade,
+    code          text not null default '',
+    amount        numeric(14,2) not null default 0 check (amount >= 0),
+    granted_by_kind text not null default 'nguoi'
+                    check (granted_by_kind in ('may','nguoi')),
+    granted_by    bigint references users(id) on delete set null,
+    order_from_id bigint references orders(id) on delete set null,
+    granted_on    date not null default current_date,
+    expires_on    date not null,
+    status        text not null default 'con_han'
+                  check (status in ('chua_bao_ma','con_han','da_dung',
+                                    'het_han_khong_dung','da_tra_lai')),
+    order_used_id bigint references orders(id) on delete set null,
+    pos_discount  numeric(14,2),
+    note          text not null default '',
+    updated_by    bigint references users(id) on delete set null,
+    created_at    timestamptz not null default now(),
+    updated_at    timestamptz not null default now()
+);
+comment on column vouchers.code is
+    'Trống = CHƯA BÁO MÃ cho khách (status chua_bao_ma) — đây là VIỆC CẦN LÀM, '
+    'không phải lỗi dữ liệu';
+comment on column vouchers.granted_by_kind is
+    'may = automation tặng · nguoi = nhân viên tặng. Màn Voucher tách hẳn 2 cột '
+    'tiền vì thưởng chăm sóc chỉ tính phần NGƯỜI tặng';
+comment on column vouchers.pos_discount is
+    'Số tiền POS thực giảm khi đơn dùng voucher. Lệch mệnh giá → màn Voucher '
+    'gắn dấu ❓ để soi lại, KHÔNG tự sửa';
+create index if not exists idx_vouchers_customer on vouchers (customer_id);
+create index if not exists idx_vouchers_code     on vouchers (code);
+create index if not exists idx_vouchers_expires  on vouchers (expires_on);
+-- Luật C7 "còn voucher hiệu lực thì tắt mọi mốc chăm chuẩn" tra bằng index này
+create index if not exists idx_vouchers_con_han
+    on vouchers (customer_id, expires_on) where status in ('con_han','chua_bao_ma');
+
+
+-- ============================================================
+-- C2 — LƯƠNG · THƯỞNG · ĐỐI SOÁT
+--      (port từ mẫu Kallet: luong.php · luong-thuong.php · doi-soat.php)
+--
+-- Mẫu gắn bậc lương vào `positions`; bên ta vai trò (crm.roles) đóng đúng vai
+-- đó nên bậc treo theo `role_id`, khỏi đẻ thêm một cây chức danh thứ hai.
+--
+-- BA LUẬT DỄ BỊ "SỬA CHO ĐÚNG" RỒI HỎNG — mẫu ghi rõ, chép lại đây:
+--   1. Thưởng chăm sóc CHỒNG LÊN hoa hồng (cộng thêm, không thay thế). Người
+--      dựng hay tưởng đang tính hai lần rồi bỏ đi một khoản.
+--   2. Thưởng nóng có HAI KIỂU CHẠY SONG SONG và CỘNG DỒN: theo doanh thu
+--      NGÀY và theo giá trị TỪNG ĐƠN. Không phải chọn một.
+--   3. Đơn hoàn/huỷ SAU khi đã chốt lương thì KHÔNG sửa kỳ cũ — ghi một dòng
+--      payroll_adjustments âm vào KỲ SAU (payrolls.frozen chặn sửa ngược).
+-- ============================================================
+
+-- Lương cứng: cấu hình theo VAI TRÒ, cho phép đè theo TỪNG NGƯỜI (thực tế
+-- lương cứng hay lệch nhau trong cùng vai trò). NULL ở users = lấy của role.
+alter table roles add column if not exists base_salary numeric(14,2) not null default 0;
+alter table users add column if not exists base_salary numeric(14,2);
+comment on column users.base_salary is
+    'Lương cứng RIÊNG của người này. NULL = dùng roles.base_salary';
+
+-- Ba trục phân loại đơn của mẫu (C5): lần mua · công sức · quảng cáo.
+-- "Lần mua" đã có sẵn ở orders.order_type nên chỉ thêm 2 trục còn lại.
+alter table orders add column if not exists effort_axis text
+    check (effort_axis in ('cham_soc','tu_nhien'));
+alter table orders add column if not exists ads_attributed boolean not null default false;
+alter table orders add column if not exists payroll_period text;
+alter table orders add column if not exists classified_manually boolean not null default false;
+alter table orders add column if not exists classify_reason text;
+alter table orders add column if not exists classified_by bigint references users(id) on delete set null;
+alter table orders add column if not exists classified_at timestamptz;
+comment on column orders.effort_axis is
+    'Trục CÔNG SỨC (C5): cham_soc = đơn có công chăm sóc → xét thưởng chăm; '
+    'tu_nhien = khách tự mua. NULL = máy chưa phân loại';
+comment on column orders.ads_attributed is
+    'Trục QUẢNG CÁO — quy theo last-touch (crm.lead_attributions). Đọc SONG '
+    'SONG với doanh thu chứ KHÔNG cộng vào, tránh đếm tiền hai lần';
+comment on column orders.payroll_period is
+    'Kỳ lương của đơn, dạng YYYY-MM. Ghi CỨNG lúc đơn giao thành công để đơn '
+    'không tự nhảy kỳ khi ngày giao bị sửa về sau';
+comment on column orders.classified_manually is
+    'Người đã sửa phân loại → máy THÔI tự đổi đơn này (giữ dấu vết ai/khi nào/'
+    'vì sao ở 3 cột classify_*)';
+create index if not exists idx_orders_ky_luong
+    on orders (payroll_period, sale_owner_id) where payroll_period is not null;
+create index if not exists idx_orders_cham_soc
+    on orders (effort_axis) where effort_axis = 'cham_soc';
+
+create table if not exists commission_tiers (
+    id          bigint generated always as identity primary key,
+    role_id     bigint not null references roles(id) on delete cascade,
+    min_revenue numeric(14,2) not null,
+    kind        text not null default 'phan_tram'
+                check (kind in ('phan_tram','tien')),
+    value       numeric(14,2) not null,
+    sort_order  int not null default 0,
+    created_at  timestamptz not null default now()
+);
+comment on table commission_tiers is
+    'Bậc hoa hồng theo doanh thu kỳ. Áp bậc CAO NHẤT mà doanh thu chạm tới '
+    '(không cộng dồn các bậc) — xem services/payroll_service.hoa_hong';
+create index if not exists idx_commission_tiers_role on commission_tiers (role_id);
+
+create table if not exists care_bonus_tiers (
+    id          bigint generated always as identity primary key,
+    role_id     bigint not null references roles(id) on delete cascade,
+    min_revenue numeric(14,2) not null,
+    kind        text not null default 'phan_tram'
+                check (kind in ('phan_tram','tien')),
+    value       numeric(14,2) not null,
+    sort_order  int not null default 0,
+    created_at  timestamptz not null default now()
+);
+comment on table care_bonus_tiers is
+    'Bậc thưởng chăm sóc, xét theo giá trị TỪNG ĐƠN (không phải doanh thu kỳ). '
+    'LUẬT 1: khoản này CỘNG THÊM vào hoa hồng, không thay thế';
+create index if not exists idx_care_bonus_tiers_role on care_bonus_tiers (role_id);
+
+create table if not exists hot_bonus_tiers (
+    id          bigint generated always as identity primary key,
+    role_id     bigint not null references roles(id) on delete cascade,
+    basis       text not null check (basis in ('doanh_thu_ngay','gia_tri_don')),
+    threshold   numeric(14,2) not null,
+    kind        text not null default 'tien' check (kind in ('phan_tram','tien')),
+    value       numeric(14,2) not null,
+    sort_order  int not null default 0,
+    created_at  timestamptz not null default now()
+);
+comment on column hot_bonus_tiers.basis is
+    'LUẬT 2 — hai kiểu CHẠY SONG SONG và CỘNG DỒN: doanh_thu_ngay (tổng bán '
+    'trong một ngày) và gia_tri_don (từng đơn lẻ). Không phải chọn một';
+create index if not exists idx_hot_bonus_tiers_role on hot_bonus_tiers (role_id);
+
+create table if not exists care_bonus_reviews (
+    order_id    bigint primary key references orders(id) on delete cascade,
+    status      text not null check (status in ('duyet','tu_choi')),
+    amount      numeric(14,2) not null default 0,
+    reason      text not null default '',
+    reviewed_by bigint references users(id) on delete set null,
+    reviewed_at timestamptz not null default now()
+);
+comment on table care_bonus_reviews is
+    'Duyệt/bác thưởng chăm sóc từng đơn (màn Đối soát). `amount` là số tiền '
+    'CHỐT LÚC DUYỆT — tính lại ở máy chủ, không tin số client gửi lên';
+create index if not exists idx_care_bonus_reviews_tt on care_bonus_reviews (status);
+
+create table if not exists user_goals (
+    id         bigint generated always as identity primary key,
+    user_id    bigint not null references users(id) on delete cascade,
+    period     text not null,
+    target     numeric(14,2) not null default 0,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (user_id, period)
+);
+comment on table user_goals is
+    'Mục tiêu thu nhập do CHÍNH nhân viên tự đặt (màn Thu nhập của tôi) — '
+    'không phải KPI quản lý giao';
+
+create table if not exists payrolls (
+    id                bigint generated always as identity primary key,
+    user_id           bigint not null references users(id) on delete cascade,
+    period            text not null,
+    base_salary       numeric(14,2) not null default 0,
+    revenue_booked    numeric(14,2) not null default 0,
+    revenue_collected numeric(14,2) not null default 0,
+    commission        numeric(14,2) not null default 0,
+    care_bonus        numeric(14,2) not null default 0,
+    hot_bonus         numeric(14,2) not null default 0,
+    adjustment        numeric(14,2) not null default 0,
+    total             numeric(14,2) not null default 0,
+    frozen            boolean not null default false,
+    closed_at         timestamptz,
+    closed_by         bigint references users(id) on delete set null,
+    created_at        timestamptz not null default now(),
+    updated_at        timestamptz not null default now(),
+    unique (user_id, period)
+);
+comment on column payrolls.revenue_booked is
+    'Doanh thu LÊN ĐƠN (tổng giá trị đơn trong kỳ). Khác revenue_collected = '
+    'ĐÃ THU (đơn giao thành công) — mọi con số bày ra màn phải ghi rõ là cái nào';
+comment on column payrolls.frozen is
+    'Đã chốt kỳ → KHOÁ. Đơn hoàn/huỷ phát sinh sau ghi vào kỳ SAU bằng một '
+    'dòng payroll_adjustments âm (LUẬT 3), tuyệt đối không sửa ngược kỳ cũ';
+
+create table if not exists payroll_adjustments (
+    id         bigint generated always as identity primary key,
+    user_id    bigint not null references users(id) on delete cascade,
+    period     text not null,
+    order_id   bigint references orders(id) on delete set null,
+    amount     numeric(14,2) not null,
+    reason     text not null default '',
+    created_by bigint references users(id) on delete set null,
+    created_at timestamptz not null default now()
+);
+comment on column payroll_adjustments.amount is
+    'Cộng/TRỪ vào kỳ. Số ÂM = truy thu (đơn hoàn sau khi đã chốt lương kỳ trước)';
+create index if not exists idx_payroll_adj on payroll_adjustments (user_id, period);
+-- Mỗi đơn chỉ truy thu MỘT lần: worker chạy lại không nhân đôi khoản trừ.
+create unique index if not exists uq_payroll_adj_don
+    on payroll_adjustments (order_id) where order_id is not null;
+
+create table if not exists leave_periods (
+    id         bigint generated always as identity primary key,
+    user_id    bigint not null references users(id) on delete cascade,
+    stand_in_id bigint references users(id) on delete set null,
+    from_date  date not null,
+    to_date    date,
+    created_by bigint references users(id) on delete set null,
+    created_at timestamptz not null default now()
+);
+comment on table leave_periods is
+    'Kỳ nghỉ của nhân viên + người trực thay. to_date NULL = nghỉ chưa hẹn ngày '
+    'về (chia lead vẫn phải né người này)';
+create index if not exists idx_leave_periods_user on leave_periods (user_id);
+
+
+-- ============================================================
+-- C3 — CHIẾN DỊCH 2 TẦNG & MẪU TIN
+--      (port từ mẫu Kallet: chien-dich.php · mau-tin.php)
+--
+-- KHÔNG đẻ bảng `campaigns` mới: `reactivation_campaigns` + `reactivation_
+-- members` (B10) đã đúng khái niệm, chỉ thiếu mấy cột của chiến dịch 2 tầng.
+-- Hai bảng campaign song song là kiểu gì cũng có ngày đếm số lệch nhau.
+--
+-- VÌ SAO 2 TẦNG (mẫu ghi rõ, đừng gộp lại thành 1):
+--   Máy gửi TẦNG 1 cho cả tệp — miễn phí, không tốn người. Chỉ khách nào
+--   TRẢ LỜI mới sinh việc TẦNG 2 cho nhân viên. Gộp một tầng nghĩa là ném cả
+--   tệp mấy chục nghìn khách vào bảng việc của vài người → quá tải, và nhân
+--   viên bỏ luôn cả những khách thật sự quan tâm.
+-- ============================================================
+alter table reactivation_campaigns add column if not exists description text;
+alter table reactivation_campaigns add column if not exists tier1_channel text
+    not null default 'bot';
+alter table reactivation_campaigns add column if not exists tier1_flow_id text;
+alter table reactivation_campaigns add column if not exists template_id bigint;
+alter table reactivation_campaigns add column if not exists batch_size int not null default 500;
+alter table reactivation_campaigns add column if not exists batch_interval_days int not null default 7;
+alter table reactivation_campaigns add column if not exists deadline date;
+alter table reactivation_campaigns add column if not exists created_by bigint
+    references users(id) on delete set null;
+alter table reactivation_campaigns add column if not exists last_batch_at timestamptz;
+comment on column reactivation_campaigns.batch_size is
+    'Chia ĐỢT: mẫu chốt thử 500 ngẫu nhiên rồi mới 5.000/tuần. Bắn cả tệp một '
+    'lượt là cách nhanh nhất để bị Meta khoá page';
+comment on column reactivation_campaigns.tier1_flow_id is
+    'Kịch bản Botcake gửi ở TẦNG 1. Rỗng = chiến dịch chỉ để gom tệp, máy '
+    'không gửi gì';
+
+alter table reactivation_members add column if not exists sent_at timestamptz;
+alter table reactivation_members add column if not exists send_result text;
+alter table reactivation_members add column if not exists responded_at timestamptz;
+alter table reactivation_members add column if not exists task_id bigint
+    references tasks(id) on delete set null;
+comment on column reactivation_members.sent_at is
+    'CHỈ đóng dấu khi GỬI THẬT. Chạy ở chế độ nháp (công tắc gửi tin TẮT) '
+    'không được "tiêu" khách — bật gửi thật vẫn phải gửi đủ';
+comment on column reactivation_members.task_id is
+    'Việc TẦNG 2 sinh ra khi khách trả lời. NULL = chưa ai phải làm gì';
+-- J5 — "1 khách không nằm 2 chiến dịch CÙNG LÚC". Cố ý KHÔNG unique trên
+-- customer_id: chiến dịch đóng rồi thì khách phải được vào chiến dịch khác.
+create unique index if not exists uq_reactivation_dang_cham
+    on reactivation_members (customer_id)
+    where status in ('pending','contacted','responded');
+create index if not exists idx_reactivation_chua_gui
+    on reactivation_members (campaign_id) where sent_at is null;
+
+create table if not exists message_templates (
+    id           bigint generated always as identity primary key,
+    code         text not null unique,
+    name         text not null default '',
+    kind         text not null default 'tu_do'
+                 check (kind in ('tu_do','meta_duyet')),
+    meta_status  text not null default 'rong'
+                 check (meta_status in ('gui_ngoai_cua','chi_trong_cua','rong')),
+    variables    text not null default '',
+    body         text not null default '',
+    sent_count   int not null default 0,
+    status       text not null default 'active'
+                 check (status in ('active','inactive')),
+    created_by   bigint references users(id) on delete set null,
+    created_at   timestamptz not null default now(),
+    updated_at   timestamptz not null default now()
+);
+comment on column message_templates.kind is
+    'tu_do = tin thường, CHỈ gửi được trong cửa 24h. meta_duyet = mẫu Meta đã '
+    'duyệt, gửi được NGOÀI cửa. Gửi nhầm loại là bị Meta phạt page';
+comment on column message_templates.variables is
+    'Danh sách biến cho phép, cách nhau dấu phẩy (vd "ten_khach,ma_voucher"). '
+    'Biến lạ trong body sẽ bị service chặn lúc lưu';
+
+
+-- ============================================================
+-- C4 — THƯ VIỆN KỊCH BẢN · KHO DATA · GIÁM SÁT (SOI TIN)
+--      (port từ mẫu Kallet: kich-ban.php · kho-data.php · lich-su.php ·
+--       includes/xac_minh.php)
+--
+-- ⚠️ HAI THỨ TÊN GIỐNG NHAU NHƯNG KHÁC HẲN — mẫu dặn "ĐỪNG GỘP":
+--     📚 THƯ VIỆN kịch bản (bảng `sale_scripts` dưới đây) = kho câu chữ để
+--        nhân viên CHÉP TAY. Mở màn này KHÔNG gửi gì cho ai.
+--     🤖 GỬI kịch bản Botcake (message_templates + chiến dịch, C3) = máy BẮN
+--        tin thật tới khách.
+--   Gộp hai thứ này là có ngày ai đó bấm "xem câu mẫu" rồi tin bay tới khách.
+--
+-- VÒNG XÁC MINH CÔNG (soi tin):
+--   * 1 CÔNG / khách / nhân viên / hành động / NGÀY — nhắn 10 tin vẫn 1 công.
+--   * TIN NHẮN THẬT là bằng chứng: máy soi crm.messages thấy nhân viên nhắn
+--     thì tự cộng công và đánh dấu đã xác minh.
+--   * Tự khai mà quá hạn không soi thấy tin → tự BÁC, trưởng nhóm vớt tay.
+--   * CỬA SỔ SOI ±1 NGÀY: nhân viên hay nhắn buổi sáng, tối mới bấm tick.
+-- ============================================================
+create table if not exists sale_scripts (
+    id           bigint generated always as identity primary key,
+    kind         text not null default 'sale' check (kind in ('sale','sau_ban')),
+    situation    text not null default '',
+    milestone    text,
+    channel      text not null default 'nhan_tin'
+                 check (channel in ('nhan_tin','goi_dien')),
+    title        text not null default '',
+    body         text not null default '',
+    body_nodiacritic text not null default '',
+    tags         text not null default '',
+    use_count    int not null default 0,
+    sort_order   int not null default 0,
+    status       text not null default 'active'
+                 check (status in ('active','inactive')),
+    created_by   bigint references users(id) on delete set null,
+    created_at   timestamptz not null default now(),
+    updated_at   timestamptz not null default now()
+);
+comment on table sale_scripts is
+    'THƯ VIỆN câu chữ để nhân viên CHÉP TAY. Mở/tìm ở đây KHÔNG gửi gì cho '
+    'khách — gửi thật là message_templates + chiến dịch (C3)';
+comment on column sale_scripts.body_nodiacritic is
+    'Bản BỎ DẤU của body, service tự sinh lúc lưu. Có cột này thì tìm "dau da '
+    'day" ra được câu "đau dạ dày" mà không cần extension unaccent của Postgres';
+comment on column sale_scripts.use_count is
+    'Đếm lượt chép — dùng để soi kịch bản CHẾT (viết ra rồi không ai dùng)';
+create index if not exists idx_sale_scripts_kind on sale_scripts (kind, status);
+create index if not exists idx_sale_scripts_tim
+    on sale_scripts using gin (to_tsvector('simple', body_nodiacritic));
+
+create table if not exists script_suggest_rules (
+    id         bigint generated always as identity primary key,
+    keywords   text not null,
+    script_id  bigint references sale_scripts(id) on delete cascade,
+    status     text not null default 'active'
+               check (status in ('active','inactive')),
+    created_at timestamptz not null default now()
+);
+comment on table script_suggest_rules is
+    'Gợi ý kịch bản theo TỪ KHOÁ trong tin khách — dò từ khoá thuần, CỐ Ý '
+    'không dùng AI: gợi ý phải giải thích được "vì sao ra câu này"';
+
+-- Nhật ký chia/thu hồi khách (mẫu: assignment_log)
+create table if not exists assignment_logs (
+    id           bigint generated always as identity primary key,
+    customer_id  bigint not null references customers(id) on delete cascade,
+    from_user_id bigint references users(id) on delete set null,
+    to_user_id   bigint references users(id) on delete set null,
+    action       text not null check (action in
+                 ('chia','chia_deu','thu_hoi','chuyen_tay','tu_nhan',
+                  'nghi_viec','chien_dich')),
+    reason       text not null default '',
+    by_machine   boolean not null default false,
+    by_user      bigint references users(id) on delete set null,
+    created_at   timestamptz not null default now()
+);
+comment on column assignment_logs.reason is
+    'THU HỒI BẮT BUỘC có lý do (mẫu chốt) — mất khách là chuyện lớn với nhân '
+    'viên, không được thu hồi im lặng';
+create index if not exists idx_assignment_logs_kh on assignment_logs (customer_id);
+
+create table if not exists recall_blocks (
+    id          bigint generated always as identity primary key,
+    customer_id bigint not null references customers(id) on delete cascade,
+    user_id     bigint not null references users(id) on delete cascade,
+    block_until date not null,
+    reason      text not null default '',
+    created_at  timestamptz not null default now()
+);
+comment on table recall_blocks is
+    'Khách vừa bị thu hồi khỏi một người thì KHOÁ không chia lại cho chính '
+    'người đó tới ngày block_until — tránh vòng lặp thu hồi/chia lại';
+create index if not exists idx_recall_blocks on recall_blocks (customer_id, user_id);
+
+create table if not exists export_logs (
+    id         bigint generated always as identity primary key,
+    user_id    bigint references users(id) on delete set null,
+    scope      text not null default '',
+    row_count  int not null default 0,
+    filters    jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now()
+);
+comment on table export_logs is
+    'Ai xuất dữ liệu gì, bao nhiêu dòng, lọc theo điều kiện nào. Xuất khách '
+    'hàng ra Excel là hành vi cần truy vết được';
+
+create table if not exists merge_logs (
+    id                  bigint generated always as identity primary key,
+    primary_customer_id bigint not null references customers(id) on delete cascade,
+    merged_customer_id  bigint not null references customers(id) on delete cascade,
+    snapshot            jsonb not null default '{}'::jsonb,
+    undone              boolean not null default false,
+    by_user             bigint references users(id) on delete set null,
+    created_at          timestamptz not null default now()
+);
+comment on column merge_logs.snapshot is
+    'Nguyên trạng hồ sơ phụ TRƯỚC khi gộp — có cái này mới TÁCH LẠI được. '
+    'Gộp nhầm hai người thật mà không tách lại được là mất dữ liệu vĩnh viễn';
+
+create table if not exists merge_ignored (
+    id          bigint generated always as identity primary key,
+    phone       text not null unique,
+    reason      text not null default '',
+    by_user     bigint references users(id) on delete set null,
+    created_at  timestamptz not null default now()
+);
+comment on table merge_ignored is
+    'Số điện thoại ĐÃ XÁC NHẬN không phải trùng (người nhà dùng chung số) — '
+    'màn gộp trùng thôi hỏi lại';
+
+-- Vòng xác minh công: thêm cột vào care_interactions (B9) thay vì bảng mới
+alter table care_interactions add column if not exists action_kind text;
+alter table care_interactions add column if not exists verify_source text
+    not null default 'tu_khai'
+    check (verify_source in ('may_tu_nhan','tu_khai','chat_ngay','may_tu_soi'));
+alter table care_interactions add column if not exists verify_status text
+    not null default 'tu_khai_chua_soi'
+    check (verify_status in ('dang_xac_minh','da_xac_minh','tu_khai_chua_soi',
+                             'bac_bo'));
+alter table care_interactions add column if not exists verified_at timestamptz;
+alter table care_interactions add column if not exists verified_by bigint
+    references users(id) on delete set null;
+alter table care_interactions add column if not exists verify_reason text;
+alter table care_interactions add column if not exists action_at timestamptz;
+comment on column care_interactions.action_kind is
+    'nhan | goi | tang_voucher | xong — hành động được ghi công';
+comment on column care_interactions.verify_source is
+    'may_tu_nhan = máy chủ TỰ LÀM (gửi tin hộ/tạo voucher) → xác minh theo cấu '
+    'trúc · tu_khai = người bấm nút khai, chờ soi · may_tu_soi = máy soi tin '
+    'Pancake thấy nhắn thật → tự cộng';
+comment on column care_interactions.action_at is
+    'Mốc hành động THẬT (giờ VN). Khoá 1-công/ngày và cửa soi ±1 ngày đều tính '
+    'trên cột này, KHÔNG dùng created_at (giờ ghi vào DB, có thể lệch)';
+-- 1 CÔNG / khách / nhân viên / hành động / NGÀY — chặn ngay ở DB, không tin
+-- vào việc client ẩn nút.
+create unique index if not exists uq_care_cong_ngay
+    on care_interactions (customer_id, user_id, action_kind,
+                          ((action_at at time zone 'Asia/Ho_Chi_Minh')::date))
+    where action_kind is not null and user_id is not null;
+create index if not exists idx_care_verify on care_interactions (verify_status);
+
+
+-- ============================================================
+-- C5 — BỘ PHẬN SALE: THANG BÁM ĐUỔI + BẢNG VIỆC
+--      (port từ mẫu Kallet: includes/sale_buoc.php · includes/board_rules.php
+--       · trang-chu.php)
+--
+-- Ý TƯỞNG LÕI, khác hẳn pipeline 13 giai đoạn sẵn có:
+--   Pipeline 13 giai đoạn = nhân viên TỰ KÉO thẻ. Thang bám đuổi = MÁY ĐỌC TIN
+--   NHẮN THẬT rồi tự biết đã đi tới bước nào. Hai thứ SỐNG SONG SONG:
+--     * `leads.stage_id`   — giai đoạn do người đặt (bán hàng tới đâu)
+--     * `leads.sale_step`  — con trỏ do máy dò (đã nói những gì với khách)
+--   Đừng gộp. Giai đoạn trả lời "khách ở đâu trong quy trình bán"; con trỏ trả
+--   lời "câu tiếp theo cần nói là gì".
+--
+-- BỐN LUẬT CỦA THANG (mẫu đã trả giá để có, chép nguyên):
+--   1. NGÀY BẬT THANG là chốt chặn quan trọng nhất. Không có nó, lượt dò đầu
+--      đọc CẢ LỊCH SỬ → khách nhắn qua lại vài tháng nhảy thẳng bước cuối →
+--      "hết thang" → rơi khỏi bảng việc. Cả bảng Sale trống trong một nốt nhạc.
+--   2. Con trỏ CHỈ TIẾN, không bao giờ lùi.
+--   3. Mỗi tin chỉ nhảy tối đa `cua_so` bước — một cụm chữ lạc không được đẩy
+--      khách thẳng tới bước cuối rồi bị buông oan.
+--   4. Khách đang chờ nhân viên trả lời thì con trỏ ĐỨNG YÊN — việc lúc đó là
+--      ĐÁP KHÁCH, không phải đẩy bước tiếp.
+-- ============================================================
+create table if not exists sale_steps (
+    id           bigint generated always as identity primary key,
+    step_no      int not null unique,
+    name         text not null default '',
+    work         text not null default '',
+    keywords_agent    text not null default '',
+    keywords_customer text not null default '',
+    status       text not null default 'active'
+                 check (status in ('active','inactive')),
+    created_at   timestamptz not null default now(),
+    updated_at   timestamptz not null default now()
+);
+comment on table sale_steps is
+    'Thang bám đuổi Sale — sửa được ở màn Bảng việc, không phải sửa code';
+comment on column sale_steps.keywords_agent is
+    'Cụm chữ NHÂN VIÊN nói ⇒ coi như đã làm bước này. Cách nhau dấu phẩy, so '
+    'khớp sau khi bỏ dấu cả hai phía. Ba từ máy tự hiểu: #anh (tin có ảnh) · '
+    '#gia (tin có số tiền) · #ma (tin có mã giảm)';
+comment on column sale_steps.keywords_customer is
+    'Cụm chữ KHÁCH nói ⇒ NHẢY CÓC thẳng tới bước này. Khách kêu "đắt quá" lúc '
+    'con trỏ mới 0 thì nhảy thẳng bước gửi mã giảm, khỏi bắt nhân viên bò qua '
+    'mấy bước giữa trong khi khách đã nói toạc ra rồi. Trống = bước không nhảy '
+    'cóc được';
+
+-- Con trỏ bước + cột đặt tay, gắn trên LEAD (thực thể Sale của ta)
+alter table leads add column if not exists sale_step int not null default 0;
+alter table leads add column if not exists sale_step_at timestamptz;
+alter table leads add column if not exists sale_step_day date;
+alter table leads add column if not exists sale_step_count int not null default 0;
+alter table leads add column if not exists replied_at timestamptz;
+alter table leads add column if not exists board_column text;
+alter table leads add column if not exists board_column_at timestamptz;
+alter table leads add column if not exists board_column_by bigint
+    references users(id) on delete set null;
+comment on column leads.sale_step is
+    'Con trỏ bước ĐÃ LÀM (0 = chưa bước nào). Việc cần làm là bước sale_step+1. '
+    'CHỈ TIẾN — services/sale_service.dong_bo_con_tro lấy max()';
+comment on column leads.sale_step_count is
+    'Số bước đã nhích TRONG NGÀY sale_step_day — chặn trần bước/ngày để nhân '
+    'viên không bắn 8 tin liền một lúc cho xong việc';
+comment on column leads.replied_at is
+    'Lần gần nhất khách TRẢ LỜI sau khi shop nhắn. Có dấu này = khách chịu nói '
+    'chuyện ⇒ vào cột "Tiềm năng"';
+comment on column leads.board_column is
+    'Cột người ĐẶT TAY, đè lên cột máy suy ra. TỰ NHẢ khi khách nhắn mới sau '
+    'board_column_at — "Từ chối đợt này" không được kẹt vĩnh viễn';
+create index if not exists idx_leads_sale_step on leads (sale_step)
+    where closed_at is null;
+create index if not exists idx_leads_board_column on leads (board_column)
+    where board_column is not null;
+
+
+-- ============================================================
+-- C7 — MÀN ĐƠN HÀNG (port `don-hang.php` của mẫu Kallet)
+-- Mẫu đọc thẳng các cột này trên bảng orders; bên ta chúng NẰM TRONG
+-- orders.pos_raw (nguyên văn đơn POS). Rút ra thành cột thật vì:
+--   * pos_raw là jsonb bị TOAST — moi 5 khoá cho 53k đơn mỗi lần lọc/xuất là
+--     đọc lại cả bảng ngoài dòng, chậm gấp mấy chục lần;
+--   * ô tìm "mã đơn" và ô lọc "nhân viên POS" cần INDEX, jsonb->>'' không có.
+-- Cột chỉ là BẢN SAO của pos_raw: mất thì backfill lại được (khối update dưới).
+-- ============================================================
+alter table orders add column if not exists pos_display_id  text;
+alter table orders add column if not exists cod_amount      numeric(14,2);
+alter table orders add column if not exists prepaid_amount  numeric(14,2);
+alter table orders add column if not exists pos_ad_id       text;
+alter table orders add column if not exists pos_seller_id   text;
+alter table orders add column if not exists pos_seller_name text;
+comment on column orders.pos_display_id is
+    'MÃ ĐƠN NGƯỜI DÙNG THẤY bên POS (pos_raw->>''id''). KHÁC orders.pos_order_id '
+    '(= system_id, khoá kỹ thuật): 1.535 đơn nhập từ hệ cũ có mã dạng chuỗi '
+    '"C430270742.88" nên cột này là text, không ép số';
+comment on column orders.cod_amount is
+    'Tiền thu hộ khi giao (pos_raw->>''cod''). Chỉ để HIỂN THỊ/XUẤT — doanh thu '
+    'vẫn tính bằng total_amount, đừng cộng hai cột này vào nhau';
+comment on column orders.prepaid_amount is 'Khách trả trước (pos_raw->>''prepaid'')';
+comment on column orders.pos_seller_name is
+    'Tên nhân viên POS phụ trách đơn (pos_raw->''assigning_seller''->>''name''). '
+    'KHÔNG PHẢI users.id bên ta — POS dùng UUID riêng, chưa có bảng nối. Màn Đơn '
+    'hàng vì thế có HAI ô lọc nhân viên: CRM (sale_owner_id) và POS (cột này)';
+
+-- Backfill: chỉ chạm đơn CHƯA rút (chạy lại file này bao nhiêu lần cũng được).
+-- Ép số qua regexp vì POS trả tiền dạng chuỗi; gặp chuỗi lạ thì để NULL chứ
+-- KHÔNG cho câu update vỡ giữa chừng.
+update orders
+   set pos_display_id  = pos_raw->>'id',
+       cod_amount      = case when pos_raw->>'cod' ~ '^-?[0-9]+(\.[0-9]+)?$'
+                              then (pos_raw->>'cod')::numeric end,
+       prepaid_amount  = case when pos_raw->>'prepaid' ~ '^-?[0-9]+(\.[0-9]+)?$'
+                              then (pos_raw->>'prepaid')::numeric end,
+       pos_ad_id       = nullif(pos_raw->>'ad_id', ''),
+       pos_seller_id   = nullif(pos_raw->'assigning_seller'->>'id', ''),
+       pos_seller_name = nullif(pos_raw->'assigning_seller'->>'name', '')
+ where pos_raw is not null and pos_display_id is null;
+
+create index if not exists idx_orders_pos_display on orders (pos_display_id);
+create index if not exists idx_orders_pos_seller  on orders (pos_seller_name);
+-- Bảng đơn mặc định sắp theo NGÀY ĐẶT: đơn POS lấy pos_inserted_at, đơn CRM
+-- lấy created_at — index theo đúng biểu thức đó mới ăn được.
+create index if not exists idx_orders_ngay_dat
+    on orders ((coalesce(pos_inserted_at, created_at)) desc);
+
+
+-- ============================================================
+-- C6 — QUY TRÌNH CSKH BA GIAI ĐOẠN + BẢNG VIỆC CSKH
+--      (port từ mẫu Kallet: includes/cskh_quy_trinh.php bản chốt 02/08/2026
+--       + nửa CSKH của includes/board_rules.php)
+--
+-- ĐỪNG NHẦM với màn "Chăm sóc C01-C09" (B9, bảng care_plans): cái đó là liệu
+-- trình của MỘT đơn (onboarding, phiếu chăm ngày 4/10/15/20/25) và kết thúc
+-- khi hết liệu trình. Phần này là VÒNG ĐỜI KHÁCH sau khi nhận hàng, chạy mãi
+-- tới khi khách rời bảng:
+--
+--   GĐ1 · ngày 0 → trước mốc đầu   cảm ơn → khách im thì gọi → tặng voucher
+--   GĐ2 · voucher còn hạn          nhắc 15 · 7 · 3 · 0 ngày TRƯỚC hết hạn
+--   GĐ3 · từ D45, mỗi 15 ngày      mốc XEN KẼ có khuyến mãi → bám đuổi 3 ngày
+--
+-- Mọi con số đọc từ Cài đặt (nhóm "cskh"), KHÔNG chốt cứng trong bảng: thang
+-- mốc dưới đây là bản MATERIALIZE của cấu hình, sinh lại bằng
+-- scripts/seed_cskh.py hoặc nút "Dựng lại thang" ở màn Bảng việc CSKH.
+-- ============================================================
+create table if not exists care_milestones (
+    id           bigint generated always as identity primary key,
+    code         text not null unique,
+    dept         text not null default 'cskh' check (dept in ('cskh', 'sale')),
+    offset_days  int  not null,
+    window_from  int  not null default 0,
+    window_to    int  not null default 0,
+    board_column text not null default '',
+    promo        boolean not null default false,
+    sender       text not null default 'nguoi' check (sender in ('nguoi', 'may')),
+    active       boolean not null default true,
+    created_at   timestamptz not null default now(),
+    updated_at   timestamptz not null default now()
+);
+comment on table care_milestones is
+    'Thang mốc chăm — SINH TỪ 3 con số ở Cài đặt (mốc đầu · khoảng cách · ngày '
+    'buông), không chép tay. Sửa cửa sổ ở đây là bảng việc đổi ngay';
+comment on column care_milestones.window_from is
+    'Cửa sổ mốc MỞ ở ngày này (kể từ ngày nhận hàng). Hai mốc liền nhau KHÔNG '
+    'được chồng lấn, nếu không một khách đứng hai mốc cùng lúc';
+comment on column care_milestones.board_column is
+    'moc_45 · moc_60 … · moc_out = mốc BUÔNG (ngoài vòng chăm, chỉ đánh dấu '
+    'khách rời bảng — đừng gắn nhãn "chưa chăm" cho nó)';
+comment on column care_milestones.promo is
+    'Mốc XEN KẼ có chương trình khuyến mãi → bám đuổi 3 ngày (gửi ưu đãi + gọi '
+    'push) thay vì chăm thường';
+comment on column care_milestones.sender is
+    'nguoi = nhân viên làm · may = automation gửi. Mặc định NGƯỜI: máy chỉ lo '
+    'cảm ơn + tặng voucher';
+create index if not exists idx_care_milestones_dept
+    on care_milestones (dept, offset_days) where active;
+
+-- Đợt khuyến mãi NHẬP TAY mỗi đợt (không lấy tự động từ Chiến dịch/Flash sale).
+-- Không có đợt nào đang chạy thì mốc khuyến mãi tạm chăm như mốc thường —
+-- KHÔNG bịa nội dung ưu đãi ra gửi khách.
+create table if not exists cskh_promos (
+    id         bigint generated always as identity primary key,
+    name       text not null default '',
+    content    text not null default '',
+    start_on   date,
+    end_on     date,
+    active     boolean not null default false,
+    created_by bigint references users(id) on delete set null,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+comment on table cskh_promos is
+    'Đợt khuyến mãi cho mốc CSKH có cờ promo. Nhập tay từng đợt — mốc lấy nội '
+    'dung từ đợt ĐANG CHẠY hôm nay';
+create index if not exists idx_cskh_promos_chay
+    on cskh_promos (start_on, end_on) where active;
+
+-- Kết quả cuộc gọi GĐ1. Thiếu cột này thì máy không biết đẩy khách sang "tặng
+-- voucher" (nghe máy) hay để lại chờ (không nghe).
+-- 🔑 Nới care_interactions (B9) thay vì đẻ bảng care_actions như mẫu: cùng khái
+--    niệm "một lần chạm khách", hai bảng là hai nguồn đá nhau lúc đếm công.
+alter table care_interactions add column if not exists call_result text
+    check (call_result is null
+           or call_result in ('nghe', 'khong_nghe', 'hen_goi_lai'));
+comment on column care_interactions.call_result is
+    'C6/GĐ1: nghe = gọi được (đủ điều kiện tặng voucher) · khong_nghe · '
+    'hen_goi_lai. Mỗi khách chỉ gọi 1 LẦN trong một đợt bám đuổi';
+
+-- Cột người ĐẶT TAY trên bảng việc CSKH (đè lên cột máy suy ra).
+-- TỰ NHẢ khi khách nhắn mới sau cskh_column_at — "Từ chối đợt này" không được
+-- kẹt vĩnh viễn (xem cskh_repo.nha_cot_da_cu).
+alter table customers add column if not exists cskh_column text;
+alter table customers add column if not exists cskh_column_at timestamptz;
+alter table customers add column if not exists cskh_column_by bigint
+    references users(id) on delete set null;
+create index if not exists idx_customers_cskh_column on customers (cskh_column)
+    where cskh_column is not null;
 
 
 -- ============================================================

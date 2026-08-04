@@ -22,6 +22,12 @@
 | 🔨 Khung / một phần | **3** | 11 *(Kanban chưa kéo-thả)* · 78 *(thiếu tên/logo/múi giờ)* · 80 *(mới có lỗi đồng bộ)* |
 | ⬜ Chưa có màn | **15** | 18-20 · 47-52 · 59 · 63 · 70 · 74 · 75 · 79 — **đều cần backend chưa xây (phần C)** |
 
+> ➕ **Ngoài 80 màn trên**, đã port thêm **15 màn từ dự án mẫu Kallet (PHP)** —
+> Bảng việc Sale · Thang bám đuổi · Bảng việc CSKH · Đợt khuyến mãi CSKH ·
+> Voucher · Hạng thẻ · Thu nhập của tôi · Lương thưởng · Đối soát · Bậc lương ·
+> Chiến dịch · Mẫu tin · Thư viện kịch bản · Kho data · Giám sát soi tin.
+> Xem mục **XV-B** ở giữa file.
+
 **Lối vào nhanh:** [Trang chủ](http://localhost:8000/crm/trang-chu) ·
 [Thông báo](http://localhost:8000/crm/thong-bao) ·
 [Bàn giao](http://localhost:8000/crm/ban-giao) ·
@@ -81,7 +87,7 @@
 
 | Màn | Tên | TT | Mở màn | Nền phía sau / làm ở |
 |---|---|---|---|---|
-| 21 | Danh sách đơn hàng | ✅ | [/crm/don-hang](http://localhost:8000/crm/don-hang) | **01/08** — bấm ô trạng thái để lọc nhanh + bộ lọc tìm/trạng thái/loại đơn/ngày; bấm mã đơn sang chi tiết |
+| 21 | Danh sách đơn hàng | ✅ | [/crm/don-hang](http://localhost:8000/crm/don-hang) | **C7 ← `don-hang.php`** (thay bản khung 01/08). 5 thẻ chỉ số · ô tìm · 10 ô lọc (khoảng thời gian, trạng thái, lần mua, công sức, quảng cáo, NV CRM, NV POS, fanpage, kỳ lương) · bảng 11 cột sắp xếp được · thanh tổng lên đơn/thành công · phân trang 30·50·100 · tích chọn GIỮ QUA TRANG + "chọn cả bộ lọc" · xuất Excel 20 cột chọn được (quyền `data.export`). Mã đơn mở thẳng đơn bên POS. Không có `revenue.view` thì chỉ thấy đơn mình phụ trách |
 | 22 | Chi tiết đơn hàng | ✅ | [mở 1 đơn ở màn 21](http://localhost:8000/crm/don-hang) | **XONG 01/08** — hàng · tiền · địa chỉ/vận chuyển (moi từ `pos_raw`) · lịch sử trạng thái không xoá · việc & liệu trình liên quan · nguồn quảng cáo · nút mở phiếu bàn giao |
 | 23 | Ánh xạ trạng thái đơn | ✅ | [/quan-tri/tich-hop/anh-xa](http://localhost:8000/quan-tri/tich-hop/anh-xa) | 17 mã POS→CRM trong DB, admin sửa là sync ăn ngay |
 
@@ -178,6 +184,51 @@
 | 70 | Trình tạo automation (Khi–Nếu–Thì) | ⬜ | — | **C** |
 | 71 | Mẫu chuỗi follow-up | ✅ | [/crm/automation](http://localhost:8000/crm/automation) | **01/08** — 5 chuỗi follow-up, ghi rõ chuỗi nào đang chạy / chuỗi nào chưa có engine |
 | 72 | Danh mục dùng chung | ✅ | [/crm/danh-muc](http://localhost:8000/crm/danh-muc) | **01/08** — 78 mã trong `ref_codes` theo nhóm; thêm mã mới ngay trên web, mã cũ **ngừng dùng** chứ không xoá |
+
+## XV-B. Port từ mẫu Kallet (C1–C6) — ngoài 80 màn đặc tả
+
+> Bộ màn này KHÔNG nằm trong `danh-sach-man-hinh-CRM.pdf`; chúng port từ dự án
+> mẫu `D:\Python\templatemaux` (Kallet CRM, PHP) sang Python. Nguồn từng màn ghi
+> ở cột cuối. Nghiệm thu: `thu_c1_uu_dai` 53 · `thu_c2_luong` 47 ·
+> `thu_c3_chien_dich` 41 · `thu_c4_giam_sat` 57 · `thu_c5_sale` 60 ·
+> `thu_c6_cskh` 76 — **334 PASS · 0 FAIL**.
+
+| Màn | TT | Mở màn | Nền phía sau / mẫu gốc |
+|---|---|---|---|
+| **Bảng việc Sale** | ✅ | [/crm/bang-viec](http://localhost:8000/crm/bang-viec) | **C5** ← `trang-chu.php` + `board_rules.php`. Cột do **máy đọc tin nhắn thật** suy ra, 2 chế độ Bảng/Pipeline, 4 ô đếm, câu 📌 việc cần làm + gợi ý câu chữ trên từng thẻ |
+| **Thang bám đuổi Sale** | ✅ | [/crm/thang-sale](http://localhost:8000/crm/thang-sale) | **C5** ← `sale_buoc.php`. 8 bước, từ khoá NV nói (đã làm bước) + từ khoá khách nói (nhảy cóc). Quyền `user.manage` |
+| **Bảng việc CSKH** | ✅ | [/crm/bang-viec-cskh](http://localhost:8000/crm/bang-viec-cskh) | **C6** ← `cskh_quy_trinh.php` + nửa CSKH của `board_rules.php`. Quy trình 3 giai đoạn neo vào NGÀY NHẬN HÀNG CUỐI: cảm ơn → gọi → tặng voucher → nhắc hạn 15·7·3·0 → thang mua lại D45…D195, buông D210. **Khác** màn 27 (liệu trình C01-C09 của một đơn). Công tắc `cskh_flow_enabled` mặc định TẮT |
+| **Đợt khuyến mãi CSKH** | ✅ | [/crm/cskh/khuyen-mai](http://localhost:8000/crm/cskh/khuyen-mai) | **C6** ← `cai-dat.php` phần khuyến mãi. Nhập TAY từng đợt; mốc xen kẽ (D45·75·105·135·165·195) bám đuổi 3 ngày theo đợt đang chạy — không có đợt thì chăm như mốc thường, máy KHÔNG bịa nội dung. Quyền `campaign.manage` |
+| Voucher | ✅ | [/crm/voucher](http://localhost:8000/crm/voucher) | **C1** ← `voucher.php`. 4 ô số bấm-lọc, máy/người tặng tách riêng, "chưa báo mã" là VIỆC chứ không phải lỗi. Quyền `voucher.grant` |
+| Hạng thẻ | ✅ | [/crm/hang-the](http://localhost:8000/crm/hang-the) | **C1** ← `hang-the.php`. 5 bậc + "Chưa xếp hạng"; tính lại **CHỈ NÂNG**; giảm quyền lợi NGẦM sau 180 ngày (hạng hiển thị giữ nguyên, KHÔNG báo khách) |
+| Thu nhập của tôi | ✅ | [/crm/thu-nhap](http://localhost:8000/crm/thu-nhap) | **C2** ← `luong.php`. Chỉ xem của chính mình; mọi khoản thưởng tra ngược được |
+| Lương thưởng | ✅ | [/crm/luong](http://localhost:8000/crm/luong) | **C2** ← `luong-thuong.php`. Bảng lương cả đội + chốt kỳ. Quyền `payroll.manage` |
+| Đối soát & duyệt thưởng | ✅ | [/crm/doi-soat](http://localhost:8000/crm/doi-soat) | **C2** ← `doi-soat.php`. 3 rổ suy từ dữ liệu; đổi phân loại thì TIỀN ĐI THEO. Quyền `payroll.approve` |
+| Bậc lương & thưởng | ✅ | [/crm/bac-luong](http://localhost:8000/crm/bac-luong) | **C2** ← `cai-dat.php` phần lương. Hoa hồng · thưởng chăm · thưởng nóng theo vai trò |
+| Chiến dịch | ✅ | [/crm/chien-dich](http://localhost:8000/crm/chien-dich) | **C3** ← `chien-dich.php`. HAI TẦNG: máy gửi tầng 1, chỉ khách TRẢ LỜI mới sinh việc tầng 2. Quyền `campaign.manage` |
+| Mẫu tin | ✅ | [/crm/mau-tin](http://localhost:8000/crm/mau-tin) | **C3** ← `mau-tin.php`. Tự do (cửa 24h) vs Meta đã duyệt (ngoài cửa) — chặn khai sai lúc lưu |
+| Thư viện kịch bản | ✅ | [/crm/kich-ban](http://localhost:8000/crm/kich-ban) | **C4** ← `kich-ban.php`. CHÉP TAY, không gửi gì; tìm được cả khi gõ không dấu; gợi ý 3 câu theo từ khoá |
+| Kho data | ✅ | [/crm/kho-data](http://localhost:8000/crm/kho-data) | **C4** ← `kho-data.php`. Khách chưa chia · khách KẸT · nhật ký chia/gộp/xuất. Quyền `data.export` |
+| Giám sát & soi tin | ✅ | [/crm/giam-sat](http://localhost:8000/crm/giam-sat) | **C4** ← `lich-su.php` + `includes/xac_minh.php`. 1 công/khách/NV/hành động/NGÀY; soi tin thật trong cửa ±1 ngày; khớp có dấu · bỏ dấu · **viết tắt**. Quyền `audit.view` |
+
+**Quyền mới (chạy `python scripts/seed_auth.py` để nạp):** `voucher.grant` ·
+`payroll.view_own` · `payroll.manage` · `payroll.approve` · `campaign.manage`.
+
+**Seed dữ liệu mẫu:** `python scripts/seed_uu_dai.py` (hạng thẻ + bậc lương) ·
+`python scripts/seed_kich_ban.py` (12 câu mẫu + 7 luật gợi ý) ·
+`python scripts/seed_thang_sale.py` (thang bám đuổi 8 bước).
+
+> 🚩 **C5 — nhớ đặt "Ngày bật thang"** ở
+> [Cài đặt → Thang bám đuổi Sale](http://localhost:8000/quan-tri/cai-dat).
+> Bộ dò CHỈ đọc tin TỪ ngày đó. Lùi quá xa thì khách đã nhắn qua lại vài tháng
+> sẽ nhảy thẳng bước cuối → "hết thang" → rơi khỏi bảng việc, và cả bảng Sale
+> trống trong một nốt nhạc. Để trống = hôm nay (an toàn).
+
+> 🔴 **Công tắc gửi tin mặc định TẮT.** Chiến dịch chạy ở chế độ NHÁP: đếm và
+> dựng nội dung nhưng không tin nào rời hệ thống, và khách KHÔNG bị đánh dấu
+> "đã gửi" (bật thật vẫn gửi đủ). Bật ở
+> [Cài đặt → Gửi tin hàng loạt](http://localhost:8000/quan-tri/cai-dat) —
+> đây là **bước cuối cùng** khi triển khai, không phải bước đầu.
 
 ## XVI. Tích hợp
 

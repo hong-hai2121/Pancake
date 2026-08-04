@@ -9,6 +9,10 @@
     messages.py     — nội dung tin nhắn Pancake về crm.messages (FR-012)
     notifications.py — quét 11 nguồn sinh thông báo cho màn 3 (NOTIFY)
     care_steps.py   — mốc chăm tới hạn → due + việc nhắc CSKH (B9, FR-100…110)
+    voucher_han.py  — đóng voucher quá hạn + xếp lại hạng thẻ (C1, chỉ NÂNG)
+    luong.py        — tính lại lương kỳ hiện tại + truy thu đơn hoàn (C2)
+    soi_tin.py      — soi tin nhắn thật xác minh công chăm sóc (C4)
+    sale_buoc.py    — dò con trỏ thang bám đuổi Sale từ tin nhắn (C5)
 
 Tất cả được khởi động ở `app/main.py` (lifespan) nên **chạy suốt lúc server còn
 sống**, không phụ thuộc việc có ai đang mở màn Tin nhắn hay không.
@@ -22,10 +26,15 @@ from app.workers.poller import poll_loop
 from app.workers.pos_orders import pos_orders_loop
 from app.workers.sentiment import sentiment_loop
 from app.workers.sync_retry import sync_retry_loop
+from app.workers.luong import luong_loop
+from app.workers.sale_buoc import sale_buoc_loop
+from app.workers.soi_tin import soi_tin_loop
 from app.workers.tasks_qua_han import task_escalation_loop
+from app.workers.voucher_han import voucher_han_loop
 
 __all__ = [
-    "ads_cost_loop", "care_steps_loop", "messages_loop", "notifications_loop",
-    "poll_loop", "pos_orders_loop", "sentiment_loop", "sync_retry_loop",
-    "task_escalation_loop",
+    "ads_cost_loop", "care_steps_loop", "luong_loop", "messages_loop",
+    "notifications_loop", "poll_loop", "pos_orders_loop", "sale_buoc_loop",
+    "sentiment_loop", "soi_tin_loop", "sync_retry_loop",
+    "task_escalation_loop", "voucher_han_loop",
 ]

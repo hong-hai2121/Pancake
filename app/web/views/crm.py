@@ -706,8 +706,6 @@ def render_tong_quan(data: dict, tieu_cuc: int | None) -> str:
 # dấu bằng lớp `ht-todo` (viền đứt, không bấm được, lý do nằm ở tooltip) dùng
 # chung với màn Hội thoại, và liệt kê lại ở khối xổ đầu màn.
 _KH_CHUA_LAM: list[tuple[str, str]] = [
-    ("Hạng thẻ · quyền lợi bị giảm",
-     "chưa có bảng hạng thẻ và ngưỡng chi tiêu để xếp hạng"),
     ("Tình trạng “hết lượt cứu”",
      "chưa có bảng đếm số lượt cứu đã dùng cho mỗi khách"),
     ("Chọn khách để làm hàng loạt (gửi kịch bản · chia lại · xuất)",
@@ -856,18 +854,23 @@ def _kh_o_dem(dem: dict, loc: dict) -> str:
     return f'<div class="kh-tiles">{ra}</div>'
 
 
-def _kh_dai_loc(loc: dict, nhan_vien: list[dict], fanpages: list[dict]) -> str:
+def _kh_dai_loc(loc: dict, nhan_vien: list[dict], fanpages: list[dict],
+                hang_the: list[dict] | None = None) -> str:
     nv = [("", "Tất cả nhân viên")] + [(str(u["id"]), u["name"])
                                        for u in (nhan_vien or [])]
     fp = [("", "Tất cả fanpage")] + [(str(p["id"]), p["name"])
                                      for p in (fanpages or [])]
     tt = [("", "Tất cả tình trạng")] + [
         (ma, nhan) for ma, (nhan, _) in _KH_TINH_TRANG.items()]
-    the = [("", "Tất cả hạng thẻ"), ("d", "Diamond"), ("g", "Gold"),
-           ("s", "Silver"), ("m", "Member"), ("n", "New Member")]
+    # Bậc thang đọc THẲNG từ crm.card_ranks (C1) — thêm/sửa hạng ở màn Hạng thẻ
+    # là ô lọc này đổi theo, không cần sửa code. "Chưa xếp hạng" là hạng thứ 6
+    # (card_rank NULL) nên phải thêm tay, nó không có dòng trong bảng.
+    the = [("", "Tất cả hạng thẻ")] + [
+        (r["code"], f'{r["mat"]["icon"]} {r["name"]}')
+        for r in (hang_the or [])] + [("chua_xep", "⬜ Chưa xếp hạng")]
     co_loc = any(loc.get(k) for k in
                  ("q", "tt", "bucket", "owner_id", "page_id", "mua",
-                  "chi_tu", "chi_den"))
+                  "chi_tu", "chi_den", "tier"))
     return (
         # Ô "khách / trang" nằm ở CHÂN BẢNG nhưng thuộc form này (form="kh-loc")
         # nên không khai thêm input ẩn `size` ở đây — hai ô cùng tên thì trình
@@ -878,7 +881,7 @@ def _kh_dai_loc(loc: dict, nhan_vien: list[dict], fanpages: list[dict]) -> str:
         f'<input name="q" value="{escape(loc.get("q") or "")}" '
         'placeholder="Tìm tên khách · số điện thoại · mã khách…"></label>'
         + _kh_chon("bucket", _KH_BUCKET_NHAN, loc.get("bucket"))
-        + _kh_chon("tier", the, "", todo="chưa có bảng hạng thẻ")
+        + _kh_chon("tier", the, loc.get("tier"))
         + _kh_chon("owner_id", nv, loc.get("owner_id"))
         + _kh_chon("page_id", fp, loc.get("page_id"))
         + _kh_chon("mua", _KH_MUA_NHAN, loc.get("mua"))
@@ -902,7 +905,29 @@ def _kh_dai_loc(loc: dict, nhan_vien: list[dict], fanpages: list[dict]) -> str:
     )
 
 
-def _kh_hang(r: dict) -> str:
+def _kh_the(r: dict, ten_hang: dict[str, str]) -> str:
+    """Ô "Hạng thẻ" của một hàng (C1).
+
+    Khách đã quá mốc không nhận hàng được gắn thêm dấu ↓ + tooltip: hạng HIỂN
+    THỊ giữ nguyên, chỉ quyền lợi tụt 1 bậc. Không bao giờ đổi chữ hạng ở đây —
+    đổi chữ là người dùng tưởng khách đã bị hạ hạng thật."""
+    from app.services import voucher_service
+
+    ma = r.get("card_rank")
+    if not ma:
+        return '<span class="kh-none">chưa xếp hạng</span>'
+    mat = voucher_service.mat_hang(ma)
+    ten = ten_hang.get(ma, ma)
+    dau = ""
+    if r.get("giam_quyen_loi"):
+        dau = ('<span title="Quá lâu không nhận hàng — quyền lợi tính thấp hơn '
+               '1 bậc, hạng hiển thị giữ nguyên" '
+               'style="color:#C25E00;font-weight:700;margin-left:4px">↓</span>')
+    return (f'<span class="kh-tier" style="background:{mat["nen"]};'
+            f'color:{mat["mau"]}">{mat["icon"]} {escape(ten)}</span>{dau}')
+
+
+def _kh_hang(r: dict, ten_hang: dict[str, str] | None = None) -> str:
     """Một hàng của bảng khách (11 cột như mẫu)."""
     ma_kh = r["id"]
     tel = (r.get("primary_phone") or "").strip()
@@ -939,8 +964,7 @@ def _kh_hang(r: dict) -> str:
         f'<div class="kh-sub">{o_tel}{fanpage}</div>'
         f'<span class="kh-r4"><span class="ht-door {cua[0]}" '
         f'title="{escape(cua[2])}"><i></i>{escape(cua[1])}</span></span></td>'
-        f'<td><span class="kh-none ht-todo" '
-        f'{_kh_todo("chưa có bảng hạng thẻ")}>chưa xếp hạng</span></td>'
+        f"<td>{_kh_the(r, ten_hang or {})}</td>"
         f'<td class="num">{int(r.get("so_lan_mua") or 0)}</td>'
         f'<td class="money">{_kh_tien(r.get("tong_chi"))}</td>'
         f"<td>{mua_cuoi}</td>"
@@ -1013,19 +1037,22 @@ _KH_JS = """
 
 def render_khach_hang(rows: list[dict], total: int, *, dem: dict,
                       loc: dict, nhan_vien: list[dict] | None = None,
-                      fanpages: list[dict] | None = None) -> str:
+                      fanpages: list[dict] | None = None,
+                      hang_the: list[dict] | None = None) -> str:
     """Màn 8 — danh sách khách CRM, bố cục port từ mẫu Kallet.
 
     rows/total — một trang của `crm_screens_repo.khach_hang_bang`.
     dem        — 5 ô đếm (`khach_hang_dem`), đếm trên TOÀN BỘ khách sống.
     loc        — bộ lọc đang áp: q · tt · bucket · owner_id · page_id · mua ·
-                 chi_tu · chi_den · size · trang (dùng lại để dựng mọi link).
+                 chi_tu · chi_den · tier · size · trang (dựng mọi link từ đây).
+    hang_the   — bậc thang C1 (`voucher_service.bac_thang()`) cho ô lọc + nhãn.
     """
     size = int(loc.get("size") or 30)
     trang = int(loc.get("trang") or 1)
     so_trang = max(1, -(-total // size))
     dau = (trang - 1) * size
-    than = "".join(_kh_hang(r) for r in rows) or (
+    ten_hang = {r["code"]: r["name"] for r in (hang_the or [])}
+    than = "".join(_kh_hang(r, ten_hang) for r in rows) or (
         '<tr><td colspan="11" class="rong">Không có khách nào khớp bộ lọc — '
         "thử bỏ bớt điều kiện hoặc bấm “Xoá lọc”.</td></tr>")
     # (nhãn cột, có phải cột số không) — cột số căn phải cho khớp ô bên dưới.
@@ -1041,7 +1068,7 @@ def render_khach_hang(rows: list[dict], total: int, *, dem: dict,
     body = (
         _kh_bang_chua_lam()
         + _kh_o_dem(dem, loc)
-        + _kh_dai_loc(loc, nhan_vien or [], fanpages or [])
+        + _kh_dai_loc(loc, nhan_vien or [], fanpages or [], hang_the or [])
         + '<div class="kh-card"><div class="kh-head">'
         + '<span class="cnt">Đang xem '
         + f"{dau + 1 if rows else 0}–{dau + len(rows)} / "
@@ -1621,75 +1648,8 @@ def render_cong_viec(nhom: dict, *, pham_vi: str = "minh") -> str:
                         heading="Công việc", sub="Màn 12 + 26 — việc của Sale và CSKH (B4)")
 
 
-# ------------------------------------------------------------ Đơn hàng (màn 21)
-_TT_DON = [
-    ("draft", "Nháp"), ("confirmed", "Đã xác nhận"), ("packing", "Đang xử lý"),
-    ("shipping", "Đang giao"), ("delivered", "Giao thành công"),
-    ("returned", "Hoàn"), ("cancelled", "Huỷ"),
-]
-
-
-def render_don_hang(data: dict, loc: dict | None = None) -> str:
-    loc = loc or {}
-    pills = "".join(
-        f'<a class="stat link" href="/crm/don-hang?status={ma}">'
-        f'<div class="s-label">{escape(nhan)}</div>'
-        f'<div class="s-value">{data["theo_trang_thai"].get(ma, {}).get("n", 0)}</div>'
-        "</a>"
-        for ma, nhan in _TT_DON
-    )
-    o_tt = "".join(
-        f'<option value="{ma}"{" selected" if loc.get("status") == ma else ""}>'
-        f"{escape(nhan)}</option>"
-        for ma, nhan in [("", "— Mọi trạng thái —"), *_TT_DON,
-                         ("pending", "Chờ xác nhận"),
-                         ("awaiting_shipment", "Chờ gửi"),
-                         ("collected", "Đã thu tiền"), ("returning", "Đang hoàn")]
-    )
-    o_loai = "".join(
-        f'<option value="{ma}"{" selected" if loc.get("order_type") == ma else ""}>'
-        f"{escape(nhan)}</option>"
-        for ma, nhan in [("", "— Mọi loại —"), ("new", "Đơn đầu"),
-                         ("repurchase", "Mua lại"), ("upsell", "Bán thêm"),
-                         ("exchange", "Đổi hàng")]
-    )
-    form = (
-        '<form class="card form" method="get" action="/crm/don-hang" '
-        'style="margin:14px 0"><div class="grid2">'
-        f'<label>Tìm (khách / SĐT / mã đơn)<input type="text" name="q" '
-        f'value="{escape(str(loc.get("q") or ""))}"></label>'
-        f'<label>Trạng thái<select name="status">{o_tt}</select></label>'
-        f'<label>Loại đơn<select name="order_type">{o_loai}</select></label>'
-        f'<label>Từ ngày<input type="date" name="tu" '
-        f'value="{escape(str(loc.get("tu") or ""))}"></label>'
-        "</div>"
-        '<div style="margin-top:10px"><button class="btn primary">🔍 Lọc</button> '
-        '<a class="btn sm" href="/crm/don-hang">Xoá lọc</a></div></form>'
-    )
-    dong = ""
-    for r in data["rows"]:
-        ma = _e(r["external_order_id"]) if r["external_order_id"] else f"#{r['id']}"
-        loai = "mua lại" if r["order_type"] == "repurchase" else _e(r["order_type"])
-        dong += (
-            f'<tr><td><a href="/crm/don-hang/{r["id"]}">{ma}</a></td>'
-            f"<td>{_e(r['khach'])}</td><td>{_e(r['sale'])}</td><td>{loai}</td>"
-            f"<td><span class='pill'>{_e(r['status'])}</span></td>"
-            f"<td>{_tien(r['total_amount'])}</td><td>{_dt(r['created_at'])}</td>"
-            f'<td><a class="btn sm" href="/crm/don-hang/{r["id"]}">Chi tiết</a></td></tr>'
-        )
-    # Python 3.11: không lồng f-string cùng loại nháy -> dựng sẵn phần đuôi
-    duoi_tong = f" / tổng {data['tong']} khớp lọc" if data.get("tong") else ""
-    body = (
-        f'<div class="stats">{pills}</div>' + form
-        + _bang(["Mã đơn", "Khách", "Sale", "Loại", "Trạng thái", "Giá trị",
-                 "Tạo lúc", ""],
-                dong, "Không có đơn nào khớp bộ lọc")
-        + f'<p class="note" style="margin-top:8px">Hiện {len(data["rows"])} đơn'
-          f"{duoi_tong}</p>"
-    )
-    return render_shell("Đơn hàng", "crm-orders", body,
-                        heading="Đơn hàng",
-                        sub="Màn 21 — danh sách đơn, bấm ô trạng thái để lọc nhanh")
+# Màn Đơn hàng (màn 21) chuyển sang app/web/views/don_hang.py ở lát C7 —
+# bản cũ ở đây (7 ô đếm + bảng 8 cột) đã bỏ, không còn ai gọi.
 
 
 # ------------------------------------------------------------ Chăm sóc (màn 26-27)
