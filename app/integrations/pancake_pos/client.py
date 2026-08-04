@@ -56,6 +56,22 @@ async def list_shops() -> list[dict]:
     return [s for s in data.get("shops") or [] if isinstance(s, dict)]
 
 
+async def list_users(*, shop_id: str | int | None = None) -> list[dict]:
+    """Danh sách nhân viên của shop (dò 04/08 bằng scripts/do_pos_nhan_vien.py).
+
+    Trả nguyên văn dòng POS. Hình dạng thật: tên/email/SĐT nằm trong object con
+    `user`, phòng ban trong `department` — KHÔNG phẳng. Khoá ghép với đơn hàng là
+    `user_id` (uuid toàn cục), đúng thứ `assigning_seller_id`/`assigning_care_id`
+    mang; `id` ngoài cùng chỉ là id bản ghi shop-user, đừng dùng nhầm.
+
+    CẢNH BÁO: mỗi dòng có `api_key` RIÊNG của người đó — người gọi phải lọc bỏ
+    trước khi lưu/ghi log (xem pos_sync._loc_bi_mat).
+    """
+    sid = _shop_id(shop_id)
+    data = await _get(f"shops/{sid}/users")
+    return [u for u in data.get("data") or [] if isinstance(u, dict)]
+
+
 async def list_orders(
     *,
     shop_id: str | int | None = None,

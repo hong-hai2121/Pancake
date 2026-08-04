@@ -8,6 +8,7 @@ from app.web.shell import flash, render_shell, tabs_bar
 _TABS = [
     ("/quan-tri/nhan-vien", "Nhân viên", "nhan-vien"),
     ("/quan-tri/phan-quyen", "Vai trò & quyền", "phan-quyen"),
+    ("/quan-tri/the-pancake", "Thẻ Pancake", "the-pancake"),
     ("/quan-tri/cai-dat", "Cài đặt", "cai-dat"),
     ("/quan-tri/nhat-ky", "Nhật ký", "nhat-ky"),
 ]
@@ -85,25 +86,179 @@ window.umDept = function(el){
   el.classList.add('on');
   window.umFilter();
 };
+
+// Hộp thoại sửa nhanh: MỘT hộp dùng chung cho mọi dòng, JS chép dữ liệu từ
+// data-* của nút bút chì vào. Mỗi dòng một hộp riêng thì 100 nhân viên ×
+// ~113 lựa chọn Pancake = vài trăm KB HTML cho thứ mở ra một lần.
+window.umEdit = function(btn){
+  var d = document.getElementById('umDlg');
+  if (!d) return;
+  var g = function(k){ return btn.getAttribute('data-' + k) || ''; };
+  d.querySelector('#umDlgTen').textContent = g('ten');
+  d.querySelector('form').action = '/quan-tri/nhan-vien/' + g('uid') + '/sua';
+  d.querySelector('[name=name]').value = g('ten');
+  var set = function(sel, val){ var e = d.querySelector(sel); if (e) e.value = val; };
+  set('[name=role_id]', g('role'));
+  set('[name=team_id]', g('team'));
+  set('[name=pancake_staff]', g('pc'));
+  var rs = d.querySelector('#umDlgReset');
+  if (rs) rs.action = '/quan-tri/nhan-vien/' + g('uid') + '/reset-mat-khau';
+  // showModal() cho nền mờ + Esc đóng sẵn; trình duyệt cũ thì lùi về show().
+  if (d.showModal) d.showModal(); else d.setAttribute('open', '');
+};
+window.umEditClose = function(){
+  var d = document.getElementById('umDlg');
+  if (!d) return;
+  if (d.close) d.close(); else d.removeAttribute('open');
+};
 window.umFilter();
 """
 
 
 # ------------------------------------------------------------ màn 65: danh sách
+_NHAN_NGUON = {"pancake_pos": "POS", "pancake_pages": "Chat"}
+
+
+def _ma_staff(s: dict | None) -> str:
+    """Khoá một dòng staff_mappings thành 1 chuỗi cho ô <select>: 'provider|uuid'.
+
+    Phải kèm provider vì khoá thật của bảng là (provider, external_staff_id)."""
+    if not s or not s.get("external_staff_id"):
+        return ""
+    return f'{s["provider"]}|{s["external_staff_id"]}'
+
+
+def _nguon_pill(nguon) -> str:
+    """Người này do nguồn nào biết: POS · Chat · cả hai.
+
+    Cùng một người thường có mặt ở cả hai (uuid dùng chung), nhưng POS biết cả
+    kho/nhân sự còn chat biết vài người POS không có — nói rõ ra để Admin hiểu
+    vì sao có người thiếu email/SĐT (bên chat không trả mấy trường đó)."""
+    ds = list(nguon or [])
+    if not ds:
+        return "—"
+    if len(ds) > 1:
+        return '<span class="pill ok">cả hai</span>'
+    ma = ds[0]
+    lop = "pill" if ma == "pancake_pos" else "pill warn"
+    return f'<span class="{lop}">chỉ {_NHAN_NGUON.get(ma, ma)}</span>'
+
+
+def _o_pancake(pc: dict | None) -> str:
+    """Ô cột 'Ghép Pancake' của một nhân viên CRM.
+
+    Chưa ghép thì phải ĐẬP VÀO MẮT: người chưa ghép mà đem chia khách là hỏng —
+    hội thoại vẫn thuộc người khác bên Pancake, việc chăm không về đúng tay."""
+    if not pc:
+        return ('<span class="pill err" title="Chưa ứng với nhân viên nào bên '
+                'Pancake">CHƯA GHÉP</span>')
+    phu = pc.get("department") or ""
+    return (f'<span class="pill ok">{_e(pc.get("external_name"))}</span>'
+            + (f'<div class="note">{_e(phu)}</div>' if phu else ""))
+
+
 def render_users(
     users: list[dict], roles: list[dict], teams: list[dict],
     *, q: str = "", nhom: str = "", co_xuat: bool = False,
     ok: str = "", error: str = "", gioi_han: dict | None = None,
+    pancake: dict | None = None, pancake_thua: list[dict] | None = None,
 ) -> str:
     """`gioi_han` = phạm vi trưởng nhóm (user_service.pham_vi_doi): bản thu gọn —
     chỉ đội mình, tạo đúng 1 vai trò, hết nút khoá/mở + link hồ sơ (đó là việc
-    của Admin); reset MK chỉ hiện ở dòng thành viên. Chặn thật vẫn ở service."""
+    của Admin); reset MK chỉ hiện ở dòng thành viên. Chặn thật vẫn ở service.
+
+    `pancake` = {users.id: dòng staff_mappings đã ghép} (integration_repo
+    .staff_theo_user); `pancake_thua` = nhân viên Pancake (gộp POS + chat, đã
+    distinct theo uuid) chưa ứng với tài khoản nào.
+    """
+    pancake = pancake or {}
     opt_role = "".join(
         f'<option value="{r["id"]}">{escape(r["name"])}</option>' for r in roles
     )
     opt_team = "".join(
         f'<option value="{t["id"]}">{escape(t["name"])}</option>' for t in teams
     )
+
+    # Khối cảnh báo: người bên Pancake chưa ứng với tài khoản CRM nào. Chỉ đếm
+    # người CÒN trong danh sách (synced_at) — id chỉ thấy trong đơn/hội thoại cũ
+    # là nhân viên đã nghỉ, bày ra chỉ tổ rối. Trưởng nhóm không thấy khối này:
+    # ghép Pancake là việc của Admin (quyền integration.manage).
+    thua = pancake_thua or []
+    con_lam = [s for s in thua if s.get("synced_at")]
+    da_nghi = len(thua) - len(con_lam)
+    khoi_thua = ""
+    if con_lam and not gioi_han:
+        # Xếp theo phòng ban rồi tên: 69 người mà để lộn xộn thì không dò được ai.
+        con_lam = sorted(con_lam, key=lambda s: ((s.get("department") or "zzz").lower(),
+                                                 (s.get("external_name") or "").lower()))
+        ds = "".join(
+            "<tr>"
+            f'<td><b>{_e(s["external_name"])}</b></td>'
+            f'<td>{_e(s.get("department"))}</td>'
+            f'<td>{_e(s.get("email"))}</td>'
+            f'<td class="nowrap">{_e(s.get("phone"))}</td>'
+            f"<td>{_nguon_pill(s.get('nguon'))}</td>"
+            "</tr>"
+            for s in con_lam
+        )
+        ghi_chu_nghi = (
+            f' Ngoài ra có <b>{da_nghi}</b> ID chỉ còn thấy trong đơn/hội thoại cũ '
+            "— người đã nghỉ, không bày ở đây." if da_nghi else ""
+        )
+        khoi_thua = f"""
+<div class="card" style="margin-top:14px">
+  <h3>Nhân viên Pancake chưa ghép <span class="pill warn">{len(con_lam)}</span></h3>
+  <p class="note">Những người này có trong danh sách nhân viên của Pancake nhưng chưa
+  ứng với tài khoản CRM nào. Chưa ghép thì đơn/hội thoại họ xử lý bên Pancake không
+  quy được về ai trong CRM. Ghép ở
+  <a href="/quan-tri/tich-hop/anh-xa">Tích hợp → Ánh xạ</a> — gán một lần là ăn cả
+  hai nguồn.{ghi_chu_nghi}</p>
+  <div class="tblwrap"><table class="tbl">
+  <thead><tr><th>Tên bên Pancake</th><th>Phòng ban</th><th>Email</th><th>SĐT</th>
+  <th>Nguồn</th></tr></thead>
+  <tbody>{ds}</tbody></table></div>
+</div>"""
+
+    # Ô "Ghép Pancake" trong hộp thoại: mọi nhân viên Pancake CÒN LÀM (có hồ sơ),
+    # kèm người đang ghép sẵn ở dòng nào đó. Người đã nghỉ không đưa vào — ghép
+    # tài khoản CRM vào người đã nghỉ là vô nghĩa.
+    ds_pc = sorted(
+        [s for s in (pancake_thua or []) if s.get("synced_at")]
+        + [s for s in pancake.values() if s.get("synced_at")],
+        key=lambda s: ((s.get("department") or "zzz").lower(),
+                       (s.get("external_name") or "").lower()),
+    )
+    opt_pc = '<option value="">— chưa ghép —</option>' + "".join(
+        f'<option value="{escape(_ma_staff(s))}">{escape(s["external_name"] or "?")}'
+        + (f' · {escape(s["department"])}' if s.get("department") else "")
+        + f' · {_NHAN_NGUON.get(s["provider"], s["provider"])}</option>'
+        for s in ds_pc
+    )
+    hop_thoai = "" if gioi_han else f"""
+<dialog id="umDlg" class="umdlg">
+  <form method="post" action="" class="form">
+    <input type="hidden" name="ve" value="ds">
+    <h3 style="margin:0 0 14px">Sửa nhân viên · <span id="umDlgTen"></span></h3>
+    <label>Tên<input type="text" name="name"></label>
+    <div class="grid2" style="margin-top:11px">
+      <label>Vị trí<select name="role_id"><option value="">—</option>{opt_role}</select></label>
+      <label>Nhóm<select name="team_id"><option value="">—</option>{opt_team}</select></label>
+    </div>
+    <label style="margin-top:11px">Ghép Pancake
+      <select name="pancake_staff">{opt_pc}</select></label>
+    <p class="note" style="margin:6px 0 0">Gán một lần là ăn cả hai nguồn (POS +
+    chat) nếu cùng ID Pancake. Chọn <b>— chưa ghép —</b> để gỡ.</p>
+    <button type="button" class="btn sm" form="umDlgReset" style="margin-top:12px"
+      onclick="return confirm('Cấp mật khẩu mới? Mọi phiên của người này sẽ bị đăng xuất.')
+               &amp;&amp; (document.getElementById('umDlgReset').submit(), false)">
+      🔑 Đặt lại mật khẩu</button>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+      <button type="button" class="btn" onclick="umEditClose()">Huỷ</button>
+      <button class="btn primary">Lưu</button>
+    </div>
+  </form>
+</dialog>
+<form id="umDlgReset" method="post" action="" style="display:none"></form>"""
 
     def _dong_nv(u: dict) -> str:
         khoa_mo = (
@@ -128,6 +283,15 @@ def render_users(
             'Mọi phiên của người này sẽ bị đăng xuất.\')">'
             '<button class="btn sm">Reset MK</button></form>'
         ) if cho_reset else ""
+        # Nút bút chì: mở hộp thoại sửa nhanh (tên · vị trí · nhóm · ghép Pancake).
+        # Trưởng nhóm không có — sửa hồ sơ người khác là việc của Admin.
+        pc_cua = pancake.get(u["id"]) or {}
+        nut_sua = "" if gioi_han else (
+            '<button class="btn sm" title="Sửa nhanh" onclick="umEdit(this)"'
+            f' data-uid="{u["id"]}" data-ten="{escape(u["name"] or "")}"'
+            f' data-role="{u["role_id"] or ""}" data-team="{u["team_id"] or ""}"'
+            f' data-pc="{escape(_ma_staff(pc_cua))}">✎</button> '
+        )
         tim = " ".join(
             str(x) for x in (u["username"], u["name"], u["email"], u["phone"]) if x
         ).lower()
@@ -140,9 +304,10 @@ def render_users(
             f"<td>{_e(u['name'])}</td><td>{_e(u['email'])}</td>"
             f"<td class='nowrap'>{_e(u['phone'])}</td>"
             f"<td>{_e(u['role_name'])}</td>"
+            f"<td>{_o_pancake(pancake.get(u['id']))}</td>"
             f"<td>{_TRANG_THAI.get(u['status'], _e(u['status']))}</td>"
             f"<td>{_fmt_dt(u['last_login_at'])}</td>"
-            f"<td class='act'>{nut_khoa}{nut_reset}</td></tr>"
+            f"<td class='act'>{nut_sua}{nut_khoa}{nut_reset}</td></tr>"
         )
 
     # Gom theo nhóm cho dễ nhìn: mỗi đội một dải tiêu đề (trưởng nhóm đứng đầu),
@@ -158,7 +323,7 @@ def render_users(
         if not thanh_vien:
             continue
         nhan = escape(ten_nhom) if ten_nhom else "Chưa vào nhóm"
-        dong += (f'<tr class="tgrp"><td colspan="8">{nhan}'
+        dong += (f'<tr class="tgrp"><td colspan="9">{nhan}'
                  f' · {len(thanh_vien)} người</td></tr>')
         thanh_vien.sort(key=lambda u: (u["id"] != truong.get(ten_nhom), u["name"] or ""))
         dong += "".join(_dong_nv(u) for u in thanh_vien)
@@ -208,6 +373,13 @@ def render_users(
 .um-chip:hover{{border-color:var(--accent);color:var(--accent)}}
 .um-chip.on{{background:linear-gradient(135deg,var(--accent),var(--accent2));
   color:#fff;border-color:transparent}}
+/* hộp thoại sửa nhanh — <dialog> thuần, không thư viện */
+.umdlg{{width:440px;max-width:calc(100% - 40px);border:1px solid var(--border);
+  border-radius:16px;background:var(--card);color:var(--text);
+  box-shadow:var(--shadow-lg);padding:20px}}
+.umdlg::backdrop{{background:rgba(43,34,48,.45)}}
+.umdlg label{{display:flex;flex-direction:column;gap:4px;font-size:12px;
+  color:var(--sub)}}
 </style>
 
 <div class="um-toolbar">
@@ -220,9 +392,9 @@ def render_users(
 
 <div class="tblwrap card"><table class="tbl">
 <thead><tr><th>Username</th><th>Họ tên</th><th>Email</th><th>SĐT</th><th>Vai trò</th>
-<th>Trạng thái</th><th>Đăng nhập cuối</th><th></th></tr></thead>
-<tbody>{dong or '<tr><td colspan="8">Chưa có nhân viên nào</td></tr>'}
-<tr id="umEmpty" style="display:none"><td colspan="8">Không ai khớp bộ lọc</td></tr>
+<th>Ghép Pancake</th><th>Trạng thái</th><th>Đăng nhập cuối</th><th></th></tr></thead>
+<tbody>{dong or '<tr><td colspan="9">Chưa có nhân viên nào</td></tr>'}
+<tr id="umEmpty" style="display:none"><td colspan="9">Không ai khớp bộ lọc</td></tr>
 </tbody>
 </table></div>
 
@@ -241,6 +413,8 @@ def render_users(
   </div>
   <button class="btn primary">Tạo tài khoản</button>
 </form></details>
+{khoi_thua}
+{hop_thoai}
 """
     if gioi_han:
         return _shell(
@@ -537,3 +711,97 @@ def render_cai_dat(nhom: list[dict], *, ok: str = "", error: str = "") -> str:
 """
     return _shell("Cài đặt hệ thống", "cai-dat", body, ok, error,
                   sub="Công tắc đồng bộ và nhịp chạy của worker (màn 78)")
+
+
+# ------------------------------------------------ thẻ Pancake (kho tên/màu thẻ)
+_QUYEN_NHAN = {
+    "ADMINISTER": ("Quản trị", "ok"),
+    "EDIT_PROFILE": ("Biên tập", ""),
+    "MODERATE": ("Kiểm duyệt", ""),
+}
+
+
+def _the_pill(tid: int, meta: dict) -> str:
+    """Một pill thẻ, dùng lại đúng lớp `.ctag` của màn Tin nhắn cho đồng bộ."""
+    mau = (meta.get("color") or "").strip() or "var(--sub)"
+    ten = (meta.get("text") or "").strip() or f"Thẻ #{tid}"
+    return (f'<span class="ctag" style="--tc:{escape(mau)}" '
+            f'title="#{tid} · {escape(ten)}">{escape(ten)}</span>')
+
+
+def render_the_pancake(pages: list[dict], the: dict[str, dict],
+                       moc: dict[str, dict], *, moi_giay: int,
+                       ok: str = "", error: str = "") -> str:
+    """Màn Quản trị → Thẻ Pancake: kho tên/màu thẻ + nút cập nhật tay.
+
+    pages    — danh sách page từ Pancake (có `role` để biết quyền).
+    the      — {page_id: {tag_id: {text,color}}} đang lưu trong kho.
+    moc      — {page_id: {luc, so_the, nguon, loi}} lần hỏi API gần nhất.
+    moi_giay — mỗi page bao lâu mới hỏi lại (để ghi rõ ra màn hình).
+    """
+    tong_the = sum(len(v) for v in the.values())
+    co_the = sum(1 for v in the.values() if v)
+    lan_cuoi = max((m.get("luc") for m in moc.values() if m.get("luc")),
+                   default=None)
+
+    hang = ""
+    for p in sorted(pages, key=lambda x: str(x.get("name") or "")):
+        pid = str(p.get("id") or "")
+        cua_page = the.get(pid) or {}
+        m = moc.get(pid) or {}
+        nhan, tone = _QUYEN_NHAN.get(str(p.get("role") or ""),
+                                     (str(p.get("role") or "—"), ""))
+        # Xem trước tối đa 12 pill cho khỏi vỡ hàng; còn lại gộp thành "+N".
+        ds = list(cua_page.items())[:12]
+        pills = "".join(_the_pill(t, mt) for t, mt in ds)
+        if len(cua_page) > 12:
+            pills += f'<span class="ctag" style="--tc:var(--sub)">+{len(cua_page) - 12}</span>'
+        if not cua_page:
+            pills = ('<span class="note">chưa có thẻ trong kho</span>'
+                     if not m else
+                     f'<span class="note">{_e(m.get("loi") or "không lấy được")}</span>')
+        hang += (
+            f"<tr><td><b>{_e(p.get('name'))}</b>"
+            f"<div class=\"note\">{_e(pid)}</div></td>"
+            f'<td><span class="pill {tone}">{escape(nhan)}</span></td>'
+            f"<td class=\"num\">{len(cua_page) or '—'}</td>"
+            f"<td>{_fmt_dt(m.get('luc'))}</td>"
+            f'<td><div class="ctags">{pills}</div></td></tr>'
+        )
+
+    gio = round(moi_giay / 3600)
+    body = f"""
+<div class="stats" style="margin-bottom:14px">
+  <div class="stat"><div class="s-label">Thẻ đang lưu</div>
+    <div class="s-value">{tong_the}</div></div>
+  <div class="stat"><div class="s-label">Page có thẻ</div>
+    <div class="s-value">{co_the} / {len(pages)}</div></div>
+  <div class="stat"><div class="s-label">Cập nhật gần nhất</div>
+    <div class="s-value" style="font-size:17px">{_fmt_dt(lan_cuoi)}</div></div>
+</div>
+
+<div class="card" style="margin-bottom:14px">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <form method="post" action="/quan-tri/the-pancake/cap-nhat" data-native>
+      <button class="btn primary">🔄 Cập nhật thẻ ngay</button>
+    </form>
+    <p class="note" style="margin:0;flex:1 1 260px">Bình thường mỗi page chỉ hỏi
+    Pancake <b>{gio} giờ một lần</b>, mốc lưu trong DB nên khởi động lại server
+    cũng không gọi thêm. Bấm nút này là hỏi lại <b>toàn bộ page ngay lập tức</b>
+    — mỗi page tốn 1 lời gọi.</p>
+  </div>
+</div>
+
+<div class="tblwrap card"><table class="tbl">
+<thead><tr><th>Page</th><th>Quyền</th><th>Số thẻ</th><th>Hỏi API lần cuối</th>
+<th>Thẻ trong kho</th></tr></thead>
+<tbody>{hang or '<tr><td colspan="5" class="note">Chưa lấy được danh sách page.</td></tr>'}</tbody>
+</table></div>
+
+<p class="note">Kho nằm ở bảng <code>watcher.the_pancake</code> (mốc đồng bộ:
+<code>watcher.the_pancake_dong_bo</code>) trong Postgres. Đây là <b>bản sao</b> —
+xoá đi thì lượt cập nhật kế tiếp dựng lại đủ. Thẻ đã bị xoá trên Pancake vẫn
+được giữ, vì hội thoại cũ còn gắn ID đó.</p>
+"""
+    return _shell("Thẻ Pancake", "the-pancake", body, ok, error,
+                  sub="Kho tên + màu thẻ dùng cho màn Tin nhắn và Hội thoại")

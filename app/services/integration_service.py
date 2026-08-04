@@ -37,7 +37,15 @@ def _bay_gio() -> datetime:
 
 
 def _actor_id(actor: dict | None) -> int | None:
-    return int(actor["sub"]) if actor else None
+    """users.id của người thao tác, hoặc None (máy chạy nền / chưa đăng nhập).
+
+    Chịu được cả dict CÓ `sub` nhưng rỗng: trước đây `int(actor["sub"])` nổ
+    TypeError với {'sub': None} và KeyError với dict thiếu khoá — audit là việc
+    phụ, không được làm đổ thao tác chính vì nó."""
+    try:
+        return int((actor or {}).get("sub") or 0) or None
+    except (TypeError, ValueError):
+        return None
 
 
 def _audit(actor: dict | None, **kw) -> None:
@@ -185,9 +193,98 @@ def danh_sach_nhan_vien(provider: str = "") -> list[dict]:
     return integration_repo.list_staff(provider)
 
 
+async def dong_bo_nhan_vien_pos(actor: dict | None = None) -> dict:
+    """Lấy DANH SÁCH nhân viên từ Pancake POS về bảng ánh xạ (nút bấm tay).
+
+    Bấm tay chứ không nuôi worker: danh sách nhân viên vài tháng mới đổi một
+    lần, chạy nền là tốn lượt gọi mà chẳng được gì. Ghi `sync_logs` như mọi mẻ
+    đồng bộ khác để soi lại được ở màn Nhật ký.
+
+    KHÔNG tự gán sang tài khoản CRM — chỉ điền hồ sơ để Admin biết uuid nào là
+    ai rồi bấm ghép (ownership của CRM có luật riêng FR-030…032).
+    """
+    from app.integrations.pancake_pos import client as pos_client, pos_sync
+
+    shop_id = str(settings.pancake_pos_shop_id or "").strip()
+    log_id = mo_log("pancake_pos", "staff", scope=shop_id, run_type="manual")
+    try:
+        danh_sach = await pos_client.list_users()
+    except Exception as exc:  # noqa: BLE001 — báo lỗi tử tế lên màn, không vỡ trang
+        dong_log(log_id, {"loi": 1}, message=str(exc)[:300])
+        raise ApiError("UPSTREAM_ERROR", f"Không lấy được nhân viên POS: {exc}") from exc
+
+    ket_qua = pos_sync.sync_nhan_vien(danh_sach, shop_id)
+    dong_log(log_id, ket_qua, message=f"{len(danh_sach)} nhân viên từ shop {shop_id}")
+    audit_repo.ghi(
+        user_id=_actor_id(actor), object_type="staff_mappings", object_id=None,
+        action="staff_synced",
+        new_value={"shop_id": shop_id, "tong": len(danh_sach), **ket_qua},
+    )
+    return {"tong": len(danh_sach), **ket_qua}
+
+
+async def dong_bo_nhan_vien_pages(actor: dict | None = None) -> dict:
+    """Lấy danh sách nhân viên từ Pancake pages.fm — song song bản POS.
+
+    Endpoint `pages/{id}/users` theo TỪNG page nên phải lặp hết page token thấy
+    được rồi gộp theo uuid. Page nào gọi hỏng thì bỏ qua page đó, không đánh đổ
+    cả mẻ (thường là page 'không có quyền' trong danh sách).
+
+    Nghèo hơn POS (không email/SĐT/phòng ban) nhưng BÙ được: đo 04/08 thấy
+    pages.fm phủ 20/20 uuid đang dùng ở luồng chat, còn POS chỉ phủ 18/20.
+    """
+    from app.integrations.pancake import client as pages_client, crm_sync
+
+    log_id = mo_log("pancake_pages", "staff", run_type="manual")
+    try:
+        pages = await pages_client.list_pages()
+    except Exception as exc:  # noqa: BLE001
+        dong_log(log_id, {"loi": 1}, message=str(exc)[:300])
+        raise ApiError("UPSTREAM_ERROR", f"Không lấy được danh sách page: {exc}") from exc
+
+    tong: dict[str, dict] = {}
+    page_loi = bo_qua = 0
+    for p in pages:
+        pid = str(p.get("id") or "").strip()
+        if not pid:
+            continue
+        # Page chưa kích hoạt/ẩn: Pancake trả thẳng "Trang này đã bị vô hiệu hoá".
+        # Bỏ qua từ đầu cho khỏi tốn lượt gọi và khỏi báo "hỏng" oan.
+        if not p.get("is_activated"):
+            bo_qua += 1
+            continue
+        try:
+            for u in await pages_client.list_page_users(pid):
+                if str(u.get("id") or "").strip():
+                    tong.setdefault(str(u["id"]), (u, pid))
+        except Exception:  # noqa: BLE001 — page hỏng không đánh đổ cả mẻ
+            page_loi += 1
+
+    ket_qua = {"tao_moi": 0, "cap_nhat": 0, "bo_qua": 0, "loi": 0}
+    for u, pid in tong.values():
+        for k, v in crm_sync.sync_nhan_vien([u], pid).items():
+            ket_qua[k] += v
+    chay = len(pages) - bo_qua
+    dong_log(log_id, ket_qua,
+             message=f"{len(tong)} nhân viên từ {chay - page_loi}/{chay} page đang "
+                     f"hoạt động (bỏ qua {bo_qua} page chưa kích hoạt)")
+    audit_repo.ghi(
+        user_id=_actor_id(actor), object_type="staff_mappings", object_id=None,
+        action="staff_synced",
+        new_value={"provider": "pancake_pages", "tong": len(tong),
+                   "page_loi": page_loi, "page_bo_qua": bo_qua, **ket_qua},
+    )
+    return {"tong": len(tong), "page_loi": page_loi, "page_bo_qua": bo_qua, **ket_qua}
+
+
 def gan_nhan_vien(provider: str, external_staff_id: str, user_id: int | None,
                   actor: dict | None = None) -> dict:
-    """Ánh xạ nhân viên Pancake -> tài khoản CRM (màn Ánh xạ)."""
+    """Ánh xạ nhân viên Pancake -> tài khoản CRM (màn Ánh xạ).
+
+    Một lần gán ăn CẢ HAI nguồn (POS + chat) nếu cùng uuid — xem
+    `integration_repo.gan_staff`. Audit ghi lại số dòng lan sang để soi được
+    về sau tại sao dòng provider kia đổi mà không ai bấm vào nó.
+    """
     if provider not in integration_repo.PROVIDERS:
         raise ApiError("VALIDATION_ERROR", f"Nguồn lạ: {provider}")
     if not str(external_staff_id or "").strip():
@@ -196,7 +293,8 @@ def gan_nhan_vien(provider: str, external_staff_id: str, user_id: int | None,
     audit_repo.ghi(
         user_id=_actor_id(actor), object_type="staff_mappings",
         object_id=row["id"], action="staff_mapped",
-        new_value={"external_staff_id": external_staff_id, "user_id": user_id},
+        new_value={"external_staff_id": external_staff_id, "user_id": user_id,
+                   "provider": provider, "lan_toa": row.get("lan_toa", 0)},
     )
     return row
 

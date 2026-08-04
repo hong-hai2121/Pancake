@@ -17,13 +17,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from app.core import runtime_config
 from app.core.deps import co_quyen
 from app.core.errors import ApiError
-from app.db.repositories import audit_repo, org_repo, user_repo
-from app.services import cai_dat_service, org_service, user_service
+from app.db.repositories import audit_repo, integration_repo, org_repo, user_repo
+from app.services import (
+    cai_dat_service, integration_service, org_service, user_service,
+)
 from app.web.views.admin import (
     render_403,
     render_cai_dat,
     render_audit,
     render_roles,
+    render_the_pancake,
     render_user_detail,
     render_users,
 )
@@ -94,7 +97,18 @@ async def users_page(
         users, org_repo.list_roles(), org_repo.list_teams(), q=q, nhom=nhom,
         co_xuat=co_quyen(_user(request), "data.export"),
         ok=ok, error=error, gioi_han=pham_vi,
+        **_pancake_nhan_vien(),
     ))
+
+
+def _pancake_nhan_vien() -> dict:
+    """Dữ liệu cho cột 'Ghép Pancake'. DB lỗi thì trả rỗng — cột hiện 'CHƯA GHÉP'
+    chứ màn Nhân viên KHÔNG được chết vì khu tích hợp."""
+    try:
+        return {"pancake": integration_repo.staff_theo_user(),
+                "pancake_thua": integration_repo.staff_chua_ghep()}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 @router.get("/nhan-vien/xuat-excel")
@@ -201,7 +215,31 @@ async def edit_user(request: Request, user_id: int):
         )
     except ApiError as err:
         return _back(f"/quan-tri/nhan-vien/{user_id}", error=err.message)
-    return _back(f"/quan-tri/nhan-vien/{user_id}", ok="Đã lưu thay đổi")
+
+    # Ô "Ghép Pancake" của hộp thoại sửa nhanh ở màn danh sách. Giá trị dạng
+    # "provider|uuid", rỗng = gỡ ghép. Chỉ áp khi người bấm có integration.manage
+    # — sửa hồ sơ là user.manage, ghép Pancake là quyền KHÁC, không gộp làm một.
+    ve = ("/quan-tri/nhan-vien" if f.get("ve") == "ds"
+          else f"/quan-tri/nhan-vien/{user_id}")
+    if "pancake_staff" in f and co_quyen(_user(request), "integration.manage"):
+        nguon, _, uuid = f.get("pancake_staff", "").partition("|")
+        try:
+            if uuid:
+                integration_service.gan_nhan_vien(
+                    nguon, uuid, user_id, actor=_user(request))
+            else:
+                _go_ghep_pancake(user_id, _user(request))
+        except ApiError as err:
+            return _back(ve, error=err.message)
+    return _back(ve, ok="Đã lưu thay đổi")
+
+
+def _go_ghep_pancake(user_id: int, actor: dict) -> None:
+    """Gỡ mọi ánh xạ Pancake đang trỏ về tài khoản CRM này."""
+    for row in integration_repo.list_staff():
+        if row["user_id"] == user_id:
+            integration_service.gan_nhan_vien(
+                row["provider"], row["external_staff_id"], None, actor=actor)
 
 
 @router.post("/nhan-vien/{user_id}/trang-thai")
@@ -372,3 +410,60 @@ async def cai_dat_luu(request: Request):
     except ApiError as err:
         return _back("/quan-tri/cai-dat", error=err.message)
     return _back("/quan-tri/cai-dat", ok="Đã lưu — worker dùng giá trị mới ở lượt kế")
+
+
+# ------------------------------------------------ thẻ Pancake (màn kho tên thẻ)
+@router.get("/the-pancake", response_class=HTMLResponse)
+async def the_pancake_page(request: Request, ok: str = "", error: str = ""):
+    """Kho tên/màu thẻ Pancake: xem đang có gì, hỏi API lần cuối lúc nào.
+
+    Chỉ ĐỌC kho + danh sách page (đã cache) — mở màn này không sinh lời gọi lấy
+    thẻ nào. Muốn làm tươi phải bấm nút, xem POST bên dưới.
+    """
+    if (chan := _chan(request)):
+        return chan
+    import asyncio
+
+    from app.db.repositories import tag_store
+    from app.integrations.pancake.client import (
+        TAG_SYNC_MOI, PancakeError, list_pages,
+    )
+
+    try:
+        pages = await list_pages()
+    except (PancakeError, Exception) as exc:  # noqa: BLE001 — vẫn vẽ được kho
+        pages, error = [], error or f"Không lấy được danh sách page: {exc}"
+    the = await asyncio.to_thread(tag_store.load_all_tags)
+    moc = await asyncio.to_thread(tag_store.doc_moc)
+    # Page đã có thẻ trong kho mà Pancake không liệt kê nữa (page bị gỡ quyền)
+    # vẫn phải hiện, không thì thẻ của nó biến mất khỏi màn mà không ai biết.
+    da_co = {str(p.get("id")) for p in pages}
+    pages = list(pages) + [{"id": pid, "name": f"(page không còn trong danh sách)",
+                            "role": ""}
+                           for pid in sorted(set(the) - da_co)]
+    return HTMLResponse(render_the_pancake(
+        pages, the, moc, moi_giay=TAG_SYNC_MOI, ok=ok, error=error))
+
+
+@router.post("/the-pancake/cap-nhat")
+async def the_pancake_cap_nhat(request: Request):
+    """Bấm tay: hỏi lại thẻ của MỌI page ngay, bỏ qua lịch 1 ngày/lần.
+
+    Mỗi page tốn 1 lời gọi `pages/{id}/settings`, nên đây là hành động có giá —
+    để người dùng chủ động bấm chứ không tự chạy.
+    """
+    if (chan := _chan(request)):
+        return chan
+    from app.integrations.pancake.client import PancakeError, refresh_tags_all_pages
+
+    try:
+        ket_qua = await refresh_tags_all_pages(ep=True)
+    except (PancakeError, Exception) as exc:  # noqa: BLE001
+        return _back("/quan-tri/the-pancake",
+                     error=f"Cập nhật thẻ hỏng: {exc}")
+    tong = sum(ket_qua.values())
+    if not tong:
+        return _back("/quan-tri/the-pancake",
+                     error="Không lấy được thẻ nào — xem cột lỗi từng page.")
+    return _back("/quan-tri/the-pancake",
+                 ok=f"Đã cập nhật {tong} thẻ của {len(ket_qua)} page.")

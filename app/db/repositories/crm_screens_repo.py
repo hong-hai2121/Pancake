@@ -405,6 +405,260 @@ def list_customers(q: str = "", limit: int = 50) -> tuple[list[dict], int]:
     return rows, total
 
 
+# ==================================== Khách hàng — bảng đầy đủ (màn 8, bản mẫu)
+# Giao diện port từ mẫu Kallet: mỗi hàng cần thêm số lần mua · tổng chi · ngày
+# nhận hàng cuối · tương tác cuối · lần chăm sóc cuối · người phụ trách ·
+# fanpage. Gom hết vào MỘT câu (lateral join) thay vì N+1 truy vấn theo hàng.
+#
+# QUY ƯỚC ĐẾM — dùng chung cho cả bảng lẫn 5 ô đếm nên hai chỗ không lệch nhau:
+#   * "đơn đã chốt" = crm.orders có status ngoài (draft, cancelled, returned)
+#   * Lần mua        = số đơn đã chốt
+#   * Tổng chi       = tổng total_amount của các đơn đó
+#   * Nhận hàng cuối = max(delivered_at); chưa giao đơn nào -> rỗng ("chưa mua")
+#   * Tình trạng tính theo số ngày kể từ Nhận hàng cuối, đúng ngưỡng của mẫu:
+#     ≤180 đang chăm · 181–210 sắp buông · >210 ngủ.
+_KH_SONG = "c.deleted_at is null and c.status <> 'merged'"
+
+_KH_DON = """
+    left join lateral (
+          select count(*)                         as so_lan_mua,
+                 coalesce(sum(o.total_amount), 0) as tong_chi,
+                 max(o.delivered_at)              as nhan_hang_cuoi
+            from crm.orders o
+           where o.customer_id = c.id
+             and o.status not in ('draft', 'cancelled', 'returned')
+    ) dh on true
+"""
+
+# Hội thoại MỚI NHẤT: lấy fanpage (cột "Khách" ở mẫu in tên page dưới số điện
+# thoại), mốc tương tác cuối và cặp id để dựng link mở Pancake.
+_KH_HOI_THOAI = """
+    left join lateral (
+          select cv.page_id, cv.last_message_at, cv.external_conversation_id
+            from crm.conversations cv
+           where cv.customer_id = c.id
+           order by cv.last_message_at desc nulls last
+           limit 1
+    ) hc on true
+    left join crm.pages p on p.id = hc.page_id
+"""
+
+# "Cửa gửi tin" của Meta tính từ tin CUỐI CÙNG CỦA KHÁCH — crm.conversations chỉ
+# có last_message_at (tin của bất kỳ bên nào) nên phải mượn kho hội thoại của
+# worker (`watcher.hoi_thoai`, cùng DB, khoá chính (page_id, conv_id) nên tra
+# theo index). Kho có thể chưa tồn tại ở máy mới cài -> dò một lần rồi nhớ, thiếu
+# thì trả cột rỗng và giao diện hiện "chưa rõ cửa" thay vì đoán bừa.
+_KHO_HT: bool | None = None
+
+
+def _co_kho_hoi_thoai(conn) -> bool:
+    global _KHO_HT
+    if _KHO_HT is None:
+        _KHO_HT = conn.execute(
+            "select to_regclass('watcher.hoi_thoai') is not null as co"
+        ).fetchone()["co"]
+    return _KHO_HT
+
+
+_KH_CUA_JOIN = """
+    left join watcher.hoi_thoai ht
+           on ht.page_id = p.external_page_id
+          and ht.conv_id = hc.external_conversation_id
+"""
+
+_KH_CHAM = """
+    left join lateral (
+          select ci.created_at as cham_luc, u.name as cham_boi
+            from crm.care_interactions ci
+            left join crm.users u on u.id = ci.user_id
+           where ci.customer_id = c.id
+           order by ci.created_at desc
+           limit 1
+    ) cs on true
+"""
+
+# Một lượt quét bảng phân công cho cả 2 vai (thay vì 4 câu con lồng nhau).
+_KH_PHU_TRACH = """
+    left join lateral (
+          select max(u.name)    filter (where a.assignment_type = 'sale') as sale_ten,
+                 max(a.user_id) filter (where a.assignment_type = 'sale') as sale_id,
+                 max(u.name)    filter (where a.assignment_type = 'cskh') as cskh_ten,
+                 max(a.user_id) filter (where a.assignment_type = 'cskh') as cskh_id
+            from crm.customer_assignments a
+            join crm.users u on u.id = a.user_id
+           where a.customer_id = c.id and a.end_at is null
+    ) pt on true
+"""
+
+def _kh_join_loc(owner_id: int, page_id: int) -> str:
+    """Join TỐI THIỂU đủ để lọc + sắp xếp + đếm tổng.
+
+    Chạy trên toàn bộ khách sống (vài chục nghìn dòng) nên chỉ kéo theo đúng
+    thứ bộ lọc đang cần: bảng đơn luôn cần (lọc lẫn sắp xếp), phân công và hội
+    thoại chỉ khi người dùng lọc theo nhân viên / fanpage.
+    """
+    return (_KH_DON
+            + (_KH_PHU_TRACH if owner_id else "")
+            + (_KH_HOI_THOAI if page_id else ""))
+
+
+def _kh_join_hien(co_cua: bool) -> str:
+    """Join phần chỉ để HIỂN THỊ — chạy sau khi đã cắt còn 1 trang (≤100 dòng)."""
+    return (_KH_HOI_THOAI + (_KH_CUA_JOIN if co_cua else "")
+            + _KH_CHAM + _KH_PHU_TRACH)
+
+# Số ngày kể từ lần nhận hàng cuối — viết một chỗ vì cả bộ lọc lẫn ô đếm dùng.
+_KH_NGAY = "(now()::date - dh.nhan_hang_cuoi::date)"
+
+# Khoảng "ngày mua cuối" của bộ lọc mẫu -> (từ, đến); None = không chặn đầu đó.
+KH_BUCKET: dict[str, tuple[int, int | None]] = {
+    "0-30": (0, 30), "31-60": (31, 60), "61-90": (61, 90),
+    "91-120": (91, 120), "121-150": (121, 150), "151-180": (151, 180),
+    "181-210": (181, 210), "gt210": (211, None),
+}
+
+
+def _kh_loc(q: str, tt: str, bucket: str, owner_id: int, page_id: int,
+            so_mua: str, chi_tu, chi_den) -> tuple[list[str], list]:
+    """Dựng mệnh đề WHERE + tham số cho bảng khách (dùng lại ở câu đếm tổng)."""
+    dk, ts = [_KH_SONG], []
+    if q:
+        dk.append("(c.full_name ilike %s or c.primary_phone like %s"
+                  " or c.customer_code ilike %s)")
+        ts += [f"%{q}%", f"%{q}%", f"%{q}%"]
+    if tt == "chua_mua":
+        dk.append("dh.nhan_hang_cuoi is null")
+    elif tt == "active":
+        dk.append(f"dh.nhan_hang_cuoi is not null and {_KH_NGAY} <= 180")
+    elif tt == "fading":
+        dk.append(f"dh.nhan_hang_cuoi is not null and {_KH_NGAY} between 181 and 210")
+    elif tt == "sleep":
+        dk.append(f"dh.nhan_hang_cuoi is not null and {_KH_NGAY} > 210")
+    if bucket in KH_BUCKET:
+        tu, den = KH_BUCKET[bucket]
+        dk.append(f"dh.nhan_hang_cuoi is not null and {_KH_NGAY} >= %s")
+        ts.append(tu)
+        if den is not None:
+            dk.append(f"{_KH_NGAY} <= %s")
+            ts.append(den)
+    if owner_id:
+        dk.append("(pt.sale_id = %s or pt.cskh_id = %s)")
+        ts += [owner_id, owner_id]
+    if page_id:
+        dk.append("p.id = %s")
+        ts.append(page_id)
+    if so_mua in ("1", "2", "3"):
+        dk.append("dh.so_lan_mua = %s")
+        ts.append(int(so_mua))
+    elif so_mua == "4":
+        dk.append("dh.so_lan_mua >= 4")
+    if chi_tu is not None:
+        dk.append("dh.tong_chi >= %s")
+        ts.append(chi_tu)
+    if chi_den is not None:
+        dk.append("dh.tong_chi <= %s")
+        ts.append(chi_den)
+    return dk, ts
+
+
+def khach_hang_bang(*, q: str = "", tt: str = "", bucket: str = "",
+                    owner_id: int = 0, page_id: int = 0, so_mua: str = "",
+                    chi_tu: float | None = None, chi_den: float | None = None,
+                    limit: int = 30, offset: int = 0) -> tuple[list[dict], int]:
+    """Một trang của bảng khách + TỔNG số khách khớp bộ lọc (để phân trang).
+
+    HAI BƯỚC cố ý: câu trong chỉ lọc/sắp/cắt trang (join tối thiểu), câu ngoài
+    mới bồi mấy thứ chỉ để hiển thị. Gộp một câu thì Postgres phải chạy toàn bộ
+    lateral cho cả chục nghìn khách rồi mới LIMIT — chậm gấp mấy lần.
+    """
+    dk, ts = _kh_loc(q, tt, bucket, owner_id, page_id, so_mua, chi_tu, chi_den)
+    where = " and ".join(dk)
+    loc_join = _kh_join_loc(owner_id, page_id)
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        cua = ("ht.last_customer_at" if _co_kho_hoi_thoai(conn) else "null::text")
+        total = conn.execute(
+            f"select count(*) as n from crm.customers c {loc_join} where {where}",
+            ts or None,
+        ).fetchone()["n"]
+        rows = conn.execute(
+            f"""
+            with trang as (
+                select c.id, dh.so_lan_mua, dh.tong_chi, dh.nhan_hang_cuoi,
+                       case when dh.nhan_hang_cuoi is null then null
+                            else {_KH_NGAY} end as ngay_tu_mua
+                  from crm.customers c {loc_join}
+                 where {where}
+                 order by dh.nhan_hang_cuoi desc nulls last, c.id desc
+                 limit %s offset %s
+            )
+            select c.id, c.customer_code, c.full_name, c.primary_phone,
+                   c.province, c.status, c.source, c.created_at,
+                   t.so_lan_mua, t.tong_chi, t.nhan_hang_cuoi, t.ngay_tu_mua,
+                   hc.last_message_at, hc.external_conversation_id,
+                   p.external_page_id, p.name as page_name,
+                   {cua}                                   as last_customer_at,
+                   cs.cham_luc, cs.cham_boi,
+                   pt.sale_ten, pt.cskh_ten
+              from trang t
+              join crm.customers c on c.id = t.id
+              {_kh_join_hien(_co_kho_hoi_thoai(conn))}
+             order by t.nhan_hang_cuoi desc nulls last, c.id desc
+            """,
+            [*ts, limit, offset],
+        ).fetchall()
+    return rows, total
+
+
+def khach_hang_dem() -> dict:
+    """5 ô đếm đầu màn — đếm trên TOÀN BỘ khách sống, không theo bộ lọc.
+
+    Chỉ cần bảng đơn nên không kéo theo mấy lateral join còn lại của bảng.
+    """
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            f"""
+            with m as (
+                select (select max(o.delivered_at) from crm.orders o
+                         where o.customer_id = c.id
+                           and o.status not in ('draft','cancelled','returned')
+                       ) as mua_cuoi
+                  from crm.customers c
+                 where {_KH_SONG}
+            )
+            select count(*)                                         as tong,
+                   count(*) filter (
+                       where mua_cuoi is not null
+                         and now()::date - mua_cuoi::date <= 180)   as dang_cham,
+                   count(*) filter (
+                       where mua_cuoi is not null
+                         and now()::date - mua_cuoi::date between 181 and 210
+                   )                                                as sap_buong,
+                   count(*) filter (
+                       where mua_cuoi is not null
+                         and now()::date - mua_cuoi::date > 210)     as ngu,
+                   count(*) filter (where mua_cuoi is null)          as chua_mua
+              from m
+            """
+        ).fetchone()
+
+
+def khach_hang_fanpages() -> list[dict]:
+    """Danh sách fanpage cho ô lọc (chỉ page thật sự có hội thoại gắn khách)."""
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            """
+            select p.id, p.name
+              from crm.pages p
+             where exists (select 1 from crm.conversations cv
+                            where cv.page_id = p.id and cv.customer_id is not null)
+             order by p.name
+            """
+        ).fetchall()
+
+
 # ------------------------------------------ Bảng chăm sóc theo mốc (màn 11)
 # Hội thoại Pancake MỚI NHẤT của khách — dùng chung cho thẻ trên bảng và khung
 # làm việc bên phải (đọc DB, không gọi API Pancake mỗi lần mở màn — luật mục 4).

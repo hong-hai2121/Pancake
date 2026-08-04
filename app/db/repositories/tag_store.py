@@ -28,6 +28,12 @@ from app.db.client import get_pg_pool
 
 SCHEMA = "watcher"
 TABLE = f"{SCHEMA}.the_pancake"
+# Bảng MỐC ĐỒNG BỘ, tách khỏi bảng thẻ vì hai câu hỏi khác nhau:
+#   `the_pancake.updated_at`  = "thẻ này đổi tên lúc nào" (chỉ nhích khi tên đổi)
+#   `the_pancake_dong_bo.luc` = "lần cuối mình HỎI Pancake page này là lúc nào"
+# Không có bảng dưới thì không cách nào biết đã hỏi chưa — lịch "1 ngày 1 lần"
+# nằm trong RAM sẽ reset mỗi lần restart, chạy --reload là gọi API liên tục.
+SYNC = f"{SCHEMA}.the_pancake_dong_bo"
 
 _ready = False
 
@@ -52,8 +58,59 @@ def _conn():
                 )
                 """
             )
+            conn.execute(
+                f"""
+                create table if not exists {SYNC} (
+                    page_id text        not null primary key,
+                    luc     timestamptz not null default now(),
+                    so_the  integer     not null default 0,
+                    nguon   text        not null default '',
+                    loi     text        not null default ''
+                )
+                """
+            )
         _ready = True
     return pool.connection()
+
+
+def ghi_moc(page_id: str, so_the: int, nguon: str = "", loi: str = "") -> None:
+    """Đánh dấu vừa HỎI Pancake page này — kể cả khi hỏi hụt (`loi`).
+
+    Ghi cả lượt hụt là cố ý: page thiếu quyền mà không đánh dấu thì cứ mỗi vòng
+    poller lại hỏi lại, đúng thứ đang muốn tránh. Có mốc thì nó cũng phải chờ
+    tới hạn như page thành công.
+    """
+    with _conn() as conn:
+        conn.execute(
+            f"""
+            insert into {SYNC} (page_id, luc, so_the, nguon, loi)
+            values (%s, now(), %s, %s, %s)
+            on conflict (page_id) do update set
+                luc = now(), so_the = excluded.so_the,
+                nguon = excluded.nguon, loi = excluded.loi
+            """,
+            (str(page_id), int(so_the), nguon[:40], loi[:200]),
+        )
+
+
+def doc_moc() -> dict[str, dict]:
+    """Mốc đồng bộ của mọi page -> {page_id: {luc, so_the, nguon, loi}}."""
+    with _conn() as conn:
+        rows = conn.execute(
+            f"select page_id, luc, so_the, nguon, loi from {SYNC}"
+        ).fetchall()
+    return {r["page_id"]: dict(r) for r in rows}
+
+
+def qua_han(page_id: str, giay: float) -> bool:
+    """Page này đã tới hạn hỏi lại chưa? Chưa từng hỏi -> True."""
+    with _conn() as conn:
+        row = conn.execute(
+            f"select extract(epoch from (now() - luc)) as tuoi from {SYNC}"
+            " where page_id = %s",
+            (str(page_id),),
+        ).fetchone()
+    return not row or float(row["tuoi"] or 0) >= giay
 
 
 def upsert_tags(page_id: str, tags: dict[int, dict]) -> int:

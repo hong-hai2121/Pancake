@@ -318,10 +318,22 @@ def render_anh_xa(
         f'<option value="{u["id"]}"{" selected" if u["id"] == chon else ""}>'
         f'{escape(u.get("name") or u.get("username") or "")}</option>' for u in users
     )
+    def _ho_so(s: dict) -> str:
+        """Cột Tên: có hồ sơ POS thì bày tên + phòng ban + email/SĐT; chưa có thì
+        nói thẳng là chỉ nhặt được id trong đơn cũ (thường là người đã nghỉ) để
+        Admin khỏi ngồi gán cho người không còn làm."""
+        if not s.get("synced_at"):
+            return ('<i class="note">— chỉ thấy trong đơn cũ, không còn trong '
+                    "danh sách POS —</i>")
+        phu = " · ".join(x for x in (s.get("department"), s.get("email"),
+                                     s.get("phone")) if x)
+        return (f"<b>{_e(s['external_name'])}</b>"
+                + (f'<div class="note">{_e(phu)}</div>' if phu else ""))
+
     dong_nv = "".join(
         "<tr>"
         f"<td class=\"note\">{_e(s['external_staff_id'])}</td>"
-        f"<td>{_e(s['external_name'])}</td>"
+        f"<td>{_ho_so(s)}</td>"
         f"<td>{_e(_NGUON.get(s['provider'], s['provider']))}</td>"
         f"<td><span class='pill'>{_e(s['role_hint'])}</span></td>"
         f"<td>{_fmt_dt(s['last_seen_at'])}</td>"
@@ -364,11 +376,23 @@ def render_anh_xa(
 </div>
 
 <div class="card" style="margin-top:14px">
-  <h3>Ánh xạ nhân viên Pancake → nhân viên CRM</h3>
+  <div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">
+    <h3 style="flex:1 1 auto;margin:0">Ánh xạ nhân viên Pancake → nhân viên CRM</h3>
+    <form method="post" action="/quan-tri/tich-hop/nhan-vien/dong-bo?nguon=pos"
+          class="inline"><button class="btn sm primary">↻ Lấy NV từ POS</button></form>
+    <form method="post" action="/quan-tri/tich-hop/nhan-vien/dong-bo?nguon=pages"
+          class="inline"><button class="btn sm">↻ Lấy NV từ Pancake (chat)</button></form>
+  </div>
   <p class="note">ID nhân viên bên Pancake (người xử lý hội thoại, người bán, người
-  chăm trên đơn POS) tự được ghi nhận khi đồng bộ. Gán vào tài khoản CRM để hội thoại
-  hiện đúng người phụ trách. <b>Việc gán này KHÔNG tự phân công khách</b> — quyền sở
-  hữu khách theo luật riêng của Sale/CSKH (FR-030…032).</p>
+  chăm trên đơn POS) tự được ghi nhận khi đồng bộ — nhưng đơn/hội thoại chỉ mang
+  <b>id trần</b>, không có tên. Bấm hai nút trên để kéo hồ sơ về rồi mới gán được
+  ai ra ai: <b>POS</b> cho tên · phòng ban · email · SĐT; <b>Pancake (chat)</b>
+  chỉ có tên nhưng biết cả người POS không có. Nên bấm cả hai. Gán vào tài khoản
+  CRM để hội thoại hiện đúng người phụ trách. <b>Việc gán này KHÔNG tự phân công
+  khách</b> — quyền sở hữu khách theo luật riêng của Sale/CSKH (FR-030…032).</p>
+  <p class="note">Một người thường có <b>hai dòng</b> ở đây (một của POS, một của
+  chat) vì hai bên dùng chung ID Pancake. Gán ở dòng nào cũng được —
+  <b>máy tự áp cho dòng kia</b>, khỏi phải làm hai lần.</p>
   <div class="tblwrap"><table class="tbl">
   <thead><tr><th>ID bên Pancake</th><th>Tên</th><th>Nguồn</th><th>Vai</th>
   <th>Gặp lần cuối</th><th>Nhân viên CRM</th></tr></thead>

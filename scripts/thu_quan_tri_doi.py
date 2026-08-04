@@ -192,10 +192,15 @@ def main() -> None:
         r = web_tn.get(duong)
         ok(f"trưởng nhóm vào {duong} -> 403", r.status_code == 403, str(r.status_code))
     r = web_tn.get("/quan-tri/nhan-vien")
+    # "Chung" là nhóm đầu menu CRM (trước 04/08/2026 tên là "CRM" — đổi khi sắp
+    # lại menu theo mẫu Kallet). Mọi mục trong nhóm này không đòi quyền nên
+    # trưởng nhóm chắc chắn thấy -> dùng làm mốc "menu CRM vẫn còn".
+    # Dò '>Bot Pancake<' chứ KHÔNG kèm thẻ đóng: nhóm này nay là <summary> xổ/thu
+    # (_NHOM_THU_GON) chứ không còn <div class="nav-group">.
     ok("menu trưởng nhóm KHÔNG còn nhóm Bot Pancake",
-       '>Bot Pancake</div>' not in r.text and '>CRM</div>' in r.text)
+       ">Bot Pancake<" not in r.text and ">Chung</div>" in r.text)
     r = web_ad.get("/quan-tri/nhan-vien")
-    ok("menu admin vẫn có nhóm Bot Pancake", '>Bot Pancake</div>' in r.text)
+    ok("menu admin vẫn có nhóm Bot Pancake", ">Bot Pancake<" in r.text)
 
     with pool.connection() as conn:
         don_dep(conn)

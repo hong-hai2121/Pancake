@@ -38,6 +38,7 @@ _COLS = """
     page_id, page_name, conv_id, customer_id, name, fb_id, snippet,
     updated_at, message_count, unread_count, seen, tags,
     avatar_url, phones, has_phone, last_customer_at, is_pinned,
+    assignee_ids,
     sentiment, sentiment_method, sentiment_checked_at
 """
 

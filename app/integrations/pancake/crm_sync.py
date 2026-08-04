@@ -145,6 +145,38 @@ def _nhan_vien(assignee_ids: list) -> tuple[str | None, int | None]:
         return ngoai, None
 
 
+def sync_nhan_vien(danh_sach: list[dict], external_page_id: str) -> dict:
+    """Đổ DANH SÁCH nhân viên của MỘT page vào staff_mappings. Trả dict đếm.
+
+    Song song với pos_sync.sync_nhan_vien nhưng nghèo hơn: pages.fm chỉ trả
+    tên + fb_id + quyền trên page, KHÔNG có email/SĐT/phòng ban. Vì hai bên
+    dùng chung không gian uuid, người nào cũng có bên POS thì hồ sơ đầy đủ đã
+    nằm ở dòng `pancake_pos` — dòng này chỉ cần đủ TÊN để Admin gán được.
+
+    `role_in_page` (ADMINISTER/EDIT_PROFILE) là quyền trên page, KHÔNG phải vai
+    nghiệp vụ, nên để trong `raw` chứ không đụng `role_hint` (seller/care/…).
+    """
+    dem = {"tao_moi": 0, "cap_nhat": 0, "bo_qua": 0, "loi": 0}
+    for u in danh_sach:
+        ngoai = str(u.get("id") or "").strip()
+        if not ngoai:
+            dem["bo_qua"] += 1
+            continue
+        try:
+            row = integration_repo.upsert_staff(
+                provider=_PROVIDER, external_staff_id=ngoai,
+                external_name=str(u.get("name") or "").strip(),
+                ho_so={"fb_id": str(u.get("fb_id") or "").strip(),
+                       "shop_id": "", "email": "", "phone": "", "department": "",
+                       "avatar_url": "", "raw": {**u, "external_page_id": external_page_id}},
+            )
+            dem["tao_moi" if (row or {}).get("vua_tao") else "cap_nhat"] += 1
+        except Exception as exc:  # noqa: BLE001 — 1 người hỏng không chặn cả mẻ
+            dem["loi"] += 1
+            print(f"[crm_sync] nhân viên {ngoai}: {exc}", file=sys.stderr)
+    return dem
+
+
 def sync_row(external_page_id: str, page_name: str, conv: dict) -> bool:
     """Đồng bộ MỘT hội thoại. Trả True nếu vừa tạo khách mới. Idempotent."""
     page_id = _crm_page_id(str(external_page_id), page_name)

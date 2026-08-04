@@ -42,9 +42,10 @@ from app.integrations.pancake.client import (
 # Số page gọi song song trong 1 lượt.
 _CONCURRENCY = 5
 
-# Làm tươi kho tên thẻ mỗi ngần này giây (chỉ vài page có quyền Admin -> vài lời
-# gọi/ngày, không đáng kể so với trần 429).
-_TAG_REFRESH = 6 * 60 * 60
+# Bao lâu thì NGÓ tới việc làm tươi thẻ. Hỏi hay không còn do mốc trong DB
+# quyết (`TAG_SYNC_MOI` = 1 ngày/page, xem pancake/client.py) — vòng này chỉ là
+# nhịp ngó, ngó sớm cũng không sinh lời gọi nào nếu chưa page nào tới hạn.
+_TAG_REFRESH = 60 * 60
 
 # Giữ tối đa ngần này mục chi tiết trong `last_run` (log thì in hết).
 _KEEP_DETAIL = 50

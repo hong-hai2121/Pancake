@@ -176,18 +176,45 @@ async def gan_page(request: Request, page_id: int):
     return _back("/quan-tri/tich-hop/anh-xa", ok="Đã gán page vào kết nối")
 
 
+@router.post("/nhan-vien/dong-bo")
+async def dong_bo_nhan_vien(request: Request, nguon: str = "pos"):
+    """Kéo DANH SÁCH nhân viên từ Pancake về bảng ánh xạ (bấm tay).
+
+    `nguon=pos` (POS, có email/SĐT/phòng ban) hoặc `nguon=pages` (pages.fm, chỉ
+    có tên nhưng phủ được người POS không biết). Đặt TRƯỚC `POST /nhan-vien`
+    cho khỏi bị nuốt đường dẫn con."""
+    if (chan := _chan(request)):
+        return chan
+    la_pages = nguon == "pages"
+    try:
+        kq = await (integration_service.dong_bo_nhan_vien_pages(actor=_user(request))
+                    if la_pages
+                    else integration_service.dong_bo_nhan_vien_pos(actor=_user(request)))
+    except ApiError as err:
+        return _back("/quan-tri/tich-hop/anh-xa", error=err.message)
+    them = f" · {kq['page_loi']} page gọi hỏng" if kq.get("page_loi") else ""
+    return _back("/quan-tri/tich-hop/anh-xa",
+                 ok=f"Lấy {kq['tong']} nhân viên từ "
+                    f"{'Pancake (chat)' if la_pages else 'POS'} — "
+                    f"{kq['tao_moi']} mới, {kq['cap_nhat']} cập nhật{them}")
+
+
 @router.post("/nhan-vien")
 async def gan_nhan_vien(request: Request):
     if (chan := _chan(request)):
         return chan
     form = await _form(request)
     try:
-        integration_service.gan_nhan_vien(
+        row = integration_service.gan_nhan_vien(
             form.get("provider", ""), form.get("external_staff_id", ""),
             _to_int(form.get("user_id", "")), actor=_user(request))
     except ApiError as err:
         return _back("/quan-tri/tich-hop/anh-xa", error=err.message)
-    return _back("/quan-tri/tich-hop/anh-xa", ok="Đã lưu ánh xạ nhân viên")
+    # Nói rõ khi ánh xạ lan sang nguồn kia, kẻo Admin tưởng máy tự đổi bậy.
+    lan = int(row.get("lan_toa") or 0)
+    return _back("/quan-tri/tich-hop/anh-xa",
+                 ok="Đã lưu ánh xạ nhân viên"
+                    + (f" — áp cho cả {lan + 1} nguồn (cùng ID Pancake)" if lan else ""))
 
 
 @router.post("/trang-thai-don/{pancake_status}")

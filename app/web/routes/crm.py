@@ -73,6 +73,78 @@ async def trang_chu(request: Request, tu: str = "", den: str = "") -> HTMLRespon
     return HTMLResponse(views.render_trang_chu(nhom, data, user))
 
 
+# Số hội thoại nạp cho màn Hội thoại. Đọc KHO nên không tốn lời gọi Pancake
+# nào; giữ bằng mức hộp thư gộp ở màn Tin nhắn cho hai màn thấy như nhau.
+_HT_LIMIT = 100
+
+
+@router.get("/hoi-thoai", response_class=HTMLResponse)
+async def hoi_thoai(tab: str = "all", chon: str = "", sent: int = 0,
+                    error: str = "") -> HTMLResponse:
+    """Màn Hội thoại — giao diện port từ mẫu crmv2.kallet.vn, DỮ LIỆU THẬT.
+
+    Lấy CHUNG nguồn với màn Tin nhắn: danh sách đọc kho `watcher.hoi_thoai`
+    (worker nền đổ về), kho rỗng mới hỏi Pancake; thread thì gọi Pancake như
+    /tin-nhan. Không mở đường lấy dữ liệu thứ hai để hai màn không lệch nhau.
+
+    `chon` = "<page_id>:<conv_id>" — phải có cả hai mới mở đúng thread, vì
+    conv_id chỉ duy nhất TRONG một page.
+
+    Chỉ đọc nên chưa gắn quyền riêng (middleware đã bắt đăng nhập); khi thêm
+    thao tác ghi thì kiểm quyền ngay tại đây.
+    """
+    import asyncio
+
+    from app.db.repositories import inbox_store, integration_repo, tag_store
+    from app.integrations.pancake.client import (
+        PancakeError, get_conversation, list_all_conversations,
+    )
+
+    convs: list[dict] = []
+    tags_meta: dict = {}
+    # `sent`/`error` do POST /tin-nhan/tra-loi đá ngược về sau khi gửi tin.
+    loi = error
+    try:
+        convs = await asyncio.to_thread(inbox_store.list_recent, _HT_LIMIT)
+        if not convs:
+            # Kho rỗng = worker vừa bật lần đầu (hoặc bị TẮT trong .env) -> quay
+            # về cách cũ để trang không bao giờ trống trơn. Giống _merged_convs.
+            convs = await list_all_conversations(limit=50)
+    except (PancakeError, Exception) as exc:  # noqa: BLE001 — hiện lỗi tại chỗ
+        loi = f"Không nạp được danh sách hội thoại: {exc}"
+    try:
+        tags_meta = await asyncio.to_thread(tag_store.load_all_tags)
+    except Exception:  # noqa: BLE001 — kho thẻ hỏng thì chip lùi về "Thẻ #id"
+        tags_meta = {}
+
+    mo, thread = None, None
+    if chon and ":" in chon:
+        pid, _, cid = chon.partition(":")
+        mo = next((c for c in convs
+                   if str(c.get("page_id") or "") == pid
+                   and str(c.get("conv_id") or "") == cid), None)
+        if mo:
+            try:
+                thread = await get_conversation(
+                    pid, cid, str(mo.get("customer_id") or "") or None)
+            except (PancakeError, Exception) as exc:  # noqa: BLE001
+                loi = loi or f"Không nạp được tin nhắn: {exc}"
+
+    # Tên người phụ trách: hội thoại chỉ mang uuid Pancake, tra một lô sang
+    # `crm.staff_mappings`. KHÔNG cần uuid đã ghép tài khoản CRM — `external_name`
+    # có sẵn từ lúc đồng bộ nên tên hiện được ngay.
+    try:
+        nhan_su = await asyncio.to_thread(
+            integration_repo.ten_staff_theo_uuid,
+            [u for c in convs for u in (c.get("assignee_ids") or [])])
+    except Exception:  # noqa: BLE001 — thiếu tên thì nút lùi về "Chưa gán"
+        nhan_su = {}
+
+    return HTMLResponse(views.render_hoi_thoai(
+        convs, mo, thread, tab=tab, tags_meta=tags_meta, loi=loi,
+        da_gui=bool(sent), nhan_su=nhan_su))
+
+
 @router.get("/tong-quan", response_class=HTMLResponse)
 async def tong_quan(request: Request, tu: str = "", den: str = "") -> HTMLResponse:
     """Màn 4 (B11 — THẬT) — dashboard công ty: mọi ô số bấm ra danh sách
@@ -200,29 +272,51 @@ async def bao_cao_xuat(request: Request, metric: str,
         headers={"Content-Disposition": f'attachment; filename="{ten_file}"'})
 
 
+def _so_tien(v: str) -> float | None:
+    """Ô "Chi tiêu từ … đến …" nhập bằng TRIỆU -> đồng. Rỗng/rác -> bỏ lọc."""
+    try:
+        return float(str(v).replace(",", ".")) * 1_000_000
+    except (TypeError, ValueError):
+        return None
+
+
 @router.get("/khach-hang", response_class=HTMLResponse)
-async def khach_hang(q: str = "", status: str = "", owner_id: int = 0,
-                     has_order: str = "") -> HTMLResponse:
-    """Màn 8 — danh sách khách CRM + bộ lọc (khác /khach-hang của bot Pancake).
+async def khach_hang(q: str = "", tt: str = "", bucket: str = "",
+                     owner_id: int = 0, page_id: int = 0, mua: str = "",
+                     chi_tu: str = "", chi_den: str = "",
+                     size: int = 30, trang: int = 1) -> HTMLResponse:
+    """Màn 8 — danh sách khách CRM (khác /khach-hang của bot Pancake).
 
-    Dùng `customer_repo.list_customers` (bộ lọc CUSTOMER-001 của B1) khi có lọc;
-    không lọc gì thì đi đường cũ để giữ nguyên cột hội thoại Pancake."""
-    from app.db.repositories import customer_repo, user_repo
+    Bố cục port từ mẫu Kallet: 5 ô đếm · dải lọc · bảng 11 cột · phân trang.
+    Mọi con số đếm thẳng từ schema `crm` (xem quy ước ở `khach_hang_bang`);
+    phần mẫu có mà dữ liệu chưa dựng nổi thì view khoá lại (lớp `ht-todo`).
+    """
+    from app.db.repositories import user_repo
 
-    co_loc = bool(status or owner_id or has_order)
-    if co_loc:
-        rows, total = customer_repo.list_customers(
-            keyword=q, status=status or None,
-            owner_id=owner_id or None,
-            has_order=None if has_order == "" else has_order == "1",
-            limit=100)
-    else:
-        rows, total = repo.list_customers(q=q)
+    size = size if size in (30, 50, 100) else 30
+    trang = max(1, trang)
+    tien_tu, tien_den = _so_tien(chi_tu), _so_tien(chi_den)
+    rows, total = repo.khach_hang_bang(
+        q=q, tt=tt, bucket=bucket, owner_id=owner_id, page_id=page_id,
+        so_mua=mua, chi_tu=tien_tu, chi_den=tien_den,
+        limit=size, offset=(trang - 1) * size)
+    # Bấm nút "trang sau" rồi siết bộ lọc lại: trang đang đứng có thể vượt quá
+    # số trang mới -> bảng trống hoác dù vẫn còn khách. Kéo về trang cuối.
+    so_trang = max(1, -(-total // size))
+    if trang > so_trang:
+        trang = so_trang
+        rows, total = repo.khach_hang_bang(
+            q=q, tt=tt, bucket=bucket, owner_id=owner_id, page_id=page_id,
+            so_mua=mua, chi_tu=tien_tu, chi_den=tien_den,
+            limit=size, offset=(trang - 1) * size)
     nv = user_repo.list_users(status="active", limit=200)[0]
     return HTMLResponse(views.render_khach_hang(
-        rows, total, q,
-        loc={"status": status, "owner_id": owner_id, "has_order": has_order},
-        nhan_vien=nv))
+        rows, total,
+        dem=repo.khach_hang_dem(),
+        loc={"q": q, "tt": tt, "bucket": bucket, "owner_id": owner_id,
+             "page_id": page_id, "mua": mua, "chi_tu": chi_tu,
+             "chi_den": chi_den, "size": size, "trang": trang},
+        nhan_vien=nv, fanpages=repo.khach_hang_fanpages()))
 
 
 # ------------------------------------------------------- hồ sơ 360° (màn 9-10)

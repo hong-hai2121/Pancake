@@ -7,11 +7,19 @@ Nguyên tắc của bộ khung:
   * Khi lát cắt đó làm thật, thay phần thân màn; khung + menu giữ nguyên.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 
+from urllib.parse import quote
+
 from app.integrations.pancake.links import link_hoi_thoai
-from app.web.shell import render_shell, stat
+# Dùng lại đúng bộ tiện ích màn Tin nhắn đang dùng để hai màn hiển thị
+# giờ giấc và tên/màu thẻ y hệt nhau, không lệch mỗi nơi một kiểu.
+from app.web.views.pancake import _parse_dt, _relative_time, _tag_color, tag_label
+# `_icon` gạch dưới là quy ước "nội bộ gói web", không phải cấm dùng — màn Hội
+# thoại cần đúng bộ SVG mà menu trái đang dùng để icon cả trang cùng một nét.
+from app.web.shell import _icon, render_shell, stat
+from app.web.views.troly import TRO_LY_JS
 
 
 def _e(v) -> str:
@@ -690,74 +698,378 @@ def render_tong_quan(data: dict, tieu_cuc: int | None) -> str:
     )
 
 
-# ------------------------------------------------------------ Khách hàng (màn 8)
-def render_khach_hang(rows: list[dict], total: int, q: str,
-                      loc: dict | None = None,
-                      nhan_vien: list[dict] | None = None) -> str:
-    dong = ""
-    for r in rows:
-        # BRD mục 4 — "Nút mở đúng hội thoại Pancake từ hồ sơ CRM". Link ghép từ
-        # dữ liệu đã đồng bộ trong DB; khách chưa có hội thoại thì không hiện nút.
-        link = link_hoi_thoai(r.get("external_page_id") or "",
-                              r.get("external_conversation_id") or "")
-        nut = (
-            f'<a class="btn sm" href="{escape(link)}" target="_blank" rel="noopener"'
-            ' title="Mở hội thoại bên Pancake">💬 Pancake</a>' if link else "—"
-        )
-        dong += (
-            f"<tr><td>{_e(r['customer_code'])}</td>"
-            f'<td><a href="/crm/khach-hang/{r["id"]}"><b>{_e(r["full_name"])}</b></a></td>'
-            f"<td>{_e(r['primary_phone'])}</td><td>{_e(r['province'])}</td>"
-            f"<td><span class='pill'>{_e(r['status'])}</span></td>"
-            f"<td>{_dt(r['created_at'])}</td>"
-            f'<td>{nut} <a class="btn sm" href="/crm/khach-hang/{r["id"]}">Hồ sơ 360°</a>'
-            "</td></tr>"
-        )
-    loc = loc or {}
-    o_tt = "".join(
-        f'<option value="{ma}"{" selected" if loc.get("status") == ma else ""}>'
-        f"{escape(nhan)}</option>"
-        for ma, nhan in [("", "— Mọi trạng thái —"), ("new", "Mới"),
-                         ("consulting", "Đang tư vấn"), ("customer", "Đã mua"),
-                         ("treating", "Đang dùng liệu trình"),
-                         ("completed", "Hoàn thành"), ("churned", "Rời bỏ"),
-                         ("blocked", "Chặn")]
+# ============================================================ Khách hàng (màn 8)
+# Giao diện port từ mẫu crmv2.kallet.vn, DỮ LIỆU THẬT từ schema `crm`:
+# 5 ô đếm bấm được · dải bộ lọc · bảng 11 cột · phân trang.
+#
+# CHƯA LÀM ĐƯỢC — mẫu có nhưng dữ liệu/nghiệp vụ hiện tại chưa dựng nổi. Đánh
+# dấu bằng lớp `ht-todo` (viền đứt, không bấm được, lý do nằm ở tooltip) dùng
+# chung với màn Hội thoại, và liệt kê lại ở khối xổ đầu màn.
+_KH_CHUA_LAM: list[tuple[str, str]] = [
+    ("Hạng thẻ · quyền lợi bị giảm",
+     "chưa có bảng hạng thẻ và ngưỡng chi tiêu để xếp hạng"),
+    ("Tình trạng “hết lượt cứu”",
+     "chưa có bảng đếm số lượt cứu đã dùng cho mỗi khách"),
+    ("Chọn khách để làm hàng loạt (gửi kịch bản · chia lại · xuất)",
+     "chưa có thao tác hàng loạt trên tập khách đã chọn"),
+    ("Chọn cột hiển thị",
+     "chưa lưu được tuỳ chọn cột theo từng người dùng"),
+    ("Xuất theo bộ lọc ra Excel",
+     "chưa dựng xuất file cho màn này"),
+    ("Chép câu mẫu ở mỗi hàng",
+     "thư viện kịch bản chưa đấu sang màn Khách hàng"),
+    ("Cửa 7 ngày cho khách bấm quảng cáo",
+     "Pancake không trả mốc click ads — mới tính được cửa 24 giờ"),
+    ("Sắp xếp bằng cách bấm tiêu đề cột",
+     "bảng đang sắp cố định theo ngày nhận hàng cuối"),
+]
+
+# Ô đếm đầu màn: (khoá lọc, nhãn, biến màu). Bấm vào là lọc theo tình trạng đó.
+_KH_O_DEM = [
+    ("", "tổng khách", "var(--accent)"),
+    ("active", "đang chăm · ≤180 ngày", "var(--ok)"),
+    ("fading", "sắp buông · 181–210 ngày", "var(--warn)"),
+    ("sleep", "ngủ · quá 210 ngày", "var(--sub)"),
+    ("chua_mua", "chưa mua đơn nào", "var(--hot)"),
+]
+
+# Tình trạng chăm sóc -> (nhãn, lớp pill). Ngưỡng khớp `crm_screens_repo`.
+_KH_TINH_TRANG = {
+    "active": ("đang chăm", "active"),
+    "fading": ("sắp buông · 181–210 ngày", "fading"),
+    "sleep": ("ngủ · quá 210 ngày", "sleep"),
+    "chua_mua": ("chưa mua", "chua"),
+}
+
+_KH_BUCKET_NHAN = [
+    ("", "Ngày mua cuối: tất cả"), ("0-30", "≤30 ngày"), ("31-60", "31–60 ngày"),
+    ("61-90", "61–90 ngày"), ("91-120", "91–120 ngày"),
+    ("121-150", "121–150 ngày"), ("151-180", "151–180 ngày"),
+    ("181-210", "181–210 ngày"), ("gt210", ">210 ngày"),
+]
+
+_KH_MUA_NHAN = [("", "Số lần mua: tất cả"), ("1", "1 lần"), ("2", "2 lần"),
+                ("3", "3 lần"), ("4", "4+ lần")]
+
+_KH_SIZE = (30, 50, 100)
+
+
+def _kh_todo(nhan: str) -> str:
+    return f'title="Chưa làm được — {escape(nhan)}"'
+
+
+def _kh_tien(v) -> str:
+    """Số tiền gọn như mẫu: 0₫ · 710k · 7,9 tr."""
+    try:
+        n = float(v or 0)
+    except (TypeError, ValueError):
+        return "0₫"
+    if n <= 0:
+        return "0₫"
+    if n >= 1_000_000:
+        s = f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".")
+        return s.replace(".", ",") + " tr"
+    return f"{round(n / 1000):,}k".replace(",", ".")
+
+
+def _kh_truoc(dt) -> str:
+    """Khoảng cách tới bây giờ, kiểu "3 tháng trước" (nhận datetime của DB)."""
+    if not dt:
+        return "—"
+    goc = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    ngay = max(0, (datetime.now(timezone.utc) - goc).days)
+    if ngay < 1:
+        return "hôm nay"
+    if ngay < 30:
+        return f"{ngay} ngày trước"
+    if ngay < 365:
+        return f"{ngay // 30} tháng trước"
+    return f"{ngay // 365} năm trước"
+
+
+def _kh_tinh_trang(r: dict) -> tuple[str, str]:
+    ngay = r.get("ngay_tu_mua")
+    if ngay is None:
+        return _KH_TINH_TRANG["chua_mua"]
+    if ngay <= 180:
+        return _KH_TINH_TRANG["active"]
+    if ngay <= 210:
+        return _KH_TINH_TRANG["fading"]
+    return _KH_TINH_TRANG["sleep"]
+
+
+def _kh_url(loc: dict, **doi) -> str:
+    """Đường dẫn màn này với bộ lọc hiện tại, ghi đè vài tham số."""
+    tham = dict(loc)
+    tham.update(doi)
+    cai = [(k, v) for k, v in tham.items()
+           if v not in ("", None, 0) and not (k == "trang" and v == 1)]
+    duoi = "&".join(f"{k}={quote(str(v))}" for k, v in cai)
+    return "/crm/khach-hang" + (f"?{duoi}" if duoi else "")
+
+
+def _kh_chon(ten: str, muc: list[tuple[str, str]], dang_chon,
+             todo: str = "") -> str:
+    """Một ô <select> của dải lọc; đổi giá trị là tự nộp form (PJAX vẫn ăn)."""
+    o = "".join(
+        f'<option value="{escape(str(ma))}"'
+        f'{" selected" if str(dang_chon or "") == str(ma) else ""}>'
+        f"{escape(nhan)}</option>" for ma, nhan in muc)
+    if todo:
+        return (f'<select class="ht-todo" disabled {_kh_todo(todo)}>{o}</select>')
+    return (f'<select name="{ten}" onchange="this.form.requestSubmit()">'
+            f"{o}</select>")
+
+
+def _kh_bang_chua_lam() -> str:
+    muc = "".join(f"<li><b>{escape(ten)}</b> — {escape(vi_sao)}</li>"
+                  for ten, vi_sao in _KH_CHUA_LAM)
+    return (
+        '<details class="ht-note" style="border:1px solid var(--border);'
+        'border-radius:12px;margin-bottom:14px"><summary>⚠️ '
+        f"<b>{len(_KH_CHUA_LAM)} chức năng chưa làm được</b>"
+        " — chỗ nào viền đứt là chưa dùng được (bấm để xem)</summary>"
+        f"<ul>{muc}</ul>"
+        '<p class="note">Lần mua · tổng chi · ngày nhận hàng cuối · tương tác '
+        "cuối · lần chăm sóc cuối · người phụ trách · fanpage · cửa 24 giờ là "
+        "<b>dữ liệu thật</b> đếm thẳng từ DB (bảng trống thì hiện “—”).<br>"
+        "Quy ước: <b>lần mua</b> = số đơn đã chốt (bỏ nháp/huỷ/hoàn) · "
+        "<b>tổng chi</b> = tổng tiền các đơn đó · <b>nhận hàng cuối</b> = "
+        "lần giao hàng gần nhất, cũng là mốc tính tình trạng chăm sóc."
+        "</p></details>"
     )
-    o_nv = "".join(
-        f'<option value="{u["id"]}"'
-        f'{" selected" if loc.get("owner_id") == u["id"] else ""}>'
-        f"{escape(u['name'])}</option>" for u in (nhan_vien or [])
-    )
-    o_mua = "".join(
-        f'<option value="{ma}"{" selected" if loc.get("has_order") == ma else ""}>'
-        f"{escape(nhan)}</option>"
-        for ma, nhan in [("", "— Đã mua / chưa —"), ("1", "Đã mua"),
-                         ("0", "Chưa mua")]
-    )
-    body = (
-        '<form class="card form" method="get" action="/crm/khach-hang" '
-        'style="margin-bottom:14px"><div class="grid2">'
-        f'<label>Tìm (tên / SĐT / mã)<input type="text" name="q" value="{escape(q)}"></label>'
-        f'<label>Trạng thái<select name="status">{o_tt}</select></label>'
-        f'<label>Người phụ trách<select name="owner_id">'
-        f'<option value="">— Mọi nhân viên —</option>{o_nv}</select></label>'
-        f'<label>Mua hàng<select name="has_order">{o_mua}</select></label>'
-        "</div>"
-        '<div style="margin-top:10px"><button class="btn primary">🔍 Lọc</button> '
-        '<a class="btn sm" href="/crm/khach-hang">Xoá lọc</a></div>'
-        '<p class="note" style="margin:8px 0 0">Bấm tên khách để mở '
-        '<b>hồ sơ 360°</b> (màn 9) · '
-        '<a href="/crm/khach-hang/gop-trung">🔗 Hợp nhất khách trùng</a> (màn 10)</p>'
+
+
+def _kh_o_dem(dem: dict, loc: dict) -> str:
+    """5 ô đếm — bấm ô nào là lọc theo tình trạng đó, bấm lại thì bỏ lọc."""
+    khoa = {"": "tong", "active": "dang_cham", "fading": "sap_buong",
+            "sleep": "ngu", "chua_mua": "chua_mua"}
+    ra = ""
+    for ma, nhan, mau in _KH_O_DEM:
+        bat = (loc.get("tt") or "") == ma
+        so = int((dem or {}).get(khoa[ma]) or 0)
+        href = _kh_url(loc, tt="" if bat else ma, trang=1)
+        ra += (f'<a class="kh-tile{" on" if bat else ""}" style="--c:{mau}" '
+               f'href="{escape(href)}"><b></b><div class="n">'
+               + f"{so:,}".replace(",", ".")
+               + f'</div><div class="l">{escape(nhan)}</div></a>')
+    return f'<div class="kh-tiles">{ra}</div>'
+
+
+def _kh_dai_loc(loc: dict, nhan_vien: list[dict], fanpages: list[dict]) -> str:
+    nv = [("", "Tất cả nhân viên")] + [(str(u["id"]), u["name"])
+                                       for u in (nhan_vien or [])]
+    fp = [("", "Tất cả fanpage")] + [(str(p["id"]), p["name"])
+                                     for p in (fanpages or [])]
+    tt = [("", "Tất cả tình trạng")] + [
+        (ma, nhan) for ma, (nhan, _) in _KH_TINH_TRANG.items()]
+    the = [("", "Tất cả hạng thẻ"), ("d", "Diamond"), ("g", "Gold"),
+           ("s", "Silver"), ("m", "Member"), ("n", "New Member")]
+    co_loc = any(loc.get(k) for k in
+                 ("q", "tt", "bucket", "owner_id", "page_id", "mua",
+                  "chi_tu", "chi_den"))
+    return (
+        # Ô "khách / trang" nằm ở CHÂN BẢNG nhưng thuộc form này (form="kh-loc")
+        # nên không khai thêm input ẩn `size` ở đây — hai ô cùng tên thì trình
+        # duyệt gửi cả hai và server đọc nhầm ô đầu.
+        '<form class="kh-filters" id="kh-loc" method="get" '
+        'action="/crm/khach-hang">'
+        f'<label class="kh-find">{_icon("search")}'
+        f'<input name="q" value="{escape(loc.get("q") or "")}" '
+        'placeholder="Tìm tên khách · số điện thoại · mã khách…"></label>'
+        + _kh_chon("bucket", _KH_BUCKET_NHAN, loc.get("bucket"))
+        + _kh_chon("tier", the, "", todo="chưa có bảng hạng thẻ")
+        + _kh_chon("owner_id", nv, loc.get("owner_id"))
+        + _kh_chon("page_id", fp, loc.get("page_id"))
+        + _kh_chon("mua", _KH_MUA_NHAN, loc.get("mua"))
+        + _kh_chon("tt", tt, loc.get("tt"))
+        + '<div class="kh-spend"><span>Chi tiêu:</span>'
+          f'<input type="number" name="chi_tu" min="0" step="0.1" placeholder="từ" '
+          f'value="{escape(loc.get("chi_tu") or "")}">'
+          "<span>–</span>"
+          f'<input type="number" name="chi_den" min="0" step="0.1" placeholder="đến" '
+          f'value="{escape(loc.get("chi_den") or "")}"><span>tr</span></div>'
+        + '<button class="kh-btn go">🔍 Lọc</button>'
+        + (f'<a class="kh-clear" href="/crm/khach-hang">{_icon("filter-x")}'
+           "Xoá lọc</a>" if co_loc else
+           f'<span class="kh-clear off">{_icon("filter-x")}Xoá lọc</span>')
+        + '<span class="kh-sp"></span>'
+        + f'<button type="button" class="kh-btn ht-todo" disabled '
+          f'{_kh_todo("chưa dựng xuất file cho màn này")}>'
+          f'{_icon("file-spreadsheet")}Xuất theo bộ lọc{_icon("chevron-down")}'
+          "</button>"
         "</form>"
-        + _bang(
-            ["Mã", "Họ tên", "Điện thoại", "Tỉnh", "Trạng thái", "Tạo lúc", ""],
-            dong, "Không có khách nào khớp bộ lọc",
-        )
-        + f'<p class="note" style="margin-top:8px">Hiện {len(rows)} / tổng {total} '
-          "khách khớp lọc</p>"
     )
-    return render_shell("Khách hàng CRM", "crm-customers", body,
-                        heading="Khách hàng", sub="Màn 8 — danh sách tất cả khách hàng")
+
+
+def _kh_hang(r: dict) -> str:
+    """Một hàng của bảng khách (11 cột như mẫu)."""
+    ma_kh = r["id"]
+    tel = (r.get("primary_phone") or "").strip()
+    o_tel = (f'<button type="button" class="kh-tel" data-so="{escape(tel)}" '
+             f'title="Bấm để chép số">{escape(tel)}</button> · '
+             if tel else "")
+    fanpage = escape(r.get("page_name") or "chưa có hội thoại")
+    cua = _ht_cua(r)
+    link = link_hoi_thoai(r.get("external_page_id") or "",
+                          r.get("external_conversation_id") or "")
+    nut_pancake = (
+        f'<a class="kh-ic" href="{escape(link)}" target="_blank" rel="noopener" '
+        f'title="Mở hội thoại bên Pancake">{_icon("external-link")}</a>'
+        if link else
+        f'<button type="button" class="kh-ic ht-todo" disabled '
+        f'title="Khách chưa có hội thoại Pancake nào trong CRM">'
+        f'{_icon("external-link")}</button>')
+    nhan_tt, lop_tt = _kh_tinh_trang(r)
+    ngay = r.get("ngay_tu_mua")
+    mua_cuoi = (f"<div>{_d(r.get('nhan_hang_cuoi'))}</div>"
+                f'<div class="kh-nho">{ngay} ngày trước</div>'
+                if r.get("nhan_hang_cuoi") else
+                '<span class="kh-none">chưa nhận hàng</span>')
+    cham = (f'<div>{_kh_truoc(r.get("cham_luc"))}</div>'
+            f'<div class="kh-nho">{_e(r.get("cham_boi"))}</div>'
+            if r.get("cham_luc") else '<span class="kh-none">chưa chăm</span>')
+    phu_trach = " · ".join(x for x in (r.get("sale_ten"), r.get("cskh_ten")) if x)
+    return (
+        "<tr>"
+        f'<td><input type="checkbox" class="ht-todo" disabled '
+        f'{_kh_todo("chưa có thao tác hàng loạt")}></td>'
+        f'<td><a class="kh-name" href="/crm/khach-hang/{ma_kh}">'
+        f'{escape(r.get("full_name") or "—")}</a>'
+        f'<div class="kh-sub">{o_tel}{fanpage}</div>'
+        f'<span class="kh-r4"><span class="ht-door {cua[0]}" '
+        f'title="{escape(cua[2])}"><i></i>{escape(cua[1])}</span></span></td>'
+        f'<td><span class="kh-none ht-todo" '
+        f'{_kh_todo("chưa có bảng hạng thẻ")}>chưa xếp hạng</span></td>'
+        f'<td class="num">{int(r.get("so_lan_mua") or 0)}</td>'
+        f'<td class="money">{_kh_tien(r.get("tong_chi"))}</td>'
+        f"<td>{mua_cuoi}</td>"
+        f'<td>{_kh_truoc(r.get("last_message_at"))}</td>'
+        f"<td>{cham}</td>"
+        f"<td>{_e(phu_trach)}</td>"
+        f'<td><span class="kh-st {lop_tt}">{escape(nhan_tt)}</span></td>'
+        f'<td><div class="kh-acts">'
+        f'<a class="kh-ic go" href="/crm/khach-hang/{ma_kh}?tab=hoi-thoai" '
+        f'title="Mở hội thoại trong CRM">{_icon("message-circle")}</a>'
+        f"{nut_pancake}"
+        f'<button type="button" class="kh-ic ht-todo" disabled '
+        f'{_kh_todo("thư viện kịch bản chưa đấu sang màn này")}>'
+        f'{_icon("book-open")}</button></div></td>'
+        "</tr>"
+    )
+
+
+def _kh_chan(loc: dict, total: int, trang: int, so_trang: int) -> str:
+    """Chân bảng: số dòng mỗi trang + nút lùi/tiến."""
+    size = int(loc.get("size") or 30)
+    o_size = "".join(
+        f'<option value="{n}"{" selected" if n == size else ""}>{n}</option>'
+        for n in _KH_SIZE)
+    lui = _kh_url(loc, trang=trang - 1)
+    tien = _kh_url(loc, trang=trang + 1)
+    return (
+        '<div class="kh-foot"><div style="display:flex;align-items:center;gap:7px">'
+        "<span>Hiển thị</span>"
+        f'<select form="kh-loc" name="size" onchange="this.form.requestSubmit()">'
+        f"{o_size}</select><span>khách / trang</span></div>"
+        '<div style="display:flex;align-items:center;gap:10px">'
+        f"<span>Trang {trang} / {so_trang}</span>"
+        '<div class="kh-pager">'
+        + (f'<a class="kh-pg" href="{escape(lui)}" aria-label="Trang trước">'
+           f'{_icon("chevron-left")}</a>' if trang > 1 else
+           f'<span class="kh-pg off">{_icon("chevron-left")}</span>')
+        + (f'<a class="kh-pg" href="{escape(tien)}" aria-label="Trang sau">'
+           f'{_icon("chevron-right")}</a>' if trang < so_trang else
+           f'<span class="kh-pg off">{_icon("chevron-right")}</span>')
+        + "</div></div></div>"
+    )
+
+
+# Bấm số điện thoại là chép vào clipboard rồi hiện toast 1,6 giây (mẫu làm vậy).
+# Chạy lại được nhiều lần: shell nạp lại script sau mỗi lượt điều hướng PJAX.
+_KH_JS = """
+(function(){
+  var toast = document.querySelector('.kh-toast');
+  if (!toast) return;
+  var hen;
+  function bao(chu){
+    toast.textContent = chu;
+    toast.classList.add('on');
+    clearTimeout(hen);
+    hen = setTimeout(function(){ toast.classList.remove('on'); }, 1600);
+  }
+  document.querySelectorAll('.kh-tel').forEach(function(nut){
+    nut.addEventListener('click', function(){
+      var so = nut.getAttribute('data-so') || '';
+      if (!navigator.clipboard) { bao('Trình duyệt không cho chép — ' + so); return; }
+      navigator.clipboard.writeText(so).then(
+        function(){ bao('Đã chép số ' + so); },
+        function(){ bao('Không chép được — ' + so); });
+    });
+  });
+})();
+"""
+
+
+def render_khach_hang(rows: list[dict], total: int, *, dem: dict,
+                      loc: dict, nhan_vien: list[dict] | None = None,
+                      fanpages: list[dict] | None = None) -> str:
+    """Màn 8 — danh sách khách CRM, bố cục port từ mẫu Kallet.
+
+    rows/total — một trang của `crm_screens_repo.khach_hang_bang`.
+    dem        — 5 ô đếm (`khach_hang_dem`), đếm trên TOÀN BỘ khách sống.
+    loc        — bộ lọc đang áp: q · tt · bucket · owner_id · page_id · mua ·
+                 chi_tu · chi_den · size · trang (dùng lại để dựng mọi link).
+    """
+    size = int(loc.get("size") or 30)
+    trang = int(loc.get("trang") or 1)
+    so_trang = max(1, -(-total // size))
+    dau = (trang - 1) * size
+    than = "".join(_kh_hang(r) for r in rows) or (
+        '<tr><td colspan="11" class="rong">Không có khách nào khớp bộ lọc — '
+        "thử bỏ bớt điều kiện hoặc bấm “Xoá lọc”.</td></tr>")
+    # (nhãn cột, có phải cột số không) — cột số căn phải cho khớp ô bên dưới.
+    cot = [("Khách", 0), ("Hạng thẻ", 0), ("Lần mua", 1), ("Tổng chi", 1),
+           ("Nhận hàng cuối", 0), ("Tương tác cuối", 0), ("Chăm sóc cuối", 0),
+           ("Phụ trách", 0), ("Tình trạng", 0)]
+    dau_bang = (
+        f'<th style="width:36px"><input type="checkbox" class="ht-todo" disabled '
+        f'{_kh_todo("chưa có thao tác hàng loạt")}></th>'
+        + "".join('<th class="num">' + escape(c) + "</th>" if so
+                  else "<th>" + escape(c) + "</th>" for c, so in cot)
+        + '<th style="text-align:right">Thao tác</th>')
+    body = (
+        _kh_bang_chua_lam()
+        + _kh_o_dem(dem, loc)
+        + _kh_dai_loc(loc, nhan_vien or [], fanpages or [])
+        + '<div class="kh-card"><div class="kh-head">'
+        + '<span class="cnt">Đang xem '
+        + f"{dau + 1 if rows else 0}–{dau + len(rows)} / "
+        + f"{total:,}".replace(",", ".") + " khách</span>"
+        + '<div class="acts">'
+        + f'<button type="button" class="kh-hbtn ht-todo" disabled '
+          f'{_kh_todo("chưa có thao tác hàng loạt")}>{_icon("check-square")}'
+          f'Chọn khách{_icon("chevron-down")}</button>'
+        + f'<button type="button" class="kh-hbtn ht-todo" disabled '
+          f'{_kh_todo("chưa lưu được tuỳ chọn cột theo người dùng")}>'
+          f'{_icon("columns-3")}Chọn cột{_icon("chevron-down")}</button>'
+        + "</div></div>"
+        + f'<div class="kh-tblwrap"><table class="kh-tbl"><thead><tr>{dau_bang}'
+          f"</tr></thead><tbody>{than}</tbody></table></div>"
+        + _kh_chan(loc, total, trang, so_trang)
+        + "</div>"
+        + '<p class="note" style="margin-top:10px">Bấm tên khách để mở '
+          "<b>hồ sơ 360°</b> (màn 9) · "
+          '<a href="/crm/khach-hang/gop-trung">🔗 Hợp nhất khách trùng</a> '
+          "(màn 10)</p>"
+        + '<div class="kh-toast"></div>'
+    )
+    return render_shell(
+        "Khách hàng CRM", "crm-customers", body,
+        heading="Khách hàng",
+        sub="Toàn bộ khách — tra cứu, lọc, mở hồ sơ 360°",
+        script=_KH_JS,
+    )
 
 
 # ------------------------------------- Bảng chăm sóc theo mốc (màn 11 — B3)
@@ -2073,3 +2385,514 @@ def render_thong_bao(rows: list[dict], total: int, dem: dict,
                         sub="Màn 3 — 11 loại: khách tiềm năng mới · việc đến hạn/quá hạn · "
                             "khách cần gọi lại · phản ứng · chuyển chuyên môn · "
                             "đơn giao/hoàn · mua lại · chờ duyệt · lỗi đồng bộ")
+
+
+# ============================================================ màn Hội thoại
+# Giao diện port từ mẫu crmv2.kallet.vn, DỮ LIỆU THẬT lấy chung nguồn với màn
+# Tin nhắn (/tin-nhan): kho `watcher.hoi_thoai` do worker nền đổ về, thread thì
+# gọi Pancake. Bố cục BA cột: rail lọc · danh sách · khung chat; hồ sơ khách nằm
+# ngay đầu khung chat (mẫu không có panel phải).
+#
+# CHƯA LÀM ĐƯỢC — mọi thứ dưới đây mẫu có nhưng nguồn dữ liệu hiện tại KHÔNG
+# cung cấp, nên vẽ ra thì cũng là số giả. Chúng được đánh dấu bằng lớp `ht-todo`
+# (viền đứt + không bấm được) và liệt kê lại ở khối "Chưa làm được" đầu màn.
+# Mỗi mục ghi kèm thứ còn thiếu để sau này nối cho đúng chỗ.
+_HT_CHUA_LAM: list[tuple[str, str]] = [
+    ("Tách bộ phận Sale / CSKH",
+     "kho hội thoại không biết khách đã mua hay chưa — cần nối đơn POS"),
+    ("Giai đoạn (Mới · Tiềm năng · Hẹn mua…)",
+     "là cột của bảng việc CRM, chưa có ánh xạ hội thoại Pancake → lead"),
+    ("Cửa 7 ngày cho khách bấm quảng cáo",
+     "Pancake không trả mốc click ads — mới tính được cửa 24 giờ"),
+    ("Hạng thẻ · Tổng chi · Mua cuối",
+     "cần bảng khách + đơn hàng, kho hội thoại chỉ có tên và SĐT"),
+    ("Lọc / phân quyền theo nhân viên CRM",
+     "tên người phụ trách đã hiện (lấy từ Pancake), nhưng 0/149 uuid được ghép "
+     "sang tài khoản CRM — ghép ở Quản trị → Tích hợp → Ánh xạ thì mới lọc được"),
+    ("Lọc: đang có nhiệm vụ · nhân viên · nguồn khách · thời gian · cửa gửi tin",
+     "phụ thuộc mấy mục trên"),
+    ("Gửi kịch bản qua Botcake",
+     "chưa nối — riêng 💡 Gợi ý trả lời và 🧠 Trích tri thức thì ĐÃ chạy"),
+    ("Tự khai đã nhắn · Ghi nhận đã gọi · Đánh dấu chưa đọc",
+     "chưa có bảng ghi nhận thao tác nhân viên"),
+]
+
+# Trạng thái đọc -> (icon, lớp CSS, nhãn tooltip). Mẫu chỉ hiện ICON cạnh tên,
+# không có chữ: bong bóng = khách vừa nhắn, mắt = đã xem, mắt gạch = chưa xem.
+_HT_XEM = {
+    "rep": ("message-circle", "rep", "Khách vừa nhắn, chưa trả lời"),
+    "seen": ("eye", "", "Đã xem"),
+    "unseen": ("eye-off", "unseen", "Chưa xem"),
+}
+
+
+def _ht_todo(nhan: str) -> str:
+    """Tooltip chung cho phần tử chưa nối được dữ liệu."""
+    return f'title="Chưa làm được — {escape(nhan)}"'
+
+
+# Đuôi hay bị dính vào tên nhân viên bên Pancake ("… Sales", "… NT"). Bỏ đi thì
+# chữ đại diện mới rơi đúng vào tên gọi.
+_HT_DUOI_BO = {"sales", "sale", "nt", "ocp", "cskh", "ads", "mkt", "marketing"}
+
+
+def _ht_chu_dai_dien(ten: str) -> str:
+    """Một chữ cái làm avatar. Tiếng Việt lấy TỪ CUỐI (tên gọi), như mẫu.
+
+    Không dùng thẳng `split()[-1][0]` được: tên bên Pancake hay kèm số điện thoại
+    và chức danh — "Nguyễn Duy Thuỳ Linh - 0327693299" mà lấy từ cuối thì ra
+    chữ "0". Lọc lấy từ toàn CHỮ, bỏ mấy đuôi chức danh, rồi mới lấy từ cuối.
+    """
+    tu = [t for t in (ten or "").replace("-", " ").split() if t.isalpha()]
+    sach = [t for t in tu if t.lower() not in _HT_DUOI_BO]
+    nguon = sach or tu
+    if nguon:
+        return nguon[-1][0].upper()
+    # Không còn từ nào toàn chữ (tên chỉ có số/ký hiệu) -> chữ cái đầu tiên gặp.
+    for ch in ten or "":
+        if ch.isalpha():
+            return ch.upper()
+    return "?"
+
+
+def _ht_cua(row: dict) -> tuple[str, str, str]:
+    """Cửa gửi tin của Meta -> (loại, nhãn ở danh sách, nhãn ở dải soạn tin).
+
+    Tính từ `last_customer_at` (tin CUỐI CÙNG của khách): còn trong 24 giờ thì
+    nhân viên gõ tay tự do, quá thì Meta khoá, chỉ gửi được mẫu đã duyệt.
+
+    BA trạng thái chứ không phải hai. Thiếu `last_customer_at` (kho có ~1/10 dòng
+    như vậy) thì KHÔNG được kết luận "hết cửa": nói thế là khoá nhầm ô soạn tin
+    của hội thoại có khi vẫn đang mở. Trả về "unk" — nhãn xám, vẫn cho gõ, để
+    Pancake/Meta là bên chốt.
+
+    CHƯA LÀM ĐƯỢC: cửa 7 ngày cho khách bấm quảng cáo — Pancake không trả mốc
+    click ads nên khách ads bị tính hết cửa sau 24 giờ.
+    """
+    moc = _parse_dt(row.get("last_customer_at") or "")
+    if not moc:
+        return ("unk", "Chưa rõ cửa",
+                "Kho chưa có mốc tin cuối của khách — chưa tính được cửa")
+    con = 24 - (datetime.now(timezone.utc) - moc).total_seconds() / 3600
+    if con <= 0:
+        return ("tpl", "Cửa mẫu Meta", "Ngoài cửa — chỉ gửi được mẫu Meta")
+    gio = max(1, int(con))
+    return ("open", f"Cửa tự do · còn {gio} giờ", f"Còn {gio} giờ nhắn tự do")
+
+
+def _ht_chip_the(row: dict, tags_meta: dict) -> str:
+    """Chip màu ở hàng danh sách.
+
+    Mẫu để chip GIAI ĐOẠN ở chỗ này, mà giai đoạn thì chưa có (xem
+    `_HT_CHUA_LAM`). Thứ THẬT gần nhất là thẻ Pancake của hội thoại — cùng kiểu
+    pill có màu — nên tạm dùng thẻ đầu tiên; không thẻ nào thì bỏ trống.
+    """
+    meta = (tags_meta or {}).get(str(row.get("page_id") or "")) or {}
+    for tid in row.get("tags") or []:
+        if isinstance(tid, int) and tid > 0:
+            return (f'<span class="ht-stage" style="--c:{_tag_color(tid, meta)}"'
+                    f' title="Thẻ Pancake">{escape(tag_label(tid, meta))}</span>')
+    return ""
+
+
+def _ht_url(tab: str, chon: str) -> str:
+    return f"/crm/hoi-thoai?tab={tab}&chon={quote(chon)}"
+
+
+def _ht_khoa(row: dict) -> str:
+    """Khoá nhận dạng một hội thoại: page và conv đi cặp mới mở đúng thread."""
+    return f'{row.get("page_id") or ""}:{row.get("conv_id") or ""}'
+
+
+def _ht_nut_rail(icon: str, nhan: str, href: str = "", bat: bool = False,
+                 so: int = 0, todo: str = "") -> str:
+    """Một nút trong rail lọc. `so` > 0 thì đính huy hiệu số ở góc nút.
+
+    `todo` = lý do chưa nối được -> in ra <button disabled> viền đứt thay vì
+    link, để bấm nhầm không đi đâu và nhìn là biết chưa dùng được.
+    """
+    cls = "ht-rb on" if bat else "ht-rb"
+    badge = f'<span class="rnum">{so}</span>' if so else ""
+    if todo:
+        return (f'<button type="button" class="{cls} ht-todo" disabled '
+                f'{_ht_todo(todo)} aria-label="{escape(nhan)}">'
+                f"{_icon(icon)}{badge}</button>")
+    ruot = f'title="{escape(nhan)}" aria-label="{escape(nhan)}">{_icon(icon)}{badge}'
+    if not href:
+        return f'<button type="button" class="{cls}" {ruot}</button>'
+    return f'<a class="{cls}" href="{escape(href)}" {ruot}</a>'
+
+
+def _ht_cua_chip(cua: tuple[str, str, str]) -> str:
+    """Huy hiệu "cửa gửi tin" ở hàng danh sách — chấm tròn + chữ, đúng mẫu."""
+    return (f'<span class="ht-door {cua[0]}" title="{escape(cua[2])}">'
+            f"<i></i>{escape(cua[1])}</span>")
+
+
+def _ht_hang_ds(rows: list[dict], tab: str, chon: str, tags_meta: dict) -> str:
+    """Cột giữa — từng hàng hội thoại (avatar + 4 dòng thông tin)."""
+    ra = ""
+    for c in rows:
+        khoa = _ht_khoa(c)
+        chua_doc = int(c.get("unread_count") or 0)
+        cls = "ht-row"
+        if chua_doc:
+            cls += " unread"
+        if khoa == chon:
+            cls += " on"
+        ten = (c.get("name") or "").strip() or "Khách chưa có tên"
+        chu = _ht_chu_dai_dien(ten)
+        k_xem = ("rep" if chua_doc
+                 else ("seen" if c.get("seen") else "unseen"))
+        ic_xem, lop_xem, nhan_xem = _HT_XEM[k_xem]
+        so = f'<span class="ht-unread">{chua_doc}</span>' if chua_doc else ""
+        ra += (
+            f'<a class="{cls}" href="{escape(_ht_url(tab, khoa))}">'
+            f'<span class="ht-av">{escape(chu)}</span>'
+            '<span class="ht-rmain">'
+            '<span class="ht-r1">'
+            f'<span class="ht-name">{escape(ten)}</span>'
+            f'<span class="ht-seen {lop_xem}" title="{escape(nhan_xem)}">'
+            f'{_icon(ic_xem)}</span>'
+            f'<span class="ht-time">'
+            f'{escape(_relative_time(c.get("updated_at") or ""))}</span></span>'
+            f'<span class="ht-r2"><span class="ht-msg">'
+            f'{escape((c.get("snippet") or "").strip() or "—")}</span>{so}</span>'
+            f'<span class="ht-r3"><span class="ht-fp">'
+            f'{escape(c.get("page_name") or "")}</span>'
+            f"{_ht_chip_the(c, tags_meta)}</span>"
+            f'<span class="ht-r4">{_ht_cua_chip(_ht_cua(c))}</span>'
+            "</span></a>"
+        )
+    return ra or ('<div class="ht-empty" style="min-height:180px">'
+                  "Kho hội thoại đang trống — worker nền chưa đổ về, "
+                  "hoặc mọi page đang TẮT.</div>")
+
+
+def _ht_botcake() -> str:
+    """Logo Botcake ở ô soạn tin — SVG TÔ ĐẶC nên không dùng chung `_icon`
+    (hàm đó dựng thẻ nét, fill:none)."""
+    return (
+        '<svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+        '<rect x="4.4" y="2.2" width="3.4" height="15" rx="1.7"/>'
+        '<path fill-rule="evenodd" d="M13 7.4a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z'
+        'm0 4.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z"/></svg>'
+    )
+
+
+def _ht_nut_phu_trach(nv: dict | None) -> str:
+    """Nút "người phụ trách" ở đầu khung chat.
+
+    Chỉ ĐỌC — đổi người phụ trách vẫn chưa làm được (phải ghép uuid sang tài
+    khoản CRM trước), nên không có mũi tên xổ như mẫu.
+    """
+    if not nv:
+        return (f'<span class="ht-cbtn ht-todo" '
+                f'{_ht_todo("hội thoại này chưa được Pancake gán cho ai")}>'
+                f'{_icon("user-round")}Chưa gán</span>')
+    ten = nv["ten"]
+    tat = _ht_chu_dai_dien(ten)
+    them = f" +{nv['them']}" if nv.get("them") else ""
+    goi_y = f"Phụ trách bên Pancake: {ten}"
+    if nv.get("phong_ban"):
+        goi_y += f" · {nv['phong_ban']}"
+    if not nv.get("user_id"):
+        goi_y += " · chưa ghép sang tài khoản CRM"
+    # Tên Pancake hay dài ("Nguyễn Thị Mỹ Lệ Sales") -> cắt cho khỏi vỡ hàng nút.
+    ngan = ten if len(ten) <= 16 else ten[:15] + "…"
+    return (f'<span class="ht-cbtn" title="{escape(goi_y)}">'
+            f'<span class="mini">{escape(tat)}</span>'
+            f"{escape(ngan)}{escape(them)}</span>")
+
+
+def _ht_phu_trach(c: dict, nhan_su: dict) -> dict | None:
+    """Người phụ trách hội thoại này, tra từ `assignee_ids` (uuid Pancake).
+
+    Pancake cho phép gán NHIỀU người; thực đo thì gần như luôn 1. Lấy người đầu
+    tra được tên, phần dư đếm thành "+N" ở tooltip.
+    """
+    ds = [nhan_su[u] for u in (c.get("assignee_ids") or []) if u in nhan_su]
+    if not ds:
+        return None
+    dau = dict(ds[0])
+    dau["them"] = len(ds) - 1
+    return dau
+
+
+def _ht_khung_chat(c: dict | None, thread: dict | None,
+                   nhan_su: dict | None = None) -> str:
+    """Cột 3 — đầu khung (kiêm hồ sơ khách), luồng tin, dải cửa và ô soạn tin."""
+    if not c:
+        return ('<div class="ht-chat"><div class="ht-empty">'
+                "<div><b>Chọn một hội thoại bên trái</b>"
+                '<div class="note" style="margin-top:6px">Hội thoại chưa đọc '
+                "được đẩy lên đầu danh sách.</div></div></div></div>")
+
+    # --- luồng tin: cùng nguồn với màn Tin nhắn (Pancake trả cũ -> mới) ---
+    tin, ngay_truoc = "", ""
+    for m in (thread or {}).get("messages") or []:
+        dt = _parse_dt(m.get("inserted_at") or "")
+        ngay = dt.strftime("%d/%m/%Y") if dt else ""
+        if ngay and ngay != ngay_truoc:
+            tin += f'<div class="ht-day">{escape(ngay)}</div>'
+            ngay_truoc = ngay
+        chieu = "out" if m.get("is_page") else "in"
+        noi_dung = (m.get("text") or "").strip()
+        # Tin chỉ có ảnh/file: Pancake để text rỗng -> ghi rõ có đính kèm chứ
+        # không in bong bóng trắng trơn.
+        kem = m.get("attachments") or []
+        if not noi_dung and kem:
+            noi_dung = f"[{len(kem)} tệp đính kèm]"
+        if not noi_dung:
+            continue
+        gio = dt.strftime("%H:%M") if dt else ""
+        gio_html = f'<div class="ht-mt">{escape(gio)}</div>' if gio else ""
+        tin += (f'<div class="ht-m {chieu}"><div><div class="ht-bub">'
+                f"{escape(noi_dung)}</div>{gio_html}</div></div>")
+    if not tin:
+        tin = ('<div class="ht-empty" style="min-height:120px">'
+               "Chưa nạp được tin nhắn — page có thể đang TẮT.</div>")
+
+    # --- dải cửa gửi tin + ô soạn tin ---
+    # CHỈ khoá ô gõ khi CHẮC CHẮN hết cửa. "Chưa rõ" (kho thiếu mốc tin cuối)
+    # thì vẫn cho gõ — khoá nhầm còn hại hơn, và Pancake/Meta vẫn chặn ở đầu kia
+    # nếu thật sự ngoài cửa.
+    # Hai nút trợ lý CHẠY THẬT, dùng chung JS + endpoint với màn Tin nhắn:
+    #   💡 Gợi ý trả lời  -> RAG + LLM soạn câu, đổ vào ô soạn, KHÔNG tự gửi
+    #   🧠 Trích tri thức -> GPT đề xuất cặp hỏi-đáp, người duyệt mới lưu
+    # `id` phải đúng tên này vì `window.__troly` tìm theo id (xem views/troly.py).
+    # Để CÙNG HÀNG với chip "còn N giờ nhắn tự do" chứ không nhét cạnh ô soạn:
+    # ở đó chúng chỉ là icon vuông, lẫn với nút Gửi và không ai biết là gì.
+    kb = (
+        '<button type="button" id="btn-suggest" class="ht-tool hint" '
+        'title="Soạn câu trả lời từ tri thức đã lưu — không tự gửi">'
+        f'{_icon("lightbulb")}Gợi ý trả lời</button>'
+        '<button type="button" id="btn-extract" class="ht-tool lib" '
+        'title="Đọc cả hội thoại, đề xuất cặp hỏi-đáp cho kho tri thức">'
+        f'{_icon("book-open")}Trích tri thức</button>'
+        f'<button type="button" class="ht-tool ht-todo" disabled '
+        f'{_ht_todo("gửi qua Botcake chưa nối")}>{_ht_botcake()}Botcake</button>'
+    )
+    cua = _ht_cua(c)
+    mo_cua = cua[0] != "tpl"
+    day = (
+        # Bảng "Trích tri thức" chen giữa luồng tin và ô soạn — cùng chỗ với màn
+        # Tin nhắn để hai màn thao tác giống nhau.
+        '<div id="extract-panel" style="flex:0 0 auto;padding:0 20px;'
+        'max-height:52vh;overflow-y:auto"></div>'
+        f'<div class="ht-win"><span class="ht-wpill {cua[0]}">'
+        f'{_icon("clock" if cua[0] == "open" else "lock")}{escape(cua[2])}'
+        "</span>"
+        # Chỗ báo kết quả của nút Gợi ý ("Dựa trên N câu mẫu…" hoặc lời từ chối).
+        '<span class="shint" id="suggest-hint"></span>'
+        '<span class="ht-wgap"></span>'
+        f"{kb}</div>"
+    )
+    if mo_cua:
+        # Gửi tin dùng lại ĐÚNG endpoint của màn Tin nhắn (POST /tin-nhan/tra-loi)
+        # nên không phát sinh đường gửi thứ hai. `ve` để gửi xong quay lại đây
+        # chứ không nhảy sang /tin-nhan.
+        ve = _ht_url("all", _ht_khoa(c))
+        day += (
+            '<form class="ht-composer" method="post" action="/tin-nhan/tra-loi" '
+            'data-native>'
+            f'<input type="hidden" name="page_id" '
+            f'value="{escape(str(c.get("page_id") or ""))}">'
+            '<input type="hidden" name="list_page_id" value="ALL">'
+            f'<input type="hidden" name="conv_id" '
+            f'value="{escape(str(c.get("conv_id") or ""))}">'
+            f'<input type="hidden" name="customer_id" '
+            f'value="{escape(str(c.get("customer_id") or ""))}">'
+            f'<input type="hidden" name="ve" value="{escape(ve)}">'
+            '<input name="message" required autocomplete="off" '
+            'placeholder="Nhập tin nhắn gửi khách…">'
+            f'<button class="ht-send" title="Gửi THẬT cho khách qua Pancake">'
+            f'{_icon("send")}</button></form>'
+        )
+    else:
+        # Hết cửa 24 giờ -> Meta khoá tin tự do: GIẤU ô gõ tay, chỉ chừa đường
+        # gửi mẫu đã duyệt (mà đường đó cũng chưa nối) — để nhân viên khỏi gõ
+        # xong mới biết không gửi được.
+        day += (
+            f'<div class="ht-locked">{_icon("lock")}'
+            "<span>Quá 24 giờ kể từ tin cuối của khách — Meta khoá tin tự do. "
+            "Chỉ gửi được kịch bản có mẫu Meta đã duyệt.</span></div>"
+            '<div class="ht-composer">'
+            f'<button type="button" class="ht-cbtn ht-todo" disabled '
+            f'style="flex:1 1 auto;height:42px;justify-content:center" '
+            f'{_ht_todo("chưa có kho mẫu Meta đã duyệt")}>'
+            f'{_icon("mail")}Chọn mẫu Meta đã duyệt</button></div>'
+        )
+
+    ten = (c.get("name") or "").strip() or "Khách chưa có tên"
+    chu = _ht_chu_dai_dien(ten)
+    dt_kh = (c.get("phones") or [""])[0] if c.get("has_phone") else ""
+    link_pc = link_hoi_thoai(c.get("page_id") or "", c.get("conv_id") or "")
+    nut_pc = (
+        f'<a class="ht-ic" href="{escape(link_pc)}" target="_blank" '
+        f'rel="noopener" title="Mở hội thoại bên Pancake">'
+        f'{_icon("external-link")}</a>' if link_pc else ""
+    )
+    return (
+        '<div class="ht-chat">'
+        # --- đầu khung: avatar · tên + hạng thẻ · dải meta · cụm nút ---
+        '<div class="ht-chead">'
+        f'<span class="ht-av">{escape(chu)}</span>'
+        '<div class="ht-cwho">'
+        f'<div class="ht-cline"><span class="ht-cname">{escape(ten)}</span>'
+        f'<span class="ht-tier ht-todo" {_ht_todo("chưa có bảng hạng thẻ")}>'
+        f'{_icon("user")}Hạng thẻ</span></div>'
+        '<div class="ht-cmeta">'
+        + (f'<span>{_icon("phone")}<b>{escape(dt_kh)}</b></span>'
+           if dt_kh else
+           f'<span class="ht-todo" {_ht_todo("hội thoại chưa có SĐT")}>'
+           f'{_icon("phone")}—</span>')
+        + f'<span class="ht-todo" {_ht_todo("cần bảng đơn hàng")}>'
+          "Mua cuối: <b>—</b></span>"
+          f'<span class="ht-todo" {_ht_todo("cần bảng đơn hàng")}>'
+          "Tổng chi: <b>—</b></span>"
+        f'<span>{escape(c.get("page_name") or "")}</span></div></div>'
+        '<div class="ht-cact">'
+        + _ht_nut_phu_trach(_ht_phu_trach(c, nhan_su or {}))
+        +
+        f'<button type="button" class="ht-ic ht-todo" disabled '
+        f'{_ht_todo("chưa có bảng ghi nhận thao tác")}>{_icon("check")}</button>'
+        f'<button type="button" class="ht-ic ht-todo" disabled '
+        f'{_ht_todo("chưa có bảng ghi nhận thao tác")}>'
+        f'{_icon("phone-call")}</button>'
+        f'<button type="button" class="ht-cbtn ht-todo" disabled '
+        f'{_ht_todo("chưa có cờ đánh dấu chưa đọc")}>'
+        f'{_icon("mail")}Chưa đọc</button>'
+        f"{nut_pc}</div></div>"
+        f'<div class="ht-thread">{tin}</div>{day}</div>'
+    )
+
+
+def _ht_bang_chua_lam() -> str:
+    """Khối xổ liệt kê những gì mẫu có mà dữ liệu hiện tại chưa dựng được."""
+    muc = "".join(
+        f"<li><b>{escape(ten)}</b> — {escape(vi_sao)}</li>"
+        for ten, vi_sao in _HT_CHUA_LAM)
+    return (
+        '<details class="ht-note"><summary>⚠️ '
+        f"<b>{len(_HT_CHUA_LAM)} chức năng chưa làm được</b>"
+        " — chỗ nào viền đứt là chưa dùng được (bấm để xem)</summary>"
+        f"<ul>{muc}</ul>"
+        "<p class=\"note\">Tin nhắn · tên khách · fanpage · số chưa đọc · SĐT · "
+        "thẻ Pancake · cửa 24 giờ là <b>dữ liệu thật</b>, lấy chung nguồn với "
+        "màn Tin nhắn.</p></details>"
+    )
+
+
+# Mở một hội thoại là phải thấy TIN MỚI NHẤT ngay. Pancake trả cũ -> mới nên
+# tin cuối nằm dưới đáy khung, mà khung vừa vẽ ra luôn đứng ở scrollTop = 0 ->
+# người dùng phải tự kéo xuống. Đẩy đáy ngay khi trang (hoặc lượt swap AJAX)
+# dựng xong. Chạy lại được nhiều lần: shell gỡ và nạp lại script này sau mỗi
+# lần điều hướng (xem `render_shell(script=...)`).
+_HT_JS = """
+(function(){
+  var t = document.querySelector('.ht-thread');
+  if (!t) return;
+  function xuongDay(){ t.scrollTop = t.scrollHeight; }
+  xuongDay();
+  // Lượt điều hướng AJAX chạy trong View Transition: có lúc script nổ trước
+  // khi bố cục flex chốt chiều cao -> đo lại ở khung hình kế cho chắc ăn.
+  requestAnimationFrame(xuongDay);
+})();
+"""
+
+# Đấu hai nút trợ lý vào ô soạn tin. `window.__troly` do views/troly.py định
+# nghĩa (dùng chung với màn Tin nhắn) và tìm 4 phần tử theo id: btn-suggest ·
+# suggest-hint · btn-extract · extract-panel.
+_HT_TROLY_GOI = """
+(function(){
+  var form = document.querySelector('.ht-composer');
+  var field = form && form.querySelector('[name=message]');
+  if (form && field && window.__troly) window.__troly(form, field);
+})();
+"""
+
+
+def render_hoi_thoai(convs: list[dict], mo: dict | None = None,
+                     thread: dict | None = None, *, tab: str = "all",
+                     tags_meta: dict | None = None, loi: str = "",
+                     da_gui: bool = False, nhan_su: dict | None = None) -> str:
+    """Màn Hội thoại — bố cục 3 cột port từ mẫu, dữ liệu thật từ kho hội thoại.
+
+    convs     — dòng kho `watcher.hoi_thoai` (cùng shape màn Tin nhắn dùng).
+    mo        — hội thoại đang mở (một phần tử của `convs`), None thì cột chat
+                hiện lời nhắc chọn.
+    thread    — {conv_id, customer_name, messages:[...]} của hội thoại đang mở.
+    tab       — "all" | "unread".
+    tags_meta — {page_id: {tag_id: {text,color}}} để chip thẻ có tên/màu thật.
+    nhan_su   — {uuid: {ten, phong_ban, user_id}} để hiện người phụ trách.
+    loi       — lỗi khi nạp (Pancake/DB); có thì hiện dải đỏ, phần còn lại vẫn vẽ.
+    """
+    tab = tab if tab in ("all", "unread") else "all"
+    so_chua_doc = sum(1 for c in convs if int(c.get("unread_count") or 0))
+    rows = [c for c in convs if int(c.get("unread_count") or 0)] \
+        if tab == "unread" else list(convs)
+    chon = _ht_khoa(mo) if mo else ""
+
+    # --- cột 1: rail lọc. Hai nút đầu chạy thật; phần còn lại chưa có nguồn. ---
+    rail = (
+        _ht_nut_rail("messages-square", "Tất cả", _ht_url("all", chon),
+                     tab == "all")
+        + _ht_nut_rail("mail-warning", f"Chưa đọc ({so_chua_doc})",
+                       _ht_url("unread", chon), tab == "unread", so=so_chua_doc)
+        + _ht_nut_rail("list-checks", "Đang có nhiệm vụ",
+                       todo="chưa có bảng nhiệm vụ gắn với hội thoại")
+        + '<div class="ht-rsep"></div>'
+        + _ht_nut_rail("flame", "Sale · khách mới",
+                       todo="chưa biết khách đã mua hay chưa")
+        + _ht_nut_rail("heart-handshake", "CSKH · khách cũ",
+                       todo="chưa biết khách đã mua hay chưa")
+        + _ht_nut_rail("user-round", "Lọc theo nhân viên",
+                       todo="chưa có bảng chia hội thoại cho nhân viên")
+        + _ht_nut_rail("radio", "Lọc theo nguồn khách",
+                       todo="chưa có nguồn khách trong kho hội thoại")
+        + _ht_nut_rail("calendar", "Lọc theo thời gian",
+                       todo="chưa dựng bộ chọn khoảng ngày cho màn này")
+        + _ht_nut_rail("timer", "Lọc theo thời gian nhắn tự do",
+                       todo="cần cửa 7 ngày (ads) mới lọc đủ nghĩa")
+        + '<div class="ht-rsep"></div>'
+        + _ht_nut_rail("panel-left-close", "Thu gọn danh sách hội thoại",
+                       todo="chưa dựng trạng thái thu gọn")
+    )
+
+    # --- cột 2: danh sách (ô tìm + nút Lọc theo — cả hai chưa nối) ---
+    danh_sach = (
+        '<div class="ht-list">'
+        f'<div class="ht-lhead"><div class="ht-lfind">{_icon("search")}'
+        '<input class="ht-todo" disabled placeholder="Tìm kiếm" '
+        f'{_ht_todo("chưa dựng tìm kiếm cho màn này")}></div>'
+        f'<button type="button" class="ht-lfilter ht-todo" disabled '
+        f'{_ht_todo("bộ lọc phụ thuộc các mục chưa làm ở trên")}>'
+        f'{_icon("sliders")}Lọc theo</button></div>'
+        f'<div class="ht-lbody">'
+        f"{_ht_hang_ds(rows, tab, chon, tags_meta or {})}</div></div>"
+    )
+
+    dai_loi = (f'<div class="flash err" style="margin:0;border-radius:0">'
+               f"⚠️ {escape(loi)}</div>" if loi else "")
+    if da_gui:
+        dai_loi += ('<div class="flash ok" style="margin:0;border-radius:0">'
+                    "✓ Đã gửi tin cho khách.</div>")
+    body = (
+        '<div class="ht-wrap">'
+        + dai_loi + _ht_bang_chua_lam()
+        + '<div class="ht"><div class="ht-rail">' + rail + "</div>"
+        + danh_sach + _ht_khung_chat(mo, thread, nhan_su)
+        + "</div></div>"
+    )
+    # JS hai nút trợ lý chỉ nạp khi ĐANG MỞ một hội thoại — `__troly` cần form
+    # soạn tin để lấy page_id/conv_id/customer_id, chưa mở thì không có form.
+    js = _HT_JS + (TRO_LY_JS + _HT_TROLY_GOI if mo else "")
+    return render_shell(
+        "Hội thoại", "crm-chat", body,
+        heading="Hội thoại",
+        sub=f"{len(convs)} hội thoại trong kho · {so_chua_doc} chưa đọc · "
+            "cùng nguồn với màn Tin nhắn",
+        script=js,
+        full=True,
+    )

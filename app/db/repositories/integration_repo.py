@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from app.db.client import get_pg_pool
 
 PROVIDERS = ("pancake_pages", "pancake_pos")
-ENTITIES = ("conversation", "order", "customer", "tag", "page")
+ENTITIES = ("conversation", "message", "order", "customer", "tag", "page", "staff")
 
 # Backoff hàng đợi lỗi: thử lại sau 5' → 15' → 45' → 2h15 → 6h45 (nhân 3),
 # quá `RETRY_TOI_DA` lần thì bỏ cuộc (given_up) để người xử lý tay.
@@ -442,40 +442,176 @@ def dem_loi_dang_cho() -> int:
 # ------------------------------------------------------------------ nhân viên
 def upsert_staff(
     *, provider: str, external_staff_id: str, external_name: str = "",
-    role_hint: str = "",
+    role_hint: str = "", ho_so: dict | None = None,
 ) -> dict:
-    """Ghi nhận một nhân viên Pancake vừa gặp; giữ nguyên ánh xạ user_id đã gán."""
+    """Ghi nhận một nhân viên Pancake vừa gặp; giữ nguyên ánh xạ user_id đã gán.
+
+    Hai đường gọi, cùng một khoá `external_staff_id` (uuid toàn cục Pancake):
+      · pos_sync nhặt id trần trong đơn  -> `ho_so=None`, chỉ chạm last_seen_at
+      · lấy DANH SÁCH nhân viên từ POS   -> `ho_so` = {shop_id,email,phone,
+        department,fb_id,avatar_url,raw}, đồng thời đóng dấu synced_at
+
+    Hồ sơ mới KHÔNG ghi đè bằng rỗng: đường nhặt-từ-đơn không được xoá tên mà
+    đường danh-sách vừa điền. `raw` đã phải lọc api_key TRƯỚC khi vào đây.
+    """
+    hs = ho_so or {}
     pool = get_pg_pool()
     with pool.connection() as conn:
         return conn.execute(
             """
             insert into crm.staff_mappings
-                (provider, external_staff_id, external_name, role_hint, last_seen_at)
-            values (%s, %s, nullif(%s, ''), nullif(%s, ''), now())
+                (provider, external_staff_id, external_name, role_hint, last_seen_at,
+                 shop_id, email, phone, department, fb_id, avatar_url, raw, synced_at)
+            values (%s, %s, nullif(%s, ''), nullif(%s, ''), now(),
+                    nullif(%s, ''), nullif(%s, ''), nullif(%s, ''), nullif(%s, ''),
+                    nullif(%s, ''), nullif(%s, ''), %s::jsonb,
+                    case when %s::jsonb is null then null else now() end)
             on conflict (provider, external_staff_id) do update set
                 external_name = coalesce(nullif(excluded.external_name, ''),
                                          crm.staff_mappings.external_name),
                 role_hint     = coalesce(crm.staff_mappings.role_hint, excluded.role_hint),
-                last_seen_at  = now()
-            returning *
+                last_seen_at  = now(),
+                shop_id       = coalesce(excluded.shop_id,    crm.staff_mappings.shop_id),
+                email         = coalesce(excluded.email,      crm.staff_mappings.email),
+                phone         = coalesce(excluded.phone,      crm.staff_mappings.phone),
+                department    = coalesce(excluded.department, crm.staff_mappings.department),
+                fb_id         = coalesce(excluded.fb_id,      crm.staff_mappings.fb_id),
+                avatar_url    = coalesce(excluded.avatar_url, crm.staff_mappings.avatar_url),
+                raw           = coalesce(excluded.raw,        crm.staff_mappings.raw),
+                synced_at     = coalesce(excluded.synced_at,  crm.staff_mappings.synced_at),
+                updated_at    = now()
+            -- xmax = 0 là idiom Postgres cho "hàng này do INSERT chứ không phải
+            -- nhánh DO UPDATE" -> đếm mới/cũ chuẩn, khỏi so lệch mốc thời gian.
+            returning *, (xmax = 0) as vua_tao
             """,
-            (provider, str(external_staff_id), external_name, role_hint),
+            (provider, str(external_staff_id), external_name, role_hint,
+             str(hs.get("shop_id") or ""), str(hs.get("email") or ""),
+             str(hs.get("phone") or ""), str(hs.get("department") or ""),
+             str(hs.get("fb_id") or ""), str(hs.get("avatar_url") or ""),
+             json.dumps(hs["raw"], ensure_ascii=False) if hs.get("raw") else None,
+             json.dumps(hs["raw"], ensure_ascii=False) if hs.get("raw") else None),
         ).fetchone()
 
 
-def gan_staff(provider: str, external_staff_id: str, user_id: int | None) -> dict | None:
-    """Admin gán nhân viên Pancake -> tài khoản CRM (user_id None = gỡ ánh xạ)."""
+def staff_theo_user() -> dict[int, dict]:
+    """users.id -> dòng nhân viên Pancake đã ghép (cột 'Ghép Pancake' màn Nhân viên).
+
+    Gộp CẢ HAI nguồn. Ưu tiên dòng có hồ sơ thật (synced_at), rồi tới dòng POS —
+    POS có email/SĐT/phòng ban còn pages.fm chỉ có tên, nên dòng POS bày ra đẹp
+    hơn. Một người có thể có 2 dòng (uuid dùng chung, provider khác nhau) nên
+    phải distinct để cột không nhân đôi."""
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """
+            select distinct on (user_id) *
+              from crm.staff_mappings
+             where user_id is not null
+             order by user_id, (synced_at is not null) desc,
+                      (provider = 'pancake_pos') desc, last_seen_at desc nulls last
+            """
+        ).fetchall()
+    return {r["user_id"]: r for r in rows}
+
+
+def staff_chua_ghep() -> list[dict]:
+    """Nhân viên Pancake chưa ứng với tài khoản CRM nào — khối cảnh báo màn NV.
+
+    Gộp hai nguồn và GỘP THEO uuid: `external_staff_id` là uuid toàn cục dùng
+    chung giữa POS và pages.fm (đo 04/08: 18/20 uuid luồng chat cũng có bên POS),
+    nên cùng một con người mà đếm hai lần là báo sai số cho Admin."""
     pool = get_pg_pool()
     with pool.connection() as conn:
         return conn.execute(
             """
-            insert into crm.staff_mappings (provider, external_staff_id, user_id)
-            values (%s, %s, %s)
-            on conflict (provider, external_staff_id)
-            do update set user_id = excluded.user_id
-            returning *
+            select distinct on (s.external_staff_id) s.*,
+                   (select array_agg(distinct p.provider order by p.provider)
+                      from crm.staff_mappings p
+                     where p.external_staff_id = s.external_staff_id) as nguon
+              from crm.staff_mappings s
+             where s.user_id is null
+             order by s.external_staff_id, (s.synced_at is not null) desc,
+                      (s.provider = 'pancake_pos') desc
+            """
+        ).fetchall()
+
+
+def ten_staff_theo_uuid(uuids: list[str]) -> dict[str, dict]:
+    """uuid Pancake -> {ten, phong_ban, user_id} cho MỘT LÔ uuid.
+
+    Dùng ở màn Hội thoại: mỗi hội thoại mang `assignee_ids` là uuid trần, muốn
+    hiện tên người phụ trách thì phải tra bảng này. Nhận cả lô thay vì hỏi từng
+    cái — 100 hội thoại mà tra lẻ là 100 lượt truy vấn.
+
+    KHÔNG cần `user_id` đã ghép: `external_name` có sẵn ngay từ lúc đồng bộ
+    (đo 04/08: 149/149 dòng có tên, 0/149 đã ghép CRM). Nhờ vậy tên người phụ
+    trách hiện được ngay, không phải chờ Admin ngồi ánh xạ xong.
+
+    `distinct on` là BẮT BUỘC: một người ở hai nguồn là hai dòng, bỏ ra thì tên
+    nhân đôi. Ưu tiên dòng POS vì chỉ POS mới có phòng ban.
+    """
+    ids = [str(u) for u in dict.fromkeys(uuids) if u]
+    if not ids:
+        return {}
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """
+            select distinct on (external_staff_id)
+                   external_staff_id, external_name, department, user_id
+              from crm.staff_mappings
+             where external_staff_id = any(%s)
+             order by external_staff_id, (synced_at is not null) desc,
+                      (provider = 'pancake_pos') desc, last_seen_at desc nulls last
             """,
-            (provider, str(external_staff_id), user_id),
+            (ids,),
+        ).fetchall()
+    return {
+        r["external_staff_id"]: {
+            "ten": (r["external_name"] or "").strip(),
+            "phong_ban": (r["department"] or "").strip(),
+            "user_id": r["user_id"],
+        }
+        for r in rows
+    }
+
+
+def gan_staff(provider: str, external_staff_id: str, user_id: int | None) -> dict | None:
+    """Admin gán nhân viên Pancake -> tài khoản CRM (user_id None = gỡ ánh xạ).
+
+    LAN SANG MỌI PROVIDER cùng `external_staff_id`, không chỉ provider truyền
+    vào. Lý do: `PROVIDERS` toàn là Pancake và hai bên DÙNG CHUNG không gian
+    uuid người dùng — `assigning_seller_id` của đơn POS với `assignee_ids` của
+    hội thoại là cùng một con người (đo 04/08: 36 uuid nằm ở cả hai bảng). Trước
+    đây Admin phải gán hai lần cho một người, quên một lần là đơn/hội thoại bên
+    kia không quy được về ai.
+
+    ⚠ Chỗ này dựa vào việc MỌI provider đều là Pancake. Thêm nguồn thứ ba có
+    không gian id khác (id số nhỏ chẳng hạn) thì phải chặn lan lại, kẻo "1" bên
+    này bị coi là "1" bên kia.
+
+    Trả dòng của provider được yêu cầu, kèm `lan_toa` = số dòng provider KHÁC
+    cũng vừa được gán theo.
+    """
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            """
+            with cham as (
+                insert into crm.staff_mappings (provider, external_staff_id, user_id)
+                values (%s, %s, %s)
+                on conflict (provider, external_staff_id)
+                do update set user_id = excluded.user_id, updated_at = now()
+                returning *
+            ), lan as (
+                update crm.staff_mappings set user_id = %s, updated_at = now()
+                 where external_staff_id = %s and provider <> %s
+                returning id
+            )
+            select cham.*, (select count(*) from lan) as lan_toa from cham
+            """,
+            (provider, str(external_staff_id), user_id,
+             user_id, str(external_staff_id), provider),
         ).fetchone()
 
 

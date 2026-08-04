@@ -503,6 +503,20 @@ async def inbox_reply(request: Request) -> RedirectResponse:
         except (PancakeError, httpx.HTTPError) as exc:
             params["error"] = str(exc)[:150]
 
+    # Màn Hội thoại (/crm/hoi-thoai) gửi qua CHÍNH endpoint này để khỏi mở đường
+    # gửi thứ hai, nên nó gửi kèm `ve` = nơi muốn quay lại. Không có `ve` thì
+    # vẫn về /tin-nhan y như cũ. Chỉ nhận đường dẫn nội bộ ("/..."), không nhận
+    # URL tuyệt đối — tránh biến form này thành bàn đạp chuyển hướng ra ngoài.
+    ve = get("ve")
+    if ve.startswith("/") and not ve.startswith("//"):
+        goc, _, duoi = ve.partition("?")
+        q = {"sent": params["sent"]} if params.get("sent") else {}
+        if params.get("error"):
+            q["error"] = params["error"]
+        noi = "&" if duoi else "?"
+        return RedirectResponse(
+            f"{ve}{noi}{urlencode(q)}" if q else ve, status_code=303)
+
     return RedirectResponse(f"/tin-nhan?{urlencode(params)}", status_code=303)
 
 

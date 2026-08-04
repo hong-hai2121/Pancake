@@ -140,6 +140,63 @@ def _nhan_vien_pos(don_pos: dict) -> None:
             pass
 
 
+# Trường bí mật trong dòng nhân viên POS — mỗi người có api_key RIÊNG. Không lưu
+# vào DB, không ghi log, không bày lên web (cùng luật với token ở màn Cài đặt).
+_BI_MAT_NHAN_VIEN = ("api_key", "note_api_key", "token", "access_token", "password")
+
+
+def _loc_bi_mat(dong: dict) -> dict:
+    """Bỏ mọi trường bí mật khỏi 1 dòng nhân viên POS trước khi lưu `raw`."""
+    return {k: v for k, v in dong.items() if k not in _BI_MAT_NHAN_VIEN}
+
+
+def _ho_so_nhan_vien(dong: dict, shop_id: str) -> tuple[str, str, dict]:
+    """1 dòng POS -> (external_staff_id, tên, hồ sơ) để đưa vào staff_mappings.
+
+    POS gói tên/email/SĐT trong object con `user`, phòng ban trong `department`.
+    Khoá lấy `user_id` (uuid toàn cục) chứ KHÔNG lấy `id` ngoài cùng: `id` là id
+    bản ghi shop-user, còn đơn hàng mang `assigning_seller_id` = `user_id`.
+    """
+    nguoi = dong.get("user") or {}
+    ngoai = str(dong.get("user_id") or nguoi.get("id") or "").strip()
+    ten = str(nguoi.get("name") or "").strip()
+    return ngoai, ten, {
+        "shop_id": shop_id,
+        "email": str(nguoi.get("email") or "").strip(),
+        "phone": str(nguoi.get("phone_number") or "").strip(),
+        "department": str((dong.get("department") or {}).get("name") or "").strip(),
+        "fb_id": str(nguoi.get("fb_id") or "").strip(),
+        "avatar_url": str(nguoi.get("avatar_url") or "").strip(),
+        "raw": _loc_bi_mat(dong),
+    }
+
+
+def sync_nhan_vien(danh_sach: list[dict], shop_id: str) -> dict:
+    """Đổ DANH SÁCH nhân viên POS vào staff_mappings. Trả dict đếm cho sync_logs.
+
+    Chỉ ghi hồ sơ (tên · email · SĐT · phòng ban) để Admin biết uuid nào là ai —
+    TUYỆT ĐỐI không đụng `user_id` (ánh xạ sang CRM là việc người bấm) và không
+    phân công khách, đúng luật đã ghi ở `_nhan_vien_pos`.
+
+    Idempotent: chạy lại chỉ cập nhật hồ sơ + synced_at, không đẻ dòng mới.
+    """
+    dem = {"tao_moi": 0, "cap_nhat": 0, "bo_qua": 0, "loi": 0}
+    for dong in danh_sach:
+        ngoai, ten, ho_so = _ho_so_nhan_vien(dong, shop_id)
+        if not ngoai:
+            dem["bo_qua"] += 1
+            continue
+        try:
+            row = integration_repo.upsert_staff(
+                provider=_PROVIDER, external_staff_id=ngoai,
+                external_name=ten, ho_so=ho_so)
+            dem["tao_moi" if (row or {}).get("vua_tao") else "cap_nhat"] += 1
+        except Exception as exc:  # noqa: BLE001 — 1 người hỏng không chặn cả mẻ
+            dem["loi"] += 1
+            print(f"[pos_sync] nhân viên {ngoai}: {exc}", file=sys.stderr)
+    return dem
+
+
 def sync_row(don_pos: dict, anh_xa: dict[int, str],
              *, hook_ban_giao: bool = True) -> str:
     """Đồng bộ MỘT đơn POS. Trả 'tao_moi' | 'cap_nhat' | 'bo_qua'. Idempotent.

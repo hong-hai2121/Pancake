@@ -64,6 +64,113 @@ _ICONS = {
     "data": '<path d="M12 2a3 3 0 0 0-3 3v.4A3.2 3.2 0 0 0 7 11a3 3 0 0 0 2 5.6V18'
             'a3 3 0 0 0 6 0v-1.4A3 3 0 0 0 17 11a3.2 3.2 0 0 0-2-5.6V5a3 3 0 0 0-3-3z"/>'
             '<path d="M12 2v20"/>',
+    # --- bộ icon riêng của màn Hội thoại (rail lọc · hàng danh sách · đầu khung
+    # chat · ô soạn tin). Chép ĐÚNG path lucide mà mẫu crmv2.kallet.vn dùng để
+    # hình vẽ khớp bản gốc; chỉ nét là theo _icon (1.8) cho đồng bộ menu.
+    "messages-square": '<path d="M16 10a2 2 0 0 1-2 2H6.83a2 2 0 0 0-1.42.59l-2.2 2.2'
+                       'A.71.71 0 0 1 2 14.29V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>'
+                       '<path d="M20 9a2 2 0 0 1 2 2v10.29a.71.71 0 0 1-1.21.5l-2.2-2.2'
+                       'A2 2 0 0 0 17.17 19H10a2 2 0 0 1-2-2v-1"/>',
+    "mail-warning": '<path d="M22 10.5V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h12.5"/>'
+                    '<path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>'
+                    '<path d="M20 14v4"/><path d="M20 22v.01"/>',
+    "list-checks": '<path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/>'
+                   '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/>',
+    "flame": '<path d="M12 3q1 4 4 6.5t3 5.5a1 1 0 0 1-14 0 5 5 0 0 1 1-3 1 1 0 0 0 5 0'
+             'c0-2-1.5-3-1.5-5q0-2 2.5-4"/>',
+    "heart-handshake": '<path d="M19.41 14.41C21 12.83 22 11.5 22 9.5a5.5 5.5 0 0 0-9.59-3.68'
+                       '.6.6 0 0 1-.82 0A5.5 5.5 0 0 0 2 9.5c0 2.3 1.5 4 3 5.5l5.54 5.36'
+                       'a2 2 0 0 0 2.88.05 2.12 2.12 0 0 0 0-3 2.12 2.12 0 1 0 3-3'
+                       ' 2.12 2.12 0 0 0 3 0 2 2 0 0 0 0-2.83l-1.88-1.88a2.41 2.41 0 0 0-3.41 0'
+                       'l-1.71 1.71a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l2.82-2.76"/>',
+    "user-round": '<circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/>',
+    "radio": '<path d="M16.25 7.76a6 6 0 0 1 0 8.48"/>'
+             '<path d="M19.08 4.93a10 10 0 0 1 0 14.14"/>'
+             '<path d="M4.93 19.07a10 10 0 0 1 0-14.14"/>'
+             '<path d="M7.75 16.24a6 6 0 0 1 0-8.48"/><circle cx="12" cy="12" r="2"/>',
+    "calendar": '<path d="M8 2v3"/><path d="M16 2v3"/>'
+                '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/>',
+    "timer": '<path d="M10 2h4"/><path d="m12 14 3-3"/><circle cx="12" cy="14" r="8"/>',
+    "panel-left-close": '<rect x="3" y="3" width="18" height="18" rx="2"/>'
+                        '<path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
+    "search": '<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>',
+    "sliders": '<path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/>'
+               '<path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/>'
+               '<path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/>',
+    "eye": '<path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7'
+           ' 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/>',
+    "eye-off": '<path d="M10.73 5.08a10.74 10.74 0 0 1 11.21 6.57 1 1 0 0 1 0 .7'
+               ' 10.75 10.75 0 0 1-1.45 2.49"/>'
+               '<path d="M14.08 14.16a3 3 0 0 1-4.24-4.24"/>'
+               '<path d="M17.48 17.5a10.75 10.75 0 0 1-15.42-5.15 1 1 0 0 1 0-.7'
+               ' 10.75 10.75 0 0 1 4.45-5.14"/><path d="m2 2 20 20"/>',
+    "message-circle": '<path d="M2.99 16.34a2 2 0 0 1 .1 1.17l-1.07 3.29a1 1 0 0 0 1.24 1.17'
+                      'l3.41-1a2 2 0 0 1 1.1.09 10 10 0 1 0-4.78-4.72"/>',
+    "user": '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>'
+            '<circle cx="12" cy="7" r="4"/>',
+    "phone": '<path d="M13.83 16.57a1 1 0 0 0 1.21-.3l.36-.47A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3'
+             'a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6'
+             'l-.47.35a1 1 0 0 0-.29 1.23 14 14 0 0 0 6.39 6.39"/>',
+    "phone-call": '<path d="M13 2a9 9 0 0 1 9 9"/><path d="M13 6a5 5 0 0 1 5 5"/>'
+                  '<path d="M13.83 16.57a1 1 0 0 0 1.21-.3l.36-.47A2 2 0 0 1 17 15h3'
+                  'a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3'
+                  'a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.47.35a1 1 0 0 0-.29 1.23'
+                  ' 14 14 0 0 0 6.39 6.39"/>',
+    "copy": '<rect x="8" y="8" width="14" height="14" rx="2"/>'
+            '<path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>',
+    "check": '<path d="M20 6 9 17l-5-5"/>',
+    "dots-h": '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
+              '<circle cx="5" cy="12" r="1"/>',
+    "chevron-down": '<path d="m6 9 6 6 6-6"/>',
+    "mail": '<path d="m22 7-8.99 5.73a2 2 0 0 1-2.01 0L2 7"/>'
+            '<rect x="2" y="4" width="20" height="16" rx="2"/>',
+    "external-link": '<path d="M15 3h6v6"/><path d="M10 14 21 3"/>'
+                     '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    "clock": '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    "lock": '<rect x="4" y="10" width="16" height="11" rx="2"/>'
+            '<path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+    "lightbulb": '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8'
+                 'c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/>'
+                 '<path d="M9 18h6"/><path d="M10 22h4"/>',
+    "book-open": '<path d="M12 5v16"/>'
+                 '<path d="M20 19a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2l-4 0A5 5 0 0 0 12 5'
+                 'a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/>',
+    "send": '<path d="M14.54 21.69a.5.5 0 0 0 .93-.03l6.5-19a.5.5 0 0 0-.63-.63l-19 6.5'
+            'a.5.5 0 0 0-.03.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/>'
+            '<path d="m21.85 2.15-10.94 10.94"/>',
+    # --- bộ icon riêng của màn Khách hàng (bảng theo mẫu Kallet): huy hiệu hạng
+    # thẻ · phân trang · thanh công cụ bảng. Chép đúng path lucide mà mẫu dùng.
+    "medal": '<path d="M7.21 15 2.66 7.14a2 2 0 0 1 .13-2.2L4.4 2.8A2 2 0 0 1 6 2h12'
+             'a2 2 0 0 1 1.6.8l1.6 2.14a2 2 0 0 1 .14 2.2L16.79 15"/>'
+             '<path d="M11 12 5.12 2.2"/><path d="m13 12 5.88-9.8"/><path d="M8 7h8"/>'
+             '<circle cx="12" cy="17" r="5"/><path d="M12 18v-2h-.5"/>',
+    "gem": '<path d="M10.5 3 8 9l4 13 4-13-2.5-6"/>'
+           '<path d="M17 3a2 2 0 0 1 1.6.8l3 4a2 2 0 0 1 .013 2.382l-7.99 10.986'
+           'a2 2 0 0 1-3.247 0l-7.99-10.986A2 2 0 0 1 2.4 7.8l2.998-3.997A2 2 0 0 1 7 3z"/>'
+           '<path d="M2 9h20"/>',
+    "ticket": '<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2'
+              'a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/>'
+              '<path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/>',
+    "sparkles": '<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558'
+                'a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051'
+                'a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558'
+                'a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051'
+                'a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/>'
+                '<circle cx="4" cy="20" r="2"/>',
+    "circle": '<circle cx="12" cy="12" r="10"/>',
+    "chevron-left": '<path d="m15 18-6-6 6-6"/>',
+    "chevron-right": '<path d="m9 18 6-6-6-6"/>',
+    "filter-x": '<path d="M12.531 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14v6'
+                'a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341l.427-.473"/>'
+                '<path d="m16.5 3.5 5 5"/><path d="m21.5 3.5-5 5"/>',
+    "file-spreadsheet": '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706'
+                        'l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/>'
+                        '<path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 13h2"/>'
+                        '<path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/>',
+    "columns-3": '<rect x="3" y="3" width="18" height="18" rx="2"/>'
+                 '<path d="M9 3v18"/><path d="M15 3v18"/>',
+    "check-square": '<path d="M21 10.656V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12.344"/>'
+                    '<path d="m9 11 3 3L22 4"/>',
 }
 
 # Menu bên trái, chia NHÓM. Mỗi mục: (đường dẫn, nhãn, khoá `active`, icon,
@@ -72,31 +179,49 @@ _ICONS = {
 # Quản trị mở cho cả trưởng nhóm). Đây chỉ là ẨN MỤC MENU cho gọn — chặn thật
 # nằm ở route.
 # Nhóm CRM là các màn khung (xem app/web/views/crm.py) — lát cắt B1…B11 làm đầy.
+#
+# THỨ TỰ NHÓM bám mẫu giao diện Kallet (web-da-noi/, bản crmv2.kallet.vn):
+#   Chung → Bộ phận → Ưu đãi → Tiền → (Bot Pancake) → Quản trị.
+# Mẫu có mục nào ta chưa dựng màn thì BỎ TRỐNG, không thêm link chết; ngược lại
+# màn của ta không có trong mẫu thì xếp vào nhóm gần nghĩa nhất (ghi chú tại chỗ).
 MENU_GROUPS: list[tuple[str, list[tuple[str, str, str, str, str]]]] = [
-    ("CRM", [
+    # Việc hằng ngày, ai cũng mở — đứng đầu menu.
+    ("Chung", [
+        # Hộp thư hội thoại (giao diện port từ mẫu crmv2.kallet.vn) — xếp ĐẦU
+        # menu vì đây là màn nhân viên mở suốt ngày. Muốn theo đúng thứ tự mẫu
+        # (Trang chủ trước) thì đổi chỗ hai dòng này là xong.
+        ("/crm/hoi-thoai", "Hội thoại", "crm-chat", "messages", ""),
         # Màn 2 — trang chủ theo vai trò (đăng nhập xong vào đây, "/" trỏ về đây)
         ("/crm/trang-chu", "Trang chủ", "crm-home", "home", ""),
-        # Màn 3 — trung tâm thông báo (chuông ở góc phải cũng trỏ về đây)
-        ("/crm/thong-bao", "Thông báo", "crm-notify", "bell", ""),
         ("/crm/tong-quan", "Tổng quan", "crm-overview", "dashboard", ""),
-        # B11 — màn 60-64 + drill-down FR-173 (màn 5-6 vào từ đây/trang chủ)
-        ("/crm/bao-cao", "Báo cáo", "crm-reports", "sentiment", ""),
         ("/crm/khach-hang", "Khách hàng", "crm-customers", "customers", ""),
+        ("/crm/don-hang", "Đơn hàng", "crm-orders", "orders", ""),
+    ]),
+    # Mẫu Kallet: Sale → CSKH → Quảng cáo. Công việc/Bàn giao là màn của CSKH nên
+    # kẹp ngay sau khối CSKH, trước Quảng cáo.
+    ("Bộ phận", [
         # Mục này được NÂNG thành 2 khối bộ phận xổ/thu ĐỨNG LIỀN NHAU (xem
         # _sidebar): "Sale" (_sale_dept) rồi ngay dưới là "Chăm sóc khách hàng"
         # (_dept_cskh) — hai bộ phận nối tiếp nhau đúng luồng bàn giao Sale→CSKH.
         ("/crm/pipeline", "Pipeline Sale", "crm-pipeline", "pipeline", ""),
         ("/crm/cong-viec", "Công việc", "crm-tasks", "tasks", ""),
-        ("/crm/don-hang", "Đơn hàng", "crm-orders", "orders", ""),
         # B8 — màn 24-25: đơn giao thành công tự sinh phiếu, CSKH nhận/trả lại
         ("/crm/ban-giao", "Bàn giao", "crm-handover", "care", ""),
-        ("/crm/san-pham", "Sản phẩm", "crm-products", "products", ""),
-        # Màn 69 + 71 — bảng theo dõi automation đang chạy (không phải builder)
-        ("/crm/automation", "Automation", "crm-automation", "tasks", ""),
         # BRD mục 4 (nguồn quảng cáo) — màn 7 + 53-55: chi phí · ROAS · LTV
         ("/crm/quang-cao", "Nguồn quảng cáo", "crm-ads", "sentiment", "ads.view"),
-        # BRD mục 4 — khu Tích hợp Pancake (kết nối, nhật ký/lỗi đồng bộ, ánh xạ)
-        ("/quan-tri/tich-hop", "Tích hợp", "tich-hop", "data", "integration.manage"),
+    ]),
+    # Mẫu Kallet: Voucher · Chiến dịch · Hạng thẻ · Sản phẩm · Mẫu tin. Ta mới có
+    # Automation (đứng chỗ "Chiến dịch") và Sản phẩm; các mục còn lại chờ dựng màn.
+    ("Ưu đãi", [
+        # Màn 69 + 71 — bảng theo dõi automation đang chạy (không phải builder)
+        ("/crm/automation", "Automation", "crm-automation", "tasks", ""),
+        ("/crm/san-pham", "Sản phẩm", "crm-products", "products", ""),
+    ]),
+    # Mẫu Kallet: Thu nhập của tôi · Báo cáo · Lương thưởng · Đối soát & duyệt
+    # thưởng. Ta mới có Báo cáo doanh thu; ba mục kia lát cắt sau làm.
+    ("Tiền", [
+        # B11 — màn 60-64 + drill-down FR-173 (màn 5-6 vào từ đây/trang chủ)
+        ("/crm/bao-cao", "Báo cáo", "crm-reports", "sentiment", ""),
     ]),
     # Cả nhóm đòi bot.view (chỉ Chủ DN/Admin có) — middleware trong app/main.py
     # chặn thật theo tiền tố _KHU_BOT, đây chỉ ẩn menu.
@@ -107,13 +232,28 @@ MENU_GROUPS: list[tuple[str, list[tuple[str, str, str, str, str]]]] = [
         ("/cam-xuc", "Cảm xúc", "sentiment", "sentiment", "bot.view"),
         ("/data/kich-ban", "Dữ liệu bot", "data", "data", "bot.view"),
     ]),
-    # Quản trị đứng CUỐI menu, dưới cả nhóm Bot Pancake — việc thiết lập chứ
-    # không phải việc hằng ngày. Nhóm không tên nên _sidebar khỏi in tiêu đề.
+    # Khu Quản trị đứng CUỐI menu, dưới cả nhóm Bot Pancake — việc thiết lập chứ
+    # không phải việc hằng ngày. CỐ Ý để nhóm KHÔNG TÊN: _sidebar in vạch ngăn
+    # (nav-sep) thay tiêu đề, và `scripts/thu_man11.py` mục 7 kiểm đúng vạch này.
+    # Thứ tự theo mẫu Kallet: Nhân viên/Phân quyền → Thông báo & Nhật ký → Dữ liệu.
     ("", [
+        # Nhân viên · Vai trò & quyền · Cài đặt · Nhật ký nằm trong dải tab của
+        # chính màn này (app/web/views/admin.py:_TABS) nên menu chỉ cần 1 mục.
         ("/quan-tri/nhan-vien", "Quản trị", "admin", "admin",
          "user.manage|user.manage_team"),
+        # Màn 3 — trung tâm thông báo (chuông ở góc phải cũng trỏ về đây)
+        ("/crm/thong-bao", "Thông báo", "crm-notify", "bell", ""),
+        # BRD mục 4 — khu Tích hợp Pancake (kết nối, nhật ký/lỗi đồng bộ, ánh xạ)
+        ("/quan-tri/tich-hop", "Tích hợp", "tich-hop", "data", "integration.manage"),
     ]),
 ]
+
+
+# Nhóm menu XỔ/THU được: tiêu đề nhóm thành <summary> bấm gập cả cụm mục bên
+# dưới, trạng thái nhớ trong localStorage (xem `_NAV_JS`). Bot Pancake là khu
+# phụ, ngày thường không đụng tới nên gập lại cho menu CRM đỡ dài. Muốn nhóm
+# khác cũng gập được thì thêm đúng tên nhóm vào đây, khỏi sửa gì thêm.
+_NHOM_THU_GON: frozenset[str] = frozenset({"Bot Pancake"})
 
 
 def _icon(name: str) -> str:
@@ -250,13 +390,34 @@ def _sidebar(active: str) -> str:
             )
         # cả nhóm bị ẩn theo quyền -> khỏi in tên nhóm trơ trọi; nhóm không tên
         # (khu quản trị ở cuối menu) thì chỉ in mục, không in tiêu đề nhóm
-        if muc_hien:
+        if not muc_hien:
+            continue
+        if ten_nhom in _NHOM_THU_GON:
+            # LUÔN in `open`: không có JS (hoặc màn hẹp — menu nằm ngang) thì
+            # nhóm trải phẳng như cũ, chứ không kẹt ở trạng thái đóng. Người
+            # dùng thu gọn thì _NAV_JS đóng lại ngay lúc dựng trang (thẻ script
+            # nằm cuối <body> nên đóng xong mới vẽ, không thấy nhấp nháy).
+            items += (
+                f'<details class="nav-grp" data-nhom="{escape(ten_nhom)}" open>'
+                f'<summary class="nav-group">{escape(ten_nhom)}'
+                '<span class="grp-chev">▸</span></summary>'
+                f'<div class="nav-grp-kids">{muc_hien}</div></details>'
+            )
+        else:
             items += (f'<div class="nav-group">{escape(ten_nhom)}</div>'
                       if ten_nhom else '<div class="nav-sep"></div>') + muc_hien
     return (
         '<aside class="side">'
-        '<a class="brand" href="/bang-dieu-khien">'
-        '<span class="logo">FB</span><span class="bname">Sales Bot</span></a>'
+        # Logo dựng theo mẫu Kallet: huy hiệu vuông trắng (dấu) + viên thuốc
+        # trắng (tên) + chữ CRM hổ phách. Mẫu dùng ảnh kallet-logo.png; dự án
+        # chưa có thư mục static nên dấu là chữ lồng, đổi sang <img> lúc nào
+        # cũng được mà không phải sửa CSS. Trỏ về TRANG CHỦ (mẫu ghi "Về trang
+        # chủ") chứ không phải /bang-dieu-khien — màn đó đòi quyền bot.view nên
+        # cấp dưới bấm logo là ăn 403.
+        '<a class="brand" href="/crm/trang-chu" title="Về trang chủ">'
+        '<span class="logo">FB</span>'
+        '<span class="bname">Sales Bot</span>'
+        '<span class="btag">CRM</span></a>'
         f'<nav class="nav">{items}</nav>'
         "</aside>"
     )
@@ -424,7 +585,14 @@ _CSS = """
   --ok-bg:#e9f7ee; --err-bg:#fdecec; --warn-bg:#fff5e2; --hot-bg:#fdeef5;
   --side:linear-gradient(185deg,#6f5a9c 0%,#8c6a9b 48%,#c4868f 100%);
   --side-tx:rgba(255,255,255,.78); --side-on:rgba(255,255,255,.16);
+  /* hổ phách của chữ "CRM" cạnh logo (mẫu Kallet dùng --amber-400) — đủ sáng
+     để nổi trên dải tím mà không chói như vàng nguyên bản */
+  --brand-tag:#f7c65b;
   --in:#efe9f1; --out:#6f5a9c;
+  /* Bong bóng tin MÌNH gửi ở màn Hội thoại — mẫu Kallet đổ dốc tím→hồng chứ
+     không tô phẳng như --out. Dựng lại từ 3 màu nhấn sẵn có để dark mode chỉ
+     phải khai lại đúng dòng này. */
+  --grad-brand:linear-gradient(100deg,var(--accent) 0%,var(--accent2) 55%,var(--hot) 100%);
   --shadow:0 2px 10px rgba(111,90,156,.08);
   --shadow-lg:0 6px 16px rgba(142,94,156,.18);
   --r:12px;
@@ -437,6 +605,7 @@ _CSS = """
     --ok-bg:#152a1c; --err-bg:#2c1719; --warn-bg:#2c2313; --hot-bg:#2d1a26;
     --side:linear-gradient(185deg,#3a2f4a 0%,#4a3a55 48%,#5d4550 100%);
     --side-tx:rgba(255,255,255,.72); --side-on:rgba(255,255,255,.12);
+    --brand-tag:#e9b855;
     --in:#241d2d; --out:#7e63b3;
     --shadow:0 2px 10px rgba(0,0,0,.35); --shadow-lg:0 6px 16px rgba(0,0,0,.45);
   }
@@ -462,12 +631,23 @@ a{color:var(--accent)}
   display:flex; flex-direction:column;
   padding:16px 12px; box-shadow:2px 0 12px rgba(111,90,156,.18);
 }
+/* ---------- logo (dựng theo mẫu Kallet) ----------
+   Dải cao 56px kéo hết bề ngang cột (margin âm bù `padding:16px 12px` của
+   .side) rồi tự đệm lại 16px — nhờ vậy vạch ngăn dưới chạm được mép menu.
+   Ba mảnh: .logo (huy hiệu vuông) · .bname (viên thuốc trắng) · .btag (CRM). */
 .brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:#fff;
-  padding:6px 8px 16px}
-.logo{width:32px;height:32px;border-radius:10px;background:#fff;color:var(--accent);
-  display:grid;place-items:center;font-weight:800;font-size:13px;
-  box-shadow:0 3px 10px rgba(80,50,100,.18)}
-.bname{font-weight:700;font-size:15px}
+  flex:0 0 auto;height:56px;margin:-16px -12px 10px;padding:0 16px;
+  border-bottom:1px solid rgba(255,255,255,.10)}
+.logo{width:28px;height:28px;border-radius:9px;background:#fff;color:var(--accent);
+  display:grid;place-items:center;flex:0 0 auto;overflow:hidden;
+  font-weight:800;font-size:12px;letter-spacing:-.02em;
+  box-shadow:0 2px 6px rgba(43,34,48,.18)}
+.logo img{width:100%;height:100%;object-fit:contain;display:block}
+.bname{display:flex;align-items:center;background:#fff;color:var(--accent);
+  border-radius:10px;padding:5px 11px;font-weight:800;font-size:14px;
+  letter-spacing:-.01em;white-space:nowrap;
+  box-shadow:0 2px 6px rgba(43,34,48,.18)}
+.btag{font-weight:800;font-size:17px;letter-spacing:.2px;color:var(--brand-tag)}
 .nav{display:flex;flex-direction:column;gap:2px}
 .nav-item{
   display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:9px;
@@ -482,6 +662,16 @@ a{color:var(--accent)}
   color:var(--side-tx);opacity:.55;padding:12px 10px 4px}
 /* vạch ngăn thay tên nhóm — dùng cho nhóm KHÔNG TÊN ở cuối menu (Quản trị) */
 .nav-sep{height:1px;background:rgba(255,255,255,.16);margin:12px 10px 8px}
+/* nhóm menu XỔ/THU được (_NHOM_THU_GON — nay là Bot Pancake): tiêu đề nhóm
+   thành <summary> bấm gập. Vẫn dùng nguyên class .nav-group nên nhìn y hệt
+   nhóm thường, chỉ thêm mũi chevron bên phải. */
+.nav-grp>summary{list-style:none;cursor:pointer;user-select:none;
+  display:flex;align-items:center;gap:6px}
+.nav-grp>summary::-webkit-details-marker{display:none}
+.nav-grp>summary:hover{opacity:.85}
+.grp-chev{margin-left:auto;font-size:10px;transition:transform .15s}
+.nav-grp[open]>summary .grp-chev{transform:rotate(90deg)}
+.nav-grp-kids{display:flex;flex-direction:column;gap:2px}
 /* ---------- khối bộ phận xổ/thu trong menu trái (Sale, CSKH — kiểu Kallet) ---------- */
 .mobile-only{display:none}          /* link phẳng dự phòng — chỉ hiện màn hẹp */
 .dept>summary{list-style:none;cursor:pointer;user-select:none}
@@ -1261,12 +1451,251 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
 .placeholder{flex:1;display:grid;place-items:center;color:var(--sub);padding:40px;
   text-align:center}
 
+/* ---------- màn Hội thoại (port giao diện mẫu crmv2.kallet.vn) ----------
+   BA cột nằm ngang, mỗi cột tự cuộn riêng, cả màn không bao giờ cuộn dọc:
+     rail lọc 52px · danh sách 320px · khung chat (co giãn).
+   KHÔNG có panel khách riêng — mẫu nhét hồ sơ khách vào ĐẦU KHUNG CHAT
+   (hạng thẻ · điện thoại · mua cuối · tổng chi · fanpage) cho đỡ chật.
+   Số đo giữ đúng bản mẫu; màu đổi hết sang biến gốc của dự án — mẫu dùng
+   --surface-card/--surface-sunken/--brand-600/--pink-50, ở đây là
+   --card/--in/--accent/--soft. */
+/* `.content.full` là flex HÀNG và chỉ chờ đúng MỘT con (xem màn Tin nhắn).
+   Màn này có thêm dải ghi chú phía trên nên phải bọc lại thành cột, không thì
+   dải ghi chú với khung 3 cột đứng cạnh nhau. */
+.ht-wrap{flex:1;min-width:0;display:flex;flex-direction:column}
+.ht{display:flex;flex:1;min-height:0;width:100%}
+
+/* CHƯA LÀM ĐƯỢC — nút/ô mẫu có nhưng dữ liệu hiện tại chưa dựng nổi. Viền đứt
+   + mờ + con trỏ cấm để nhìn phát biết ngay, lý do nằm ở tooltip. Dùng chung
+   một lớp cho mọi loại phần tử nên gỡ đánh dấu sau này chỉ là xoá 1 class. */
+.ht-todo{opacity:.55;cursor:not-allowed !important;
+  outline:1px dashed var(--border-strong,var(--sub));outline-offset:-2px}
+.ht-todo:hover{background:transparent !important;color:var(--sub) !important;
+  border-color:var(--border) !important}
+/* Khối xổ liệt kê phần chưa làm, đứng ngay trên khung 3 cột */
+.ht-note{flex:0 0 auto;background:var(--warn-bg);color:var(--text);
+  border-bottom:1px solid var(--border);padding:9px 16px;font-size:12.5px}
+.ht-note summary{cursor:pointer;color:var(--warn)}
+.ht-note ul{margin:9px 0 4px;padding-left:20px}
+.ht-note li{margin:3px 0;line-height:1.5}
+.ht-note .note{margin:6px 0 0}
+
+/* --- cột 1: rail lọc (chỉ icon, nhãn nằm ở tooltip) --- */
+.ht-rail{flex:0 0 52px;display:flex;flex-direction:column;align-items:center;
+  gap:4px;padding:12px 0;background:var(--soft);
+  border-right:1px solid var(--border);overflow-y:auto}
+.ht-rb{width:38px;height:38px;border:0;border-radius:11px;cursor:pointer;
+  display:grid;place-items:center;position:relative;flex:0 0 auto;
+  background:transparent;color:var(--sub)}
+.ht-rb:hover{background:var(--card);color:var(--text)}
+.ht-rb.on{background:var(--card);color:var(--accent);box-shadow:var(--shadow)}
+.ht-rb .ico{width:19px;height:19px}
+/* Huy hiệu SỐ chưa đọc đậu trên nút (mẫu để số, không phải chấm trơn) */
+.ht-rb .rnum{position:absolute;top:1px;right:1px;min-width:15px;height:15px;
+  line-height:15px;padding:0 3px;border-radius:999px;background:var(--err);
+  color:#fff;font-size:9px;font-weight:700;text-align:center}
+.ht-rsep{width:24px;height:1px;background:var(--border);margin:5px 0;flex:0 0 auto}
+
+/* --- cột 2: danh sách hội thoại --- */
+.ht-list{flex:0 0 320px;max-width:40%;min-width:0;background:var(--card);
+  border-right:1px solid var(--border);display:flex;flex-direction:column;
+  min-height:0}
+/* Đầu cột: ô tìm + nút "Lọc theo". Hai tab Tất cả/Chưa đọc KHÔNG ở đây —
+   mẫu đẩy chúng sang rail bên trái. */
+.ht-lhead{flex:0 0 auto;padding:14px 14px 10px;display:flex;align-items:center;
+  gap:8px}
+.ht-lfind{position:relative;flex:1 1 auto;min-width:0}
+.ht-lfind .ico{width:15px;height:15px;position:absolute;left:11px;top:50%;
+  transform:translateY(-50%);color:var(--sub);pointer-events:none}
+.ht-lfind input{width:100%;height:36px;border:1px solid var(--border);
+  background:var(--soft);border-radius:10px;padding:0 12px 0 32px;font:inherit;
+  font-size:13px;color:var(--text);outline:none}
+.ht-lfind input:focus{border-color:var(--accent)}
+.ht-lfilter{display:inline-flex;align-items:center;gap:6px;height:36px;
+  padding:0 12px;border:1px solid var(--border);background:var(--card);
+  color:var(--text);border-radius:10px;font:inherit;font-size:12.5px;
+  font-weight:600;cursor:pointer;white-space:nowrap;flex:0 0 auto}
+.ht-lfilter:hover{border-color:var(--accent);color:var(--accent)}
+.ht-lfilter .ico{width:15px;height:15px}
+.ht-lbody{flex:1 1 auto;min-height:0;overflow-y:auto}
+
+/* Hàng hội thoại: avatar + khối 4 dòng (tên/giờ · tin/chưa đọc · fanpage/giai
+   đoạn · cửa gửi tin) */
+.ht-row{display:flex;align-items:center;gap:11px;padding:11px 16px;
+  border-bottom:1px solid var(--border);border-left:3px solid transparent;
+  cursor:pointer;text-decoration:none;color:inherit}
+.ht-row:hover{background:var(--bg)}
+/* Chưa đọc VÀ đang mở đều tô nền nhạt; khác nhau ở vạch trái + độ đậm chữ. */
+.ht-row.unread{border-left-color:var(--accent);background:var(--soft)}
+.ht-row.on{background:var(--soft);border-left-color:var(--hot)}
+.ht-av{width:38px;height:38px;border-radius:50%;flex:0 0 auto;display:grid;
+  place-items:center;font-weight:700;font-size:13px;background:var(--soft);
+  color:var(--accent)}
+.ht-row.unread .ht-av{background:var(--accent);color:#fff}
+.ht-rmain{flex:1 1 auto;min-width:0}
+.ht-r1{display:flex;align-items:flex-start;gap:7px}
+.ht-name{font-weight:600;font-size:13.5px;color:var(--text);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:150px}
+.ht-row.unread .ht-name{font-weight:700}
+/* Mắt/bong bóng: đã xem · chưa xem · đã phản hồi */
+.ht-seen{display:inline-flex;flex:0 0 auto;margin-top:1px;color:var(--sub)}
+.ht-seen .ico{width:13px;height:13px}
+.ht-seen.rep{color:var(--ok)}
+.ht-seen.unseen{opacity:.65}
+.ht-time{margin-left:auto;flex:0 0 auto;font-size:11px;color:var(--sub)}
+.ht-r2{display:flex;align-items:center;gap:6px;margin-top:2px}
+/* display:block là BẮT BUỘC — thẻ này là <span>, mà text-overflow chỉ ăn trên
+   hộp block. Để inline là câu tin dài tràn hàng. */
+.ht-msg{display:block;flex:1 1 auto;min-width:0;font-size:12px;color:var(--sub);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ht-row.unread .ht-msg{color:var(--text);font-weight:600}
+.ht-unread{background:var(--err);color:#fff;font-size:10px;font-weight:700;
+  min-width:18px;height:18px;line-height:18px;text-align:center;
+  border-radius:999px;padding:0 5px;flex:0 0 auto}
+.ht-r3{display:flex;align-items:center;gap:6px;margin-top:4px}
+.ht-fp{font-size:10.5px;color:var(--sub)}
+/* Chip giai đoạn: nền lấy từ biến --c đặt inline (mỗi giai đoạn một màu) nên
+   CSS khỏi liệt kê 12 lớp con. */
+.ht-stage{margin-left:auto;font-size:9.5px;font-weight:700;padding:1px 8px;
+  border-radius:999px;color:#fff;white-space:nowrap;background:var(--c,var(--accent))}
+/* display:block bắt buộc — thẻ này là <span>, để inline thì margin-top không
+   ăn và chip cửa dính sát dòng fanpage phía trên. */
+.ht-r4{display:block;margin-top:5px}
+/* "Cửa gửi tin" của Meta — mở (gõ tay tự do) hay khoá (chỉ mẫu đã duyệt).
+   Mẫu dùng CHẤM tròn cùng màu chữ, không phải icon. */
+.ht-door{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;
+  font-weight:700;border-radius:999px;padding:2px 9px;white-space:nowrap}
+.ht-door i{width:6px;height:6px;border-radius:999px;background:currentcolor;
+  flex:0 0 auto;display:block}
+.ht-door.open{background:var(--ok-bg);color:var(--ok)}
+.ht-door.tpl{background:var(--warn-bg);color:var(--warn)}
+/* "unk" = kho thiếu mốc tin cuối của khách nên CHƯA tính được cửa. Phải xám —
+   tô vàng như hết cửa là khẳng định một điều mình không biết. */
+.ht-door.unk{background:var(--in);color:var(--sub)}
+
+/* --- cột 3: khung chat --- */
+.ht-chat{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;
+  min-height:0;background:var(--bg)}
+/* Đầu khung KIÊM hồ sơ khách: tên + hạng thẻ, rồi dải meta điện thoại · mua
+   cuối · tổng chi · fanpage, rồi cụm nút thao tác. */
+.ht-chead{flex:0 0 auto;display:flex;align-items:center;gap:12px;
+  padding:11px 20px;background:var(--card);
+  border-bottom:1px solid var(--border);flex-wrap:wrap}
+.ht-chead .ht-av{width:40px;height:40px;font-size:14px}
+.ht-cwho{flex:1 1 auto;min-width:0}
+.ht-cline{display:flex;align-items:center;gap:8px}
+.ht-cname{font-weight:600;font-size:15px;color:var(--text)}
+.ht-tier{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;
+  font-weight:700;border-radius:999px;padding:2px 9px;background:var(--soft);
+  color:var(--accent)}
+.ht-tier .ico{width:12px;height:12px}
+.ht-cmeta{display:flex;align-items:center;gap:6px 14px;margin-top:3px;
+  font-size:11.5px;color:var(--sub);flex-wrap:wrap}
+.ht-cmeta b{color:var(--text);font-weight:600}
+.ht-ctel{display:inline-flex;align-items:center;gap:4px;cursor:pointer;
+  background:none;border:0;font:inherit;font-size:11.5px;color:var(--sub);
+  padding:0}
+.ht-ctel .num{color:var(--accent);font-weight:600}
+.ht-ctel .ico{width:12px;height:12px}
+.ht-ctel .ico.cp{width:11px;height:11px;opacity:.7}
+.ht-cact{margin-left:auto;display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.ht-ic{width:34px;height:34px;border:1px solid var(--border);border-radius:9px;
+  background:var(--card);color:var(--sub);cursor:pointer;display:grid;
+  place-items:center;flex:0 0 auto}
+.ht-ic:hover{border-color:var(--accent);color:var(--accent)}
+.ht-ic .ico{width:16px;height:16px}
+/* Nút chữ ở đầu khung (người phụ trách · Chưa đọc) — cùng chiều cao 34px */
+.ht-cbtn{display:inline-flex;align-items:center;gap:6px;height:34px;
+  padding:0 11px;border:1px solid var(--border);border-radius:9px;
+  background:var(--card);color:var(--text);font:inherit;font-size:12.5px;
+  font-weight:600;cursor:pointer;flex:0 0 auto;white-space:nowrap}
+.ht-cbtn:hover{border-color:var(--accent)}
+.ht-cbtn .ico{width:15px;height:15px;color:var(--sub)}
+.ht-cbtn .mini{width:20px;height:20px;border-radius:50%;background:var(--soft);
+  color:var(--accent);display:grid;place-items:center;font-size:10px;
+  font-weight:700;flex:0 0 auto}
+
+.ht-thread{flex:1 1 auto;min-height:0;overflow-y:auto;padding:20px 24px}
+.ht-m{display:flex;margin-bottom:10px}
+.ht-m.out{justify-content:flex-end}
+.ht-bub{max-width:70%;padding:9px 12px;border-radius:14px;font-size:13px;
+  line-height:1.4;white-space:pre-wrap;word-wrap:break-word;
+  overflow-wrap:anywhere}
+.ht-m.in .ht-bub{background:var(--in);color:var(--text);
+  border-bottom-left-radius:4px}
+.ht-m.out .ht-bub{background:var(--grad-brand);color:#fff;
+  border-bottom-right-radius:4px}
+.ht-mt{font-size:10px;margin-top:3px;color:var(--sub)}
+.ht-m.out .ht-mt{text-align:right}
+/* Dải ngày chen giữa luồng tin */
+.ht-day{display:flex;align-items:center;gap:10px;margin:14px 0 12px;
+  color:var(--sub);font-size:11px}
+.ht-day::before,.ht-day::after{content:"";flex:1;height:1px;
+  background:var(--border)}
+
+/* Dải nhắc cửa gửi tin — KIÊM chỗ đứng của hai nút trợ lý.
+   Trước đây hai nút nằm chung hàng ô soạn tin, chỉ có icon vuông 42px nên lẫn
+   vào nút Gửi, nhìn không ra là làm gì. Đưa lên đây thì có chỗ hiện CHỮ, và
+   hàng này vốn đã là hàng "trạng thái" nên đọc liền mạch: còn bao lâu gõ tự
+   do → có thể nhờ máy soạn hộ. `flex-wrap` cho màn hẹp tự xuống dòng. */
+.ht-win{flex:0 0 auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:9px 20px 0;background:var(--card);
+  border-top:1px solid var(--border)}
+.ht-wpill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;
+  font-weight:600;border-radius:999px;padding:4px 11px;flex:0 0 auto}
+.ht-wpill .ico{width:13px;height:13px}
+.ht-wpill.open{background:var(--ok-bg);color:var(--ok)}
+.ht-wpill.tpl{background:var(--warn-bg);color:var(--warn)}
+.ht-wpill.unk{background:var(--in);color:var(--sub)}
+/* Đẩy cụm nút trợ lý sang phải, tách khỏi chip cửa và dòng kết quả */
+.ht-wgap{flex:1 1 auto;min-width:8px}
+.ht-tool{display:inline-flex;align-items:center;gap:6px;height:30px;
+  padding:0 11px;border:1px solid var(--border);border-radius:9px;
+  background:var(--card);color:var(--text);font:inherit;font-size:12px;
+  font-weight:600;cursor:pointer;flex:0 0 auto;white-space:nowrap}
+.ht-tool:hover{border-color:var(--accent);color:var(--accent)}
+.ht-tool .ico{width:15px;height:15px;flex:0 0 auto}
+.ht-tool.hint .ico{color:var(--warn)}
+.ht-tool.lib .ico{color:var(--accent)}
+.ht-tool:disabled{cursor:not-allowed}
+
+.ht-composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+  padding:10px 20px 14px;background:var(--card)}
+.ht-composer input{flex:1 1 auto;min-width:0;height:42px;
+  border:1px solid var(--border);background:var(--soft);border-radius:10px;
+  padding:0 14px;font:inherit;font-size:13.5px;color:var(--text);outline:none}
+.ht-composer input:focus{border-color:var(--accent)}
+.ht-cico{width:42px;height:42px;border:1px solid var(--border);
+  border-radius:10px;background:var(--card);cursor:pointer;display:grid;
+  place-items:center;flex:0 0 auto;color:var(--sub)}
+.ht-cico:hover{border-color:var(--accent)}
+.ht-cico .ico{width:18px;height:18px}
+.ht-cico.hint{color:var(--warn)}
+.ht-cico.lib{color:var(--accent)}
+.ht-send{width:46px;height:42px;border:0;border-radius:10px;
+  background:var(--grad-brand);color:#fff;cursor:pointer;display:grid;
+  place-items:center;flex:0 0 auto;box-shadow:var(--shadow-lg)}
+.ht-send .ico{width:17px;height:17px}
+/* Ngoài cửa 24 giờ: Meta khoá tin tự do -> giấu ô gõ tay, chỉ chừa nút mẫu */
+.ht-locked{flex:0 0 auto;margin:0 20px 14px;padding:11px 14px;border-radius:12px;
+  background:var(--warn-bg);color:var(--warn);font-size:12.5px;display:flex;
+  align-items:center;gap:9px}
+.ht-locked .ico{width:16px;height:16px;flex:0 0 auto}
+
+/* Chưa chọn hội thoại nào: khung chat nhường chỗ cho một lời nhắc */
+.ht-empty{flex:1 1 auto;display:grid;place-items:center;text-align:center;
+  color:var(--sub);padding:40px}
+
 /* ---------- co theo màn hình nhỏ ---------- */
 @media (max-width:900px){
   body{flex-direction:column}
   .side{width:100%;flex:none;height:auto;position:static;padding:10px 12px;
     flex-direction:row;align-items:center;gap:12px}
-  .brand{padding:0}
+  /* màn hẹp: menu nằm ngang -> logo bỏ dải 56px + vạch ngăn + margin âm,
+     viên thuốc tên co lại nhường chỗ cho hàng icon */
+  .brand{height:auto;margin:0;padding:0;border-bottom:0;gap:8px}
+  .bname{padding:4px 9px;font-size:13px}
+  .btag{font-size:15px}
   /* màn hẹp: giấu tên trong topbar, giữ nút Đăng xuất */
   .su-info{display:none}
   .nav{flex-direction:row;overflow-x:auto;gap:4px;margin-left:auto}
@@ -1276,11 +1705,28 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
   /* màn hẹp menu nằm ngang: khối xổ không hợp — ẩn, hiện link phẳng dự phòng */
   .dept{display:none}
   .mobile-only{display:flex}
+  /* nhóm xổ/thu: trải phẳng vào hàng ngang (display:contents bỏ hộp bọc, các
+     mục thành con trực tiếp của .nav). _NAV_JS bỏ qua màn hẹp nên nhóm luôn ở
+     trạng thái `open` server in ra -> không lo con bị <details> giấu mất. */
+  .nav-grp,.nav-grp-kids{display:contents}
+  .grp-chev{display:none}
   .topbar,.tabs{padding-left:16px;padding-right:16px}
   .content{padding:16px}
   .inbox{flex-direction:column}
   .inbox-list{flex:0 0 auto;max-height:38vh;border-right:0;
     border-bottom:1px solid var(--border)}
+  /* Màn Hội thoại hẹp: rail nằm ngang trên cùng, danh sách thu còn 34vh, chat
+     chiếm phần còn lại. Dải meta ở đầu khung chat tự xuống dòng sẵn. */
+  .ht{flex-direction:column}
+  .ht-rail{flex:0 0 auto;flex-direction:row;justify-content:flex-start;
+    gap:4px;padding:8px 10px;border-right:0;
+    border-bottom:1px solid var(--border);overflow-x:auto}
+  .ht-rsep{width:1px;height:24px;margin:0 4px}
+  .ht-list{flex:0 0 auto;max-width:none;max-height:34vh;border-right:0;
+    border-bottom:1px solid var(--border)}
+  .ht-chead{padding:11px 14px}
+  .ht-thread{padding:16px 14px}
+  .ht-win,.ht-composer{padding-left:14px;padding-right:14px}
 }
 
 /* ---------- tab "Thử API" (bố cục kiểu Postman) ---------- */
@@ -1396,6 +1842,128 @@ code.pm-pid:hover{background:var(--soft)}
 .ac-res .pm-json{max-height:46vh}
 .ac-empty{color:var(--sub);padding:14px 2px}
 
+/* ---------- màn Khách hàng (port giao diện mẫu crmv2.kallet.vn) ----------
+   Bố cục dọc: 5 ô đếm bấm được · dải bộ lọc · thẻ bảng (đầu bảng + bảng +
+   chân phân trang). Số đo giữ đúng bản mẫu; màu đổi hết sang biến gốc —
+   mẫu dùng --surface-card/--surface-sunken/--brand-600, ở đây là
+   --card/--soft/--accent.
+   Dùng LẠI của màn Hội thoại: `.ht-todo` (đánh dấu chưa làm được), `.ht-note`
+   (khối liệt kê), `.ht-door` (chip cửa gửi tin) — cùng một ngôn ngữ hình. */
+.kh-tiles{display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.kh-tile{flex:1 1 150px;min-width:0;text-align:left;text-decoration:none;
+  background:var(--card);border-radius:14px;padding:14px 16px 14px 18px;
+  position:relative;overflow:hidden;box-shadow:var(--shadow);
+  border:1px solid transparent}
+.kh-tile:hover{border-color:var(--border)}
+.kh-tile.on{outline:2px solid var(--c,var(--accent));outline-offset:-1px}
+.kh-tile b{position:absolute;left:0;top:0;bottom:0;width:5px;
+  background:var(--c,var(--accent))}
+.kh-tile .n{font-weight:800;font-size:24px;line-height:1.1;color:var(--c,var(--accent))}
+.kh-tile .l{font-size:12px;color:var(--sub);margin-top:3px}
+
+/* --- dải bộ lọc: mọi ô cùng cao 34px, tự xuống hàng khi hẹp --- */
+.kh-filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+  margin-bottom:14px}
+.kh-filters select,.kh-filters .kh-find,.kh-filters .kh-spend,
+.kh-filters .kh-btn{height:34px;border:1px solid var(--border);
+  background:var(--card);border-radius:9px;font-size:12.5px;color:var(--text);
+  font-family:inherit}
+.kh-filters select{padding:0 8px;max-width:200px}
+.kh-find{display:flex;align-items:center;gap:6px;padding:0 10px;min-width:240px;
+  flex:1 1 240px;max-width:340px}
+.kh-find .ico{width:15px;height:15px;color:var(--sub);flex:0 0 auto}
+.kh-find input{flex:1;min-width:0;border:0;background:transparent;outline:none;
+  font:inherit;font-size:12.5px;color:var(--text)}
+.kh-spend{display:flex;align-items:center;gap:5px;padding:0 10px;
+  color:var(--sub);font-size:12px}
+.kh-spend input{width:52px;height:24px;border:1px solid var(--border);
+  background:var(--bg);border-radius:6px;padding:0 6px;font:inherit;
+  font-size:12px;color:var(--text)}
+.kh-btn{display:inline-flex;align-items:center;gap:6px;padding:0 12px;
+  font-weight:600;cursor:pointer}
+.kh-btn:hover{border-color:var(--accent)}
+.kh-btn .ico{width:15px;height:15px}
+.kh-btn.go{background:var(--grad-brand);color:#fff;border-color:transparent}
+.kh-clear{display:inline-flex;align-items:center;gap:5px;height:34px;
+  padding:0 8px;font-size:12.5px;font-weight:600;text-decoration:none;
+  color:var(--accent)}
+.kh-clear.off{color:var(--sub);opacity:.5;pointer-events:none}
+.kh-clear .ico{width:14px;height:14px}
+.kh-sp{flex:1 1 auto}
+
+/* --- thẻ bảng --- */
+.kh-card{background:var(--card);border:1px solid var(--border);
+  border-radius:14px;overflow:hidden}
+.kh-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.kh-head .cnt{font-size:12px;color:var(--sub)}
+.kh-head .acts{display:flex;align-items:center;gap:8px}
+.kh-hbtn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;
+  border:1px solid var(--border);background:var(--card);color:var(--text);
+  border-radius:8px;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.kh-hbtn .ico{width:14px;height:14px}
+.kh-tblwrap{overflow-x:auto}
+.kh-tbl{width:100%;border-collapse:collapse;font-size:13px}
+.kh-tbl th{padding:10px 12px;font-weight:600;font-size:11.5px;text-align:left;
+  color:var(--sub);border-bottom:1px solid var(--border);white-space:nowrap}
+.kh-tbl td{padding:10px 12px;vertical-align:top}
+.kh-tbl tbody tr{border-bottom:1px solid var(--border)}
+.kh-tbl tbody tr:hover{background:var(--soft)}
+/* cột số căn phải: `td.num,th.num` toàn cục lo phần căn lề, ở đây chỉ thêm nét */
+.kh-tbl .money{text-align:right;font-weight:600;color:var(--text);white-space:nowrap}
+.kh-tbl .rong{padding:26px 12px;text-align:center;color:var(--sub)}
+/* ô "Khách": tên đậm · dòng phụ SĐT · fanpage · chip cửa gửi tin */
+.kh-name{font-weight:600;color:var(--text);text-decoration:none}
+.kh-name:hover{text-decoration:underline}
+.kh-sub{font-size:11px;color:var(--sub);margin-top:1px}
+.kh-tel{color:var(--accent);font-weight:600;cursor:pointer;border:0;
+  background:none;font:inherit;font-size:11px;padding:0}
+.kh-tel:hover{text-decoration:underline}
+.kh-r4{display:block;margin-top:5px}
+/* dòng phụ nhạt dưới ô ngày (vd "549 ngày trước", tên người chăm) */
+.kh-nho{font-size:10.5px;color:var(--sub);opacity:.85}
+.kh-none{font-style:italic;color:var(--sub);font-size:12px}
+/* pill tình trạng chăm sóc */
+.kh-st{display:inline-flex;align-items:center;font-size:11px;font-weight:600;
+  border-radius:999px;padding:3px 10px;white-space:nowrap}
+.kh-st.active{background:var(--ok-bg);color:var(--ok)}
+.kh-st.fading{background:var(--warn-bg);color:var(--warn)}
+.kh-st.sleep{background:var(--in);color:var(--sub)}
+.kh-st.chua{background:var(--soft);color:var(--accent)}
+/* cụm 3 nút thao tác cuối hàng */
+.kh-acts{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.kh-ic{width:30px;height:30px;border:1px solid var(--border);border-radius:8px;
+  background:var(--card);color:var(--sub);display:grid;place-items:center;
+  flex:0 0 auto;cursor:pointer}
+.kh-ic:hover{border-color:var(--accent);color:var(--accent)}
+.kh-ic .ico{width:14px;height:14px}
+.kh-ic.go{background:var(--grad-brand);color:#fff;border-color:transparent;
+  box-shadow:var(--shadow)}
+.kh-ic.go:hover{color:#fff;filter:brightness(1.05)}
+/* --- chân bảng: số dòng / trang + nút lùi-tiến --- */
+.kh-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:11px 16px;border-top:1px solid var(--border);flex-wrap:wrap;
+  font-size:12.5px;color:var(--sub)}
+.kh-foot select{height:30px;border:1px solid var(--border);background:var(--card);
+  border-radius:8px;padding:0 8px;font:inherit;font-size:12.5px;color:var(--text)}
+.kh-pager{display:flex;align-items:center;gap:6px}
+.kh-pg{width:32px;height:32px;border:1px solid var(--border);border-radius:8px;
+  background:var(--card);color:var(--text);display:grid;place-items:center;
+  text-decoration:none}
+.kh-pg:hover{border-color:var(--accent)}
+.kh-pg.off{color:var(--sub);opacity:.5;pointer-events:none}
+.kh-pg .ico{width:16px;height:16px}
+/* Toast "đã chép số" — hiện giữa đáy màn 1,6 giây rồi tự tắt (xem _KH_JS) */
+.kh-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);
+  z-index:200;background:var(--text);color:var(--card);font-size:12.5px;
+  font-weight:600;padding:9px 16px;border-radius:999px;box-shadow:var(--shadow-lg);
+  opacity:0;pointer-events:none;transition:opacity .18s}
+.kh-toast.on{opacity:1}
+@media (max-width:900px){
+  .kh-find{max-width:none}
+  .kh-filters select{max-width:none;flex:1 1 150px}
+}
+
 /* ---------- điều hướng kiểu AJAX (_NAV_JS) ---------- */
 html.pjax-loading{cursor:progress}
 html.pjax-loading .main{opacity:.55;transition:opacity .15s linear}
@@ -1426,6 +1994,46 @@ _NAV_JS = """
     catch (e) { return false; }
   }
 
+  // --- nhóm menu xổ/thu (Bot Pancake) -------------------------------------
+  // Server LUÔN in `open` (không JS / màn hẹp thì nhóm trải phẳng như cũ), chỗ
+  // này mới gập lại theo lựa chọn đã lưu. Phải lưu ngoài DOM vì PJAX vẽ lại cả
+  // .side sau mỗi lần chuyển trang — không nhớ thì bung ra lại liên tục.
+  var KHOA_THU_GON = 'nav-thu-gon';
+
+  function nhomDaThuGon(){
+    try { return JSON.parse(localStorage.getItem(KHOA_THU_GON)) || []; }
+    catch (e) { return []; }        // chế độ riêng tư / localStorage bị chặn
+  }
+
+  function apDungThuGon(){
+    // Màn hẹp menu nằm ngang (.nav-grp display:contents) — gập lại là mất mục,
+    // nên bỏ qua, để nguyên `open`.
+    if (window.matchMedia('(max-width:900px)').matches) return;
+    var thuGon = nhomDaThuGon();
+    var nhom = document.querySelectorAll('.side details[data-nhom]');
+    for (var i = 0; i < nhom.length; i++) {
+      var d = nhom[i];
+      // Đang đứng trong nhóm nào thì nhóm đó luôn mở, kẻo mục đang xem bị giấu.
+      d.open = d.querySelector('.nav-item.on') !== null ||
+               thuGon.indexOf(d.getAttribute('data-nhom')) < 0;
+    }
+  }
+
+  // `toggle` KHÔNG nổi bọt -> bắt ở pha capture (vẫn tới được đúng thẻ đích).
+  document.addEventListener('toggle', function(e){
+    var d = e.target;
+    if (!d.matches || !d.matches('.side details[data-nhom]')) return;
+    var ten = d.getAttribute('data-nhom');
+    var thuGon = nhomDaThuGon();
+    var i = thuGon.indexOf(ten);
+    if (d.open) { if (i >= 0) thuGon.splice(i, 1); }
+    else if (i < 0) { thuGon.push(ten); }
+    try { localStorage.setItem(KHOA_THU_GON, JSON.stringify(thuGon)); }
+    catch (e2) {}                   // không lưu được thì thôi, đừng vỡ menu
+  }, true);
+
+  apDungThuGon();
+
   function runPageScript(doc){
     (window.__pjaxTimers || []).forEach(clearInterval);
     window.__pjaxTimers = [];
@@ -1454,6 +2062,7 @@ _NAV_JS = """
     if (newSide && curSide) {
       curSide.className = newSide.className;
       curSide.innerHTML = newSide.innerHTML;
+      apDungThuGon();   // .side vừa bị vẽ lại -> nhóm thu gọn bung ra, gập lại
     }
     if (newMain && curMain) {
       curMain.className = newMain.className;

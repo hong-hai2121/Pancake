@@ -178,6 +178,22 @@ async def list_pages(force: bool = False) -> list[dict]:
     return pages
 
 
+async def list_page_users(page_id: str) -> list[dict]:
+    """Nhân viên được cấp quyền trên MỘT page (dò 04/08, do_pancake_nhan_vien.py).
+
+    Trả nguyên văn: {id (uuid), name, fb_id, role_in_page, status_in_page}.
+    KHÔNG có email/SĐT/phòng ban — muốn mấy thứ đó phải lấy từ POS
+    (`pancake_pos.client.list_users`), hai bên dùng CHUNG không gian uuid nên
+    ghép được vào nhau.
+
+    Endpoint theo TỪNG page: muốn đủ người phải lặp hết page. `id` ở đây chính
+    là thứ `assignee_ids` của hội thoại mang, tức khoá `external_staff_id` mà
+    crm_sync đang ghi.
+    """
+    data = await _get(f"pages/{page_id}/users")
+    return [u for u in data.get("users") or [] if isinstance(u, dict)]
+
+
 async def get_page(page_id: str) -> dict | None:
     """Tìm 1 page theo id trong danh sách page token có quyền (best-effort)."""
     for page in await list_pages():
@@ -350,8 +366,55 @@ def _doc_the_tu_kho(page_id: str) -> dict[int, dict]:
         return {}
 
 
+def _doc_the_tu_json(items) -> dict[int, dict]:
+    """Đổi mảng thẻ thô (cả hai đường API đều trả shape này) -> {id: {text,color}}."""
+    tags: dict[int, dict] = {}
+    for t in items or []:
+        if not isinstance(t, dict):
+            continue
+        try:
+            tid = int(t.get("id"))
+        except (TypeError, ValueError):
+            continue
+        tags[tid] = {
+            "text": t.get("text") or t.get("name") or f"Thẻ #{tid}",
+            "color": t.get("color") or t.get("lighten_color") or "",
+        }
+    return tags
+
+
+async def _the_qua_settings(page_id: str) -> dict[int, dict]:
+    """Thẻ lấy qua `pages/{id}/settings` -> settings.tags.
+
+    ĐƯỜNG CHÍNH vì rẻ và phủ rộng hơn hẳn đường public API bên dưới:
+      * 1 lời gọi, dùng luôn JWT thường — không phải sinh page_access_token
+        (đường kia tốn 2 lời gọi/page).
+      * Chạy được cho MỌI page, kể cả page chỉ có quyền EDIT_PROFILE. Đo thực tế
+        trên 11 page của dự án: đường này lấy đủ 195 thẻ, đường public API chỉ
+        với tới 156 thẻ của 3 page có quyền ADMINISTER.
+    """
+    try:
+        data = await _get(f"pages/{page_id}/settings")
+    except (PancakeError, httpx.HTTPError):
+        return {}
+    cai_dat = (data or {}).get("settings") or {}
+    tho = cai_dat.get("tags")
+    # Pancake trả list; phòng khi đổi sang dict {id: {...}} thì lấy phần values.
+    if isinstance(tho, dict):
+        tho = list(tho.values())
+    return _doc_the_tu_json(tho if isinstance(tho, list) else [])
+
+
 async def _goi_api_the(page_id: str) -> dict[int, dict]:
-    """Hỏi public API định nghĩa thẻ của 1 page. Thiếu token/lỗi/sai shape -> {}."""
+    """Hỏi Pancake định nghĩa thẻ của 1 page. Không lấy được -> {}.
+
+    Thử `settings` trước (rẻ, mọi page), hụt mới quay về public API `tags`
+    (cần page_access_token, chỉ page ADMINISTER) — giữ đường cũ làm dự phòng
+    phòng khi Pancake đổi shape của `settings`.
+    """
+    if tags := await _the_qua_settings(page_id):
+        return tags
+
     token = await ensure_page_token(page_id)
     if not token:
         return {}
@@ -367,20 +430,7 @@ async def _goi_api_the(page_id: str) -> dict[int, dict]:
         return {}
     if not isinstance(data, dict) or data.get("success") is False:
         return {}
-
-    tags: dict[int, dict] = {}
-    for t in data.get("tags") or []:
-        if not isinstance(t, dict):
-            continue
-        try:
-            tid = int(t.get("id"))
-        except (TypeError, ValueError):
-            continue
-        tags[tid] = {
-            "text": t.get("text") or t.get("name") or f"Thẻ #{tid}",
-            "color": t.get("color") or t.get("lighten_color") or "",
-        }
-    return tags
+    return _doc_the_tu_json(data.get("tags"))
 
 
 async def list_tags(page_id: str) -> dict[int, dict]:
@@ -410,23 +460,50 @@ async def list_tags(page_id: str) -> dict[int, dict]:
     return tags
 
 
-async def refresh_tags_all_pages() -> dict[str, int]:
-    """Làm tươi thẻ của mọi page CÓ THỂ lấy được -> {page_id: số thẻ}.
+# Mỗi page chỉ hỏi lại thẻ sau ngần này giây. Thẻ gần như không đổi mà lời gọi
+# thì đếm vào trần 429 chung với việc poll tin — nên để 1 NGÀY. Muốn mới ngay
+# thì bấm "Cập nhật ngay" ở Quản trị → Thẻ Pancake (đường `ep=True`).
+TAG_SYNC_MOI = 24 * 60 * 60
 
-    Worker nền gọi định kỳ. Không có bước này thì kho thẻ chỉ được ghi khi có
-    người mở màn Tin nhắn của ĐÚNG page đó — ai chỉ dùng hộp thư GỘP sẽ không
-    bao giờ thấy tên thẻ, vì chế độ gộp chỉ đọc kho.
 
-    Chỉ đụng tới page đã có page_access_token sẵn hoặc được phép tự sinh
-    (`PANCAKE_TAG_PAGE_IDS`) — page khác gọi cũng chỉ tốn lời gọi vô ích.
+async def refresh_tags_all_pages(ep: bool = False) -> dict[str, int]:
+    """Làm tươi kho tên thẻ -> {page_id: số thẻ lấy được}.
+
+    Quét MỌI page token thấy được (đường `settings` chạy cho cả page không có
+    quyền Admin), nhưng mỗi page chỉ hỏi lại khi đã quá `TAG_SYNC_MOI` — mốc
+    lưu trong DB (`watcher.the_pancake_dong_bo`) chứ không phải RAM, nên restart
+    server bao nhiêu lần cũng không gọi lại API.
+
+    `ep=True` — bỏ qua lịch, hỏi lại hết ngay (nút bấm tay ở màn Quản trị).
+
+    Không có bước này thì kho thẻ chỉ được ghi khi có người mở màn Tin nhắn của
+    ĐÚNG page đó — ai chỉ dùng hộp thư GỘP sẽ không bao giờ thấy tên thẻ, vì chế
+    độ gộp chỉ đọc kho.
     """
-    pids = sorted(_tag_page_ids() | set(_page_tokens()))
+    from app.db.repositories import tag_store
+
+    try:
+        pages = await list_pages()
+        pids = [str(p["id"]) for p in pages if p.get("id")]
+    except (PancakeError, httpx.HTTPError):
+        # Không liệt kê được page thì vẫn lo được cho page đã khai token sẵn.
+        pids = sorted(_tag_page_ids() | set(_page_tokens()))
+
     out: dict[str, int] = {}
     for pid in pids:
+        if not ep and not await asyncio.to_thread(
+                tag_store.qua_han, pid, TAG_SYNC_MOI):
+            continue
         _TAGS_CACHE.pop(pid, None)      # ép đi đường API, không lấy bản trong RAM
-        tags = await list_tags(pid)
+        tags = await _goi_api_the(pid)
         if tags:
+            await asyncio.to_thread(_luu_the_vao_kho, pid, tags)
+            _TAGS_CACHE[pid] = (time.monotonic(), _TAGS_TTL, tags)
             out[pid] = len(tags)
+        # Ghi mốc CẢ KHI HỤT — không thì page thiếu quyền bị hỏi lại mỗi vòng.
+        await asyncio.to_thread(
+            tag_store.ghi_moc, pid, len(tags),
+            "settings" if tags else "", "" if tags else "không lấy được thẻ")
     return out
 
 

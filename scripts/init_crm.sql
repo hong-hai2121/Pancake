@@ -1589,8 +1589,11 @@ comment on column pages.external_shop_id is 'Shop POS chứa page này — dùng
 create table if not exists sync_logs (
     id            bigint generated always as identity primary key,
     provider      text not null check (provider in ('pancake_pages','pancake_pos')),
+    -- 'message' là giá trị message_sync.py ghi thật từ lâu nhưng file này chưa
+    -- bao giờ liệt kê -> DB dựng mới sẽ chặn nhật ký đồng bộ tin nhắn (vá 04/08).
     entity        text not null
-                  check (entity in ('conversation','order','customer','tag','page')),
+                  check (entity in ('conversation','message','order','customer',
+                                    'tag','page','staff')),
     scope         text,
     run_type      text not null default 'poll'
                   check (run_type in ('poll','manual','backfill','webhook','retry')),
@@ -1618,8 +1621,11 @@ create index if not exists idx_sync_logs_provider on sync_logs (provider, starte
 create table if not exists sync_errors (
     id            bigint generated always as identity primary key,
     provider      text not null check (provider in ('pancake_pages','pancake_pos')),
+    -- 'message' là giá trị message_sync.py ghi thật từ lâu nhưng file này chưa
+    -- bao giờ liệt kê -> DB dựng mới sẽ chặn nhật ký đồng bộ tin nhắn (vá 04/08).
     entity        text not null
-                  check (entity in ('conversation','order','customer','tag','page')),
+                  check (entity in ('conversation','message','order','customer',
+                                    'tag','page','staff')),
     external_id   text not null,
     scope         text,
     payload       jsonb not null default '{}'::jsonb,
@@ -1665,6 +1671,39 @@ comment on table staff_mappings is
     'Nhân viên xử lý bên Pancake (assignee_ids / assigning_seller_id / assigning_care_id) '
     'ứng với ai trong CRM. Chưa ánh xạ thì user_id rỗng — vẫn ghi lại để Admin gán sau';
 comment on column staff_mappings.role_hint is 'seller / care / marketer / inbox — biết id này đến từ vai nào bên Pancake';
+
+-- Hồ sơ nhân viên lấy từ DANH SÁCH của POS (GET /shops/{id}/users), khác với các
+-- dòng chỉ nhặt được id trần trong đơn. Cùng một bảng vì `external_staff_id` là
+-- uuid TOÀN CỤC của Pancake (đã đối chiếu: 21/21 id thấy trong đơn đều nằm trong
+-- danh sách) — tách bảng thứ hai là đẻ ra hai nguồn sự thật cho cùng con người.
+-- KHÔNG có cột nào cho `api_key`: mỗi dòng POS trả về mang api_key riêng của
+-- người đó, cố ý không lưu và không log (cùng luật với token ở màn Cài đặt).
+alter table staff_mappings add column if not exists shop_id     text;
+alter table staff_mappings add column if not exists email       text;
+alter table staff_mappings add column if not exists phone       text;
+alter table staff_mappings add column if not exists department  text;
+alter table staff_mappings add column if not exists fb_id       text;
+alter table staff_mappings add column if not exists avatar_url  text;
+alter table staff_mappings add column if not exists raw         jsonb;
+alter table staff_mappings add column if not exists synced_at   timestamptz;
+comment on column staff_mappings.shop_id is 'Shop POS thấy người này lần cuối (api_key POS cấp theo từng shop)';
+comment on column staff_mappings.department is 'Tên phòng ban bên POS (SALE OCP · CSKH NT · ADS…) — thứ người đọc hiểu được, khác `role` của POS là bitmask số';
+comment on column staff_mappings.raw is 'Nguyên văn 1 dòng POS, ĐÃ LỌC BỎ api_key/note_api_key';
+comment on column staff_mappings.synced_at is 'Lần cuối lấy từ DANH SÁCH POS. Rỗng = mới chỉ nhặt được id trong đơn, chưa có hồ sơ';
+-- Ghép nhanh theo email/SĐT khi máy gợi ý cặp POS ↔ CRM.
+create index if not exists idx_staff_mappings_email on staff_mappings (lower(email))
+    where email is not null;
+
+-- Mẻ "lấy danh sách nhân viên" cũng ghi nhật ký như mọi mẻ đồng bộ khác -> nới
+-- CHECK cho 'staff'. Nhân thể vá 'message': message_sync.py ghi giá trị đó từ
+-- lâu mà danh sách trên chưa có, nên DB nào dựng đúng file này là gãy chỗ đó.
+-- Nới cả sync_errors cho khỏi lệch, dù hàng đợi lỗi chưa nhận việc staff.
+alter table sync_logs   drop constraint if exists sync_logs_entity_check;
+alter table sync_logs   add  constraint sync_logs_entity_check
+    check (entity in ('conversation','message','order','customer','tag','page','staff'));
+alter table sync_errors drop constraint if exists sync_errors_entity_check;
+alter table sync_errors add  constraint sync_errors_entity_check
+    check (entity in ('conversation','message','order','customer','tag','page','staff'));
 
 -- Lưu vết đồng bộ trên chính dữ liệu (mục 4: external_id, source, page_id,
 -- updated_at_external, synced_at). external_id + page_id đã có sẵn từ B1/B2.

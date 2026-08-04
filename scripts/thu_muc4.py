@@ -318,6 +318,25 @@ def main() -> None:
     ok("nhân viên POS (người bán) tự vào bảng ánh xạ",
        any(s["external_staff_id"] == NV_PANCAKE
            for s in integration_repo.list_staff("pancake_pos")))
+
+    # Cùng một con người mang CÙNG uuid ở cả hai nguồn (POS + chat) nhưng là hai
+    # dòng vì khoá là (provider, external_staff_id). Gán một lần phải ăn cả hai,
+    # kẻo Admin quên nửa kia thì đơn/hội thoại bên đó không quy được về ai.
+    def _uid_hai_nguon() -> dict:
+        return {s["provider"]: s["user_id"] for s in integration_repo.list_staff()
+                if s["external_staff_id"] == NV_PANCAKE}
+
+    r_gan = integration_service.gan_nhan_vien("pancake_pages", NV_PANCAKE, uid_sale)
+    ok("gán 1 lần lan sang provider kia cùng uuid",
+       _uid_hai_nguon() == {"pancake_pages": uid_sale, "pancake_pos": uid_sale},
+       str(_uid_hai_nguon()))
+    ok("báo đúng số dòng lan sang (lan_toa)", r_gan.get("lan_toa") == 1,
+       str(r_gan.get("lan_toa")))
+    integration_service.gan_nhan_vien("pancake_pos", NV_PANCAKE, None)
+    ok("gỡ ánh xạ cũng lan sang cả hai nguồn",
+       _uid_hai_nguon() == {"pancake_pages": None, "pancake_pos": None},
+       str(_uid_hai_nguon()))
+    integration_service.gan_nhan_vien("pancake_pages", NV_PANCAKE, uid_sale)  # trả lại
     # limit lớn: DB thật (POS_SYNC bật) có quy nguồn thật doanh thu cao hơn —
     # top 5 không còn chỗ cho ad giả của test
     top = attribution_repo.thong_ke_nguon(1000)
@@ -429,8 +448,10 @@ def main() -> None:
         ok(f"màn {ten} trả HTML 200", r.status_code == 200 and "<table" in r.text,
            f"{r.status_code}")
     r = client.get("/crm/khach-hang")
+    # Bảng khách bản mới để nút Pancake dạng ICON (tooltip mang nhãn) chứ không
+    # còn chữ "Pancake" trong ruột thẻ <a> như bản khung cũ.
     ok("màn Khách hàng có nút mở hội thoại Pancake",
-       r.status_code == 200 and "Pancake</a>" in r.text)
+       r.status_code == 200 and 'title="Mở hội thoại bên Pancake"' in r.text)
 
     client.post("/dang-xuat")
     client.post("/dang-nhap", data={"username": f"{DAU}sale", "password": MK})
