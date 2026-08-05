@@ -1698,12 +1698,19 @@ create index if not exists idx_staff_mappings_email on staff_mappings (lower(ema
 -- CHECK cho 'staff'. Nhân thể vá 'message': message_sync.py ghi giá trị đó từ
 -- lâu mà danh sách trên chưa có, nên DB nào dựng đúng file này là gãy chỗ đó.
 -- Nới cả sync_errors cho khỏi lệch, dù hàng đợi lỗi chưa nhận việc staff.
+--
+-- ⚠️ Danh sách này phải BẰNG danh sách ở mục 6 (dòng ~1885), không được hẹp hơn:
+-- cả file chạy trong MỘT transaction, nên DB đang có dòng `entity='ad'` mà câu
+-- dưới đây còn thiếu 'ad' là gãy ngay tại đây và rollback toàn bộ script —
+-- không bao giờ chạy tới chỗ nới ở mục 6.
 alter table sync_logs   drop constraint if exists sync_logs_entity_check;
 alter table sync_logs   add  constraint sync_logs_entity_check
-    check (entity in ('conversation','message','order','customer','tag','page','staff'));
+    check (entity in ('conversation','message','order','customer','tag','page',
+                      'staff','ad'));
 alter table sync_errors drop constraint if exists sync_errors_entity_check;
 alter table sync_errors add  constraint sync_errors_entity_check
-    check (entity in ('conversation','message','order','customer','tag','page','staff'));
+    check (entity in ('conversation','message','order','customer','tag','page',
+                      'staff','ad'));
 
 -- Lưu vết đồng bộ trên chính dữ liệu (mục 4: external_id, source, page_id,
 -- updated_at_external, synced_at). external_id + page_id đã có sẵn từ B1/B2.
