@@ -122,6 +122,41 @@ def luat_goi_y() -> list[dict]:
         ).fetchall()
 
 
+def luat_goi_y_tat_ca() -> list[dict]:
+    """CẢ luật đang tắt + luật trỏ vào kịch bản đã ẩn — màn cấu hình phải thấy
+    hết để bật lại/sửa được. (Khác `luat_goi_y()` chỉ trả phần đang chạy.)"""
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            """
+            select r.*, s.title, s.status as script_status
+              from crm.script_suggest_rules r
+              left join crm.sale_scripts s on s.id = r.script_id
+             order by r.id desc
+            """
+        ).fetchall()
+
+
+def kich_ban_chon(limit: int = 800) -> list[dict]:
+    """Kịch bản đang dùng, cho ô <select> của màn Gợi ý."""
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            "select id, title from crm.sale_scripts where status = 'active' "
+            "order by title limit %s", (limit,),
+        ).fetchall()
+
+
+def doi_trang_thai_luat_goi_y(rule_id: int) -> dict | None:
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            "update crm.script_suggest_rules set status = "
+            "case when status = 'active' then 'inactive' else 'active' end "
+            "where id = %s returning *", (rule_id,),
+        ).fetchone()
+
+
 def luu_luat_goi_y(keywords: str, script_id: int) -> dict:
     pool = get_pg_pool()
     with pool.connection() as conn:

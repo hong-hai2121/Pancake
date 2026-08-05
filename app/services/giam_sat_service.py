@@ -25,6 +25,7 @@ from app.core import runtime_config
 from app.core.errors import ApiError
 from app.core.ngay import bay_gio, hom_nay
 from app.db.repositories import giam_sat_repo as repo
+from app.services import nhan_dien
 from app.services import tieng_viet as tv
 
 HANH_DONG = {"nhan": "Nhắn tin", "goi": "Gọi điện",
@@ -124,11 +125,15 @@ def soi_mot(cong: dict) -> dict:
         if not m.get("sender_user_id"):
             continue
         if hd == "goi":
-            # Cuộc gọi không có log — bằng chứng là câu nhân viên gõ sau khi gọi
-            if not tv.la_tin_da_goi(m.get("content") or ""):
+            # Cuộc gọi không có log — bằng chứng là câu nhân viên gõ sau khi
+            # gọi. Đ2: dò qua `nhan_dien` (mẫu nền + mẫu admin khai ở Cài đặt),
+            # và kèm luôn câu GIẢI THÍCH vào lý do — bác/nhận công của người ta
+            # thì phải nói được đã khớp mẫu nào.
+            kq = nhan_dien.soi(m.get("content") or "")
+            if not kq["goi"]:
                 continue
             return {"ket_qua": "da_xac_minh",
-                    "ly_do": f'máy soi: thấy tin báo đã gọi "'
+                    "ly_do": f'máy soi: khớp mẫu «{kq["mau"]}» trong tin "'
                              f'{(m["content"] or "")[:60]}"',
                     "bang_chung": m}
         return {"ket_qua": "da_xac_minh",
@@ -260,12 +265,30 @@ def tong_quan_kho() -> dict:
     }
 
 
+def tu_thu_hoi_bat() -> bool:
+    """Đ2 — công tắc luật "máy tự thu hồi khách quá hạn".
+
+    Chỉ chặn đường MÁY. Thu hồi TAY ở màn Kho data vẫn chạy dù công tắc tắt:
+    người bấm nút đã tự chịu trách nhiệm và có ghi lý do, khoá họ lại chỉ tổ
+    làm khách kẹt mà không ai gỡ được.
+    """
+    return bool(runtime_config.bat("luat_thu_hoi_on"))
+
+
 def thu_hoi(customer_id: int, user_id: int, ly_do: str, *,
-            khoa_ngay: int = 30, nguoi: int | None = None) -> dict:
+            khoa_ngay: int = 30, nguoi: int | None = None,
+            may: bool = False) -> dict:
     """Thu hồi khách khỏi một nhân viên. BẮT BUỘC lý do (mẫu chốt).
 
     Kèm khoá `khoa_ngay` ngày không chia lại cho chính người đó — nếu không sẽ
-    thành vòng lặp thu hồi/chia lại vô nghĩa."""
+    thành vòng lặp thu hồi/chia lại vô nghĩa.
+
+    `may=True` là đường MÁY tự thu hồi — phải qua công tắc `luat_thu_hoi_on`.
+    """
+    if may and not tu_thu_hoi_bat():
+        raise ApiError("FORBIDDEN",
+                       "Luật «máy tự thu hồi khách quá hạn» đang TẮT "
+                       "(Cài đặt → Vòng đời khách). Thu hồi tay vẫn dùng được.")
     ly_do = (ly_do or "").strip()
     if not ly_do:
         raise ApiError("VALIDATION_ERROR",
@@ -280,7 +303,7 @@ def thu_hoi(customer_id: int, user_id: int, ly_do: str, *,
             "where customer_id = %s and user_id = %s and end_at is null",
             (customer_id, user_id))
     repo.ghi_chia(customer_id, tu=user_id, den=None, hanh_dong="thu_hoi",
-                  ly_do=ly_do, boi=nguoi)
+                  ly_do=ly_do, may=may, boi=nguoi)
     repo.khoa_thu_hoi(customer_id, user_id, hom_nay() + timedelta(days=khoa_ngay),
                       ly_do)
 

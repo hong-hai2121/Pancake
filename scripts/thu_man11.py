@@ -272,11 +272,17 @@ def main() -> None:  # noqa: PLR0915 — script nghiệm thu, chạy tuần tự
 
     print("== 7. Thứ tự menu trái ==")
     dang_nhap(f"{DAU}ad")                # Admin mới thấy mục Quản trị
-    nav = web.get("/crm/pipeline").text.split('<nav class="nav">')[1].split("</nav>")[0]
+    # Cắt CẢ .side chứ không chỉ <nav>: nhóm Quản trị nay bị GHIM ở khối đáy
+    # (.side-bottom) nằm ngoài vùng cuộn, không còn trong <nav> nữa.
+    side = (web.get("/crm/pipeline").text
+            .split('<aside class="side">')[1].split("</aside>")[0])
+    nav = side
     i_sale = nav.find("<span>Sale</span>")
     i_cskh = nav.find("<span>Chăm sóc khách hàng</span>")
     i_bot = nav.find(">Bot Pancake<")
-    i_qt = nav.find("<span>Quản trị</span>")
+    # Quản trị nay là NHÓM xổ/thu như Bot Pancake (tiêu đề nằm trong <summary>),
+    # không còn là một mục nav-item đơn lẻ nữa.
+    i_qt = nav.find(">Quản trị<")
     ok("khối Sale rồi tới khối Chăm sóc khách hàng", 0 < i_sale < i_cskh,
        f"sale={i_sale} cskh={i_cskh}")
     # Giữa 2 khối chỉ được có con của khối Sale (nd-link) và 2 link phẳng
@@ -284,10 +290,45 @@ def main() -> None:  # noqa: PLR0915 — script nghiệm thu, chạy tuần tự
     chen = [m for m in re.findall(r'<a class="nav-item[^"]*"', nav[i_sale:i_cskh])
             if "mobile-only" not in m]
     ok("giữa 2 khối không còn mục thường nào chen vào", not chen, str(chen))
-    ok("Quản trị nằm cuối menu, dưới nhóm Bot Pancake", i_bot < i_qt,
+    ok("Quản trị nằm cuối menu, dưới nhóm Bot Pancake", 0 < i_bot < i_qt,
        f"bot={i_bot} quantri={i_qt}")
-    ok("Quản trị có vạch ngăn thay tiêu đề nhóm",
-       'class="nav-sep"' in nav[i_bot:i_qt])
+    # Thông báo/Giám sát/Kho data nay NẰM TRONG nhóm Quản trị (trước là nhóm
+    # không tên ngăn bằng vạch nav-sep giữa Bot Pancake và Quản trị).
+    ok("không còn cụm mục trôi nổi giữa Bot Pancake và Quản trị",
+       'class="nav-sep"' not in nav[i_bot:i_qt], nav[i_bot:i_qt][:200])
+    # Quản trị là nhóm xổ/thu (data-nhom) chứ không phải 1 nút: xổ ra đủ các
+    # màn con vốn nằm trong dải tab của views/admin.py
+    qt = nav[i_qt:]
+    ok("Quản trị là nhóm xổ/thu như Bot Pancake",
+       'data-nhom="Quản trị"' in nav and '<span class="grp-chev">' in qt)
+    thieu = [t for t in ("Nhân viên", "Vai trò &amp; quyền", "Thẻ Pancake",
+                         "Cài đặt", "Tích hợp", "Thông báo", "Nhật ký",
+                         "Giám sát", "Kho data")
+             if f"<span>{t}</span>" not in qt]
+    ok("nhóm Quản trị xổ ra đủ mục con", not thieu, str(thieu))
+    # mục con phải tô đậm đúng màn đang xem (khoá active admin-<tab>)
+    ok("mở Cài đặt thì mục Cài đặt trong menu sáng",
+       '<a class="nav-item on" href="/quan-tri/cai-dat"'
+       in web.get("/quan-tri/cai-dat").text)
+
+    print("== 7b. Đáy menu: chân trang ghim (thu/phóng + tài khoản) ==")
+    trong_nav = side.split('<nav class="nav">')[1].split("</nav>")[0]
+    duoi = side.split('<div class="side-bottom">')[1]
+    # Quản trị là MỘT NHÓM NHƯ MỌI NHÓM KHÁC, nằm trong vùng cuộn — khối ghim
+    # chỉ là chân trang (nút thu/phóng + tài khoản), không ôm mục nghiệp vụ nào.
+    ok("Quản trị nằm chung trong vùng cuộn với các nhóm khác",
+       ">Quản trị<" in trong_nav and ">Quản trị<" not in duoi)
+    ok("khối ghim KHÔNG ôm nhóm menu nào", "nav-grp" not in duoi)
+    ok("khối ghim đứng SAU </nav>", side.find("</nav>") < side.find("side-bottom"))
+    ok("có nút thu/phóng menu", 'id="navToggle"' in side)
+    ok("có khối tài khoản đang đăng nhập (avatar + tên + vai trò)",
+       'class="side-foot"' in side and 'class="sf-ava"' in side
+       and f"{DAU}ad" in side and ">Admin</small>" in side)
+    # Đăng xuất phải là form POST (route /dang-xuat không nhận GET) và
+    # data-native để PJAX không nuốt mất lượt gửi form.
+    ok("Đăng xuất là form POST + data-native",
+       '<form method="post" action="/dang-xuat" class="sf-form" data-native>'
+       in side)
 
     with pool.connection() as conn:
         don_dep(conn)

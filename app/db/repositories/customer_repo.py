@@ -249,6 +249,7 @@ def upsert_conversation(
     snippet: str | None = None,
     message_count: int | None = None,
     unread_count: int | None = None,
+    kind: str | None = None,
 ) -> dict:
     """1 hội thoại 1 dòng theo (page, external id). Hội thoại cũ chưa định danh
     được khách (customer_id null) thì lần đồng bộ sau bồi vào.
@@ -265,9 +266,10 @@ def upsert_conversation(
             insert into crm.conversations
                    (customer_id, page_id, external_conversation_id, last_message_at,
                     source, external_updated_at, synced_at, assignee_external_id,
-                    assignee_user_id, external_tags, snippet, message_count, unread_count)
+                    assignee_user_id, external_tags, snippet, message_count,
+                    unread_count, kind)
             values (%s, %s, %s, %s::timestamptz, %s, %s::timestamptz, now(), %s, %s,
-                    %s::jsonb, %s, %s, %s)
+                    %s::jsonb, %s, %s, %s, coalesce(%s::text, 'inbox'))
             on conflict (page_id, external_conversation_id) do update set
                 customer_id     = coalesce(crm.conversations.customer_id, excluded.customer_id),
                 last_message_at = greatest(
@@ -287,14 +289,15 @@ def upsert_conversation(
                 message_count        = coalesce(excluded.message_count,
                                                 crm.conversations.message_count),
                 unread_count         = coalesce(excluded.unread_count,
-                                                crm.conversations.unread_count)
+                                                crm.conversations.unread_count),
+                kind                 = coalesce(%s::text, crm.conversations.kind)
             returning *
             """,
             (
                 customer_id, page_id, external_conversation_id, last_message_at,
                 source, external_updated_at, assignee_external_id, assignee_user_id,
                 json.dumps(external_tags or [], ensure_ascii=False),
-                snippet, message_count, unread_count,
+                snippet, message_count, unread_count, kind, kind,
             ),
         ).fetchone()
 

@@ -410,8 +410,8 @@ def cot_cua(l: dict) -> tuple[str, str]:
     Thứ tự xét CÓ Ý NGHĨA — đừng đảo:
       1. Cột người ĐẶT TAY thắng tất cả (nhưng đã tự nhả nếu khách nhắn lại).
       2. Đã chốt / ngừng — trạng thái cuối.
-      3. QUÁ HẠN — việc gấp, phải nổi lên trước mọi cột bước.
-      4. Hẹn mua tới ngày.
+      3. HẸN MUA — có hẹn là đã có kế hoạch, không phải khách bị bỏ quên.
+      4. QUÁ HẠN — việc gấp, nổi lên trước mọi cột bước.
       5. Cột bước theo con trỏ.
     """
     if l.get("board_column"):
@@ -420,12 +420,20 @@ def cot_cua(l: dict) -> tuple[str, str]:
         return "ngung", "khách yêu cầu ngừng liên hệ"
     if (l.get("stage_code") or "") == "da_chot":
         return "da_chot", "đã chốt đơn"
+    # 🚩 Hẹn mua phải xét TRƯỚC quá hạn. Trước đây nằm sau, nên dòng chú thích
+    #    "hẹn trượt vẫn ở lại cột Hẹn mua" KHÔNG BAO GIỜ có hiệu lực: lead nào
+    #    kẹt thang đủ lâu để người ta đặt hẹn thì cũng đã kẹt đủ lâu để `qua_han`
+    #    bắt trước. Nhân viên đặt hẹn xong thấy thẻ nhảy sang "Quá hạn — xử
+    #    ngay" là mất niềm tin vào bảng.
+    #    Hẹn TRƯỢT ngày cũng ở lại đây (thẻ mang chữ "hẹn đã trượt") — hẹn trượt
+    #    vẫn là hẹn, xử khác hẳn việc bị bỏ quên.
+    if (hen := l.get("next_action_at")):
+        from app.core.ngay import bay_gio
+
+        return "hen_mua", ("hẹn đã trượt ngày" if hen < bay_gio()
+                           else "có hẹn mua")
     if (ly_do := qua_han(l)):
         return "qua_han", ly_do
-    # Hẹn mua quá ngày Ở LẠI cột Hẹn mua (viền đỏ), KHÔNG sang Quá hạn —
-    # ngoại lệ mẫu ghi rõ: hẹn trượt vẫn là hẹn, xử khác việc bị bỏ quên.
-    if l.get("next_action_at"):
-        return "hen_mua", "có hẹn mua"
     cur = int(l.get("sale_step") or 0)
     if cur <= 0:
         # "Tiềm năng" = khách ĐÃ TỪNG trả lời sau tin shop (dấu replied_at).
@@ -439,21 +447,51 @@ def cot_cua(l: dict) -> tuple[str, str]:
     return f"buoc_{ke}", f"đã làm tới bước {cur}"
 
 
+# Quét bao nhiêu lead để ĐẾM, và bày ra bao nhiêu thẻ.
+#  Đếm phải phủ rộng hơn danh sách: số trên tab/ô lọc mà chỉ đếm trong 500 dòng
+#  đang bày thì bấm vào cột nào cũng thấy số không khớp. Chạm trần quét thì màn
+#  gắn dấu "≥" chứ không nói chắc (xem `cham_tran`).
+QUET_TOI_DA = 3000
+HIEN_TOI_DA = 500
+
+
 def bang_viec(*, owner_id: int | None = None, q: str = "",
-              an_da_cham: bool = True) -> dict:
-    """Số liệu màn Bảng việc Sale: thẻ đã xếp cột + 4 ô đếm.
+              an_da_cham: bool = True, staff_id: int | None = None,
+              chua_gan: bool = False, page_id: int | None = None,
+              tao_tu: str = "", tao_den: str = "",
+              hoat_dong_ngay: int | None = None, trang_thai: str = "") -> dict:
+    """Số liệu màn Bảng việc Sale: thẻ đã xếp cột + các ô đếm.
 
     `an_da_cham` — khách ĐÃ CHĂM HÔM NAY thì ẩn đi, TRỪ KHI khách nhắn lại SAU
     lần chăm (cần xử tiếp). Không có luật này thì bảng đầy thẻ đã làm xong.
+
+    Bộ lọc (bước 2): `staff_id`/`chua_gan`/`page_id`/`tao_tu`/`tao_den`/
+    `hoat_dong_ngay` lọc ở SQL (xem `repo.bang_viec`); riêng `trang_thai` lọc ở
+    ĐÂY vì cột là thứ Python suy ra từ tin nhắn, SQL không biết.
+
+    Thứ tự CÓ Ý NGHĨA: xếp cột cho toàn bộ phạm vi quét → đếm → rồi mới lọc theo
+    cột và cắt danh sách. Đếm sau khi lọc thì mọi cột không được chọn đều về 0.
     """
-    rows = repo.bang_viec(owner_id=owner_id, q=q)
+    rows = repo.bang_viec(
+        owner_id=owner_id, q=q,
+        chi_inbox=bool(runtime_config.bat("board_chi_inbox")),
+        limit=QUET_TOI_DA, staff_id=staff_id, chua_gan=chua_gan,
+        page_id=page_id, tao_tu=tao_tu, tao_den=tao_den,
+        hoat_dong_ngay=hoat_dong_ngay)
     cot_ds = cac_cot()
     theo_cot: dict[str, list] = {c["ma"]: [] for c in cot_ds}
     the: list[dict] = []
+    # Đếm RIÊNG, không suy từ `the`: thẻ đã chăm bị `continue` bỏ khỏi `the` nên
+    # đếm sau vòng lặp là ra 0. Màn cần cả hai số — "hôm nay đã xong N" (khích
+    # lệ) và "đã ẩn N thẻ" (giải thích vì sao bảng ngắn hơn mình tưởng).
+    xong_hom_nay = da_an = 0
     for r in rows:
         l = dict(r)
+        if int(l.get("cham_hom_nay") or 0) > 0:
+            xong_hom_nay += 1
         if an_da_cham and int(l.get("cham_hom_nay") or 0) > 0 \
                 and not cho_nhan_vien(l):
+            da_an += 1
             continue
         ma, vi_sao = cot_cua(l)
         ke = buoc_ke(l)
@@ -463,21 +501,44 @@ def bang_viec(*, owner_id: int | None = None, q: str = "",
             "cho_dap": cho_nhan_vien(l),
             "ly_do_cho": ly_do_cho(ke["cho"]) if ke else "",
             "qua_han": qua_han(l),
+            # Cờ RIÊNG chứ không để giao diện đi so `cot_vi_sao`: đó là câu chữ
+            # hiển thị, ai sửa một dấu là viền đỏ tắt im lặng, không test nào đỏ.
+            "hen_tre": ma == "hen_mua" and bool(l.get("next_action_at"))
+                       and l["next_action_at"] < bay_gio(),
         })
         the.append(l)
         theo_cot.setdefault(ma, []).append(l)
 
-    n_hom_nay = sum(1 for x in the if x["buoc_ke"] and x["buoc_ke"]["san_sang"])
+    # --- đếm TRƯỚC khi lọc theo cột ---
+    dem = {
+        "hom_nay": sum(1 for x in the
+                       if x["buoc_ke"] and x["buoc_ke"]["san_sang"]),
+        "qua_han": len(theo_cot.get("qua_han", [])),
+        "vua_phan_hoi": sum(1 for x in the if x["cho_dap"]),
+        "yeu_cau_chia": sum(1 for x in the if not x.get("owner_id")),
+    }
+    dem_cot = {c["ma"]: len(theo_cot.get(c["ma"], [])) for c in cot_ds}
+
+    # --- lọc theo cột, rồi mới cắt danh sách bày ra ---
+    if trang_thai and trang_thai in theo_cot:
+        the = list(theo_cot[trang_thai])
+        theo_cot = {k: (v if k == trang_thai else []) for k, v in theo_cot.items()}
+    tong = len(the)
+    if tong > HIEN_TOI_DA:
+        the = the[:HIEN_TOI_DA]
+        giu = {x["id"] for x in the}
+        theo_cot = {k: [x for x in v if x["id"] in giu]
+                    for k, v in theo_cot.items()}
     return {
         "cot": cot_ds,
         "theo_cot": theo_cot,
         "the": the,
-        "dem": {
-            "hom_nay": n_hom_nay,
-            "qua_han": len(theo_cot.get("qua_han", [])),
-            "vua_phan_hoi": sum(1 for x in the if x["cho_dap"]),
-            "yeu_cau_chia": sum(1 for x in the if not x.get("owner_id")),
-        },
+        "tong": tong,
+        "cham_tran": len(rows) >= QUET_TOI_DA,
+        "xong_hom_nay": xong_hom_nay,
+        "da_an": da_an,
+        "dem": dem,
+        "dem_cot": dem_cot,
     }
 
 
@@ -549,6 +610,131 @@ def mo_lai(lead_id: int, *, nguoi: int | None = None) -> dict:
     return dict(kq)
 
 
+def dat_hen(lead_id: int, khi: str, *, nguoi: int | None = None) -> dict:
+    """📌 Đặt hẹn mua. `khi` = 'YYYY-MM-DD' hoặc 'YYYY-MM-DDTHH:MM'; rỗng = xoá hẹn.
+
+    KHÔNG chặn hẹn trong quá khứ: nhân viên hay ghi lại cái hẹn khách vừa nói
+    hôm qua mà mình quên nhập. Hẹn quá ngày tự thành thẻ viền đỏ ở cột Hẹn mua,
+    thấy ngay — chặn ở đây chỉ tổ làm họ bịa một ngày khác cho lọt.
+    """
+    khi = (khi or "").strip()
+    luc = None
+    if khi:
+        from datetime import datetime
+
+        try:
+            luc = datetime.fromisoformat(khi).astimezone()
+        except ValueError:
+            raise ApiError("VALIDATION_ERROR",
+                           f"Ngày hẹn không đọc được: {khi!r}") from None
+    kq = repo.dat_hen(lead_id, luc)
+    if not kq:
+        raise ApiError("NOT_FOUND", "Không tìm thấy lead đang mở.")
+
+    from app.db.repositories import audit_repo
+
+    audit_repo.ghi(action="dat_hen_mua" if luc else "xoa_hen_mua",
+                   object_type="lead", object_id=lead_id, user_id=nguoi,
+                   reason=khi)
+    return dict(kq)
+
+
+def tu_khai(lead_id: int, viec: str, *, nguoi: int | None = None) -> str:
+    """✅ Tự khai đã nhắn / ☎️ đã gọi — đi qua CỔNG GHI CÔNG DUY NHẤT.
+
+    Không tự ghi thẳng vào `care_interactions`: cổng đó còn lo chống trùng trong
+    ngày, xếp trạng thái xác minh và ghi nguồn "người tự khai". Vòng qua nó là
+    công tự khai lọt vào như công đã xác minh.
+    """
+    if viec not in ("nhan", "goi"):
+        raise ApiError("VALIDATION_ERROR", f"Việc lạ: {viec!r}")
+    if not nguoi:
+        raise ApiError("VALIDATION_ERROR", "Chưa xác định người khai.")
+    l = repo.get_lead_bang(lead_id)
+    if not l:
+        raise ApiError("NOT_FOUND", "Không tìm thấy lead.")
+
+    from app.services import giam_sat_service
+
+    return giam_sat_service.ghi_cong(int(l["customer_id"]), nguoi, viec)
+
+
+# ------------------------------------------------- thanh hàng loạt (bước 6)
+# Mẫu CẤM hai việc này làm hàng loạt (tài liệu C1) — và lệnh cấm có lý:
+#   · tặng voucher  = phát tiền, bấm nhầm một cái mất cả lô
+#   · ✅ tự khai    = khai công cho 200 khách trong một nhịp thì con số công
+#                     hết nghĩa, mà bộ soi tin không cách nào bác lại kịp
+# Nên ở đây KHÔNG có hai hành động đó, và đừng thêm vào.
+HANG_LOAT = {"giao", "xuat"}
+
+
+def giao_hang_loat(lead_ids: list[int], nv_ids: list[int], *,
+                   nguoi: int | None = None) -> dict:
+    """Giao/chia lô lead cho một hoặc nhiều nhân viên.
+
+    Một người  -> giao hết cho người đó.
+    Nhiều người -> CHIA ĐỀU kiểu chia bài (lead thứ i về người thứ i % N), y như
+    mẫu. Chia đều theo thứ tự đang bày nên hai người không bị lệch quá 1 lead.
+    """
+    lead_ids = [int(x) for x in lead_ids if int(x) > 0]
+    nv_ids = list(dict.fromkeys(int(x) for x in nv_ids if int(x) > 0))
+    if not lead_ids:
+        raise ApiError("VALIDATION_ERROR", "Chưa chọn thẻ nào.")
+    if not nv_ids:
+        raise ApiError("VALIDATION_ERROR", "Chưa chọn nhân viên nhận.")
+
+    tui: dict[int, list[int]] = {u: [] for u in nv_ids}
+    for i, lid in enumerate(lead_ids):
+        tui[nv_ids[i % len(nv_ids)]].append(lid)
+    doi = sum(repo.giao_lead(ds, u) for u, ds in tui.items() if ds)
+
+    from app.db.repositories import audit_repo
+
+    audit_repo.ghi(action="giao_lead_hang_loat", object_type="lead",
+                   object_id=None, user_id=nguoi,
+                   reason=f"{doi} lead cho {len(nv_ids)} nhân viên")
+    return {"doi": doi, "so_nv": len(nv_ids)}
+
+
+# Cột xuất ra file. Thứ tự này là thứ tự cột trong CSV.
+COT_XUAT = [
+    ("id", "Mã lead"), ("full_name", "Tên khách"),
+    ("primary_phone", "Điện thoại"), ("card_rank", "Hạng thẻ"),
+    ("total_spent", "Tổng chi tiêu"), ("source", "Nguồn"),
+    ("owner_name", "Phụ trách"), ("sale_step", "Bước đã gửi"),
+    ("next_action_at", "Hẹn mua"), ("created_at", "Ngày nhắn lần đầu"),
+]
+
+
+def xuat_csv(lead_ids: list[int], *, co_sdt: bool = True) -> str:
+    """Dựng nội dung CSV cho lô lead đã chọn.
+
+    `co_sdt=False` -> cột Điện thoại ra "***". File này rời khỏi hệ thống là
+    không thu về được, nên người không được xem SĐT trên màn thì cũng không
+    được xuất SĐT ra file.
+    """
+    import csv
+    import io
+
+    rows = repo.lead_de_xuat([int(x) for x in lead_ids if int(x) > 0])
+    if not rows:
+        raise ApiError("VALIDATION_ERROR", "Chưa chọn thẻ nào để xuất.")
+    dem = io.StringIO()
+    w = csv.writer(dem)
+    w.writerow([nhan for _, nhan in COT_XUAT])
+    for r in rows:
+        hang = []
+        for khoa, _ in COT_XUAT:
+            v = r.get(khoa)
+            if khoa == "primary_phone" and not co_sdt:
+                v = "***"
+            elif hasattr(v, "strftime"):
+                v = v.astimezone().strftime("%d/%m/%Y %H:%M")
+            hang.append("" if v is None else v)
+        w.writerow(hang)
+    return dem.getvalue()
+
+
 def dat_lai_thang(lead_id: int, *, nguoi: int | None = None) -> None:
     """Chạy lại thang từ bước 0 cho một lead (nút ở hồ sơ khách)."""
     repo.dat_lai_con_tro(lead_id)
@@ -560,20 +746,107 @@ def dat_lai_thang(lead_id: int, *, nguoi: int | None = None) -> None:
 
 
 def luu_buoc(step_no: int, *, name: str, work: str = "",
-             kw_nv: str = "", kw_kh: str = "") -> dict:
+             kw_nv: str = "", kw_kh: str = "", bat: bool | None = None) -> dict:
     """Sửa một bước của thang. Từ khoá phải là CỤM NHIỀU CHỮ — xem cái bẫy
     ngôn ngữ ở đầu file."""
     if step_no < 1:
         raise ApiError("VALIDATION_ERROR", "Số bước phải từ 1 trở lên.")
-    don = [k.strip() for k in (kw_nv or "").split(",")
-           if k.strip() and not k.startswith("#") and " " not in k.strip()
-           and len(tv.chuan_hoa(k)) <= 4]
-    if don:
+    if (xau := tu_khoa_qua_ngan(kw_nv)):
         raise ApiError(
             "VALIDATION_ERROR",
-            f"Từ khoá quá ngắn, dễ khớp nhầm sau khi bỏ dấu: {', '.join(don)}. "
+            f"Từ khoá quá ngắn, dễ khớp nhầm sau khi bỏ dấu: {', '.join(xau)}. "
             'Dùng CỤM nhiều chữ (vd "đắt quá" thay vì "đắt" — "đắt" bỏ dấu '
             'thành "dat", đụng luôn "đặt hàng").')
     return repo.luu_buoc(step_no, name=name.strip(), work=work.strip(),
-                         kw_nv=(kw_nv or "").strip(),
-                         kw_kh=(kw_kh or "").strip())
+                         kw_nv=gop(tach(kw_nv)), kw_kh=gop(tach(kw_kh)),
+                         status=None if bat is None
+                         else ("active" if bat else "inactive"))
+
+
+# ---------------------------------------------------- 1A · làm việc với từ khoá
+# Từ khoá lưu dạng MỘT CHUỖI "a, b, c" (khớp mẫu, và tiện cho bộ dò đọc thẳng).
+# Giao diện lại cần từng cụm rời để vẽ thẻ bấm gỡ. Tách/gộp gom về hai hàm này
+# để hai phía không bao giờ hiểu chuỗi khác nhau.
+def tach(chuoi: str) -> list[str]:
+    return [x.strip() for x in (chuoi or "").split(",") if x.strip()]
+
+
+def gop(cum: list[str]) -> str:
+    return ", ".join(cum)
+
+
+def tu_khoa_qua_ngan(chuoi: str) -> list[str]:
+    """Cụm ngắn tới mức nguy hiểm sau khi bỏ dấu (xem cái bẫy ngôn ngữ).
+
+    Bỏ qua ba từ đặc biệt `#anh/#gia/#ma` — chúng không so chuỗi."""
+    return [k for k in tach(chuoi)
+            if not k.startswith("#") and " " not in k
+            and len(tv.chuan_hoa(k)) <= 4]
+
+
+def the_trung(chuoi: str) -> dict[int, str]:
+    """Vị trí các cụm THỪA — chỉ khác nhau ở DẤU nên máy coi là một.
+
+    Trả {chỉ số cụm thừa: cụm đầu tiên trùng với nó}. Mẫu để cả cặp
+    "số đo"/"so do" trong seed; máy đã bỏ dấu cả hai phía nên cụm thứ hai không
+    bắt thêm được gì, chỉ làm danh sách dài ra và người đọc tưởng đang phủ rộng
+    hơn thực tế."""
+    dau: dict[str, str] = {}
+    ra: dict[int, str] = {}
+    for i, k in enumerate(tach(chuoi)):
+        khoa = tv.chuan_hoa(k)
+        if khoa in dau:
+            ra[i] = dau[khoa]
+        else:
+            dau[khoa] = k
+    return ra
+
+
+def go_the_trung(chuoi: str) -> str:
+    """Bỏ mọi cụm thừa, GIỮ cụm xuất hiện trước (thường là bản CÓ DẤU)."""
+    thua = set(the_trung(chuoi))
+    return gop([k for i, k in enumerate(tach(chuoi)) if i not in thua])
+
+
+# Ba cụm máy tự hiểu — hiện thành chữ người đọc được trên giao diện.
+CUM_DAC_BIET = {"#anh": "tin có ảnh", "#gia": "tin có số tiền",
+                "#ma": "tin có mã giảm"}
+
+
+def cum_the(chuoi: str) -> list[dict]:
+    """Danh sách cụm đã gắn nhãn, để giao diện vẽ thẻ mà không tự đoán gì."""
+    thua = the_trung(chuoi)
+    ra = []
+    for i, k in enumerate(tach(chuoi)):
+        dac = CUM_DAC_BIET.get(k.lower())
+        ra.append({"i": i, "cum": k, "dac_biet": dac,
+                   "trung_voi": thua.get(i)})
+    return ra
+
+
+def thu_mot_cau(cau: str, *, ai: str = "nv", co_anh: bool = False,
+                kw_nv: dict[int, str] | None = None,
+                kw_kh: dict[int, str] | None = None) -> dict:
+    """🧪 Thử một câu — dán câu nhân viên (hoặc khách) hay gõ, xem máy hiểu là
+    bước mấy.
+
+    Chấm trên TỪ KHOÁ ĐANG GÕ TRÊN MÀN (`kw_nv`/`kw_kh` truyền vào), chưa lưu
+    cũng thử được. Và gọi THẲNG `_khop_buoc()` — đúng hàm bộ dò thật dùng — nên
+    kết quả ô thử KHÔNG BAO GIỜ lệch với lúc chạy thật.
+    """
+    ds = thang()
+    cfg = cau_hinh()
+    nguon = (kw_kh if ai == "kh" else kw_nv) or {}
+    khop = []
+    for b in sorted(ds):
+        kw = nguon.get(b)
+        if kw is None:                       # màn không gửi thì lấy bản đã lưu
+            kw = (ds[b].get("keywords_customer") if ai == "kh"
+                  else ds[b].get("keywords_agent")) or ""
+        trung = [k["cum"] for k in cum_the(kw)
+                 if _khop_buoc(cau, co_anh, k["cum"])]
+        if trung:
+            khop.append({"buoc": b, "ten": ds[b].get("name") or "",
+                         "cum": trung})
+    return {"ai": ai, "khop": khop,
+            "cua_so": cfg["cua_so"], "nhay": cfg["nhay"]}

@@ -63,6 +63,36 @@ def tat_moc(code: str) -> None:
             (code,))
 
 
+def sua_moc(moc_id: int, *, offset_days: int | None = None,
+            label: str | None = None, sender: str | None = None,
+            active: bool | None = None) -> dict | None:
+    """Sửa MỘT mốc từ màn Cài đặt → 1D (số ngày · nhãn 📌 · ai gửi · bật/tắt).
+
+    Chỉ đụng đúng trường được truyền — form 1D gửi cả bảng nên phải để trường
+    nào không đổi thì y nguyên, không ghi đè bằng None."""
+    dat, ts = [], {"id": moc_id}
+    if offset_days is not None:
+        dat.append("offset_days = %(ngay)s")
+        ts["ngay"] = offset_days
+    if label is not None:
+        dat.append("label = %(nhan)s")
+        ts["nhan"] = label.strip()
+    if sender is not None:
+        dat.append("sender = %(ai)s")
+        ts["ai"] = sender
+    if active is not None:
+        dat.append("active = %(bat)s")
+        ts["bat"] = active
+    if not dat:
+        return None
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            f"update crm.care_milestones set {', '.join(dat)} "
+            "where id = %(id)s returning *", ts,
+        ).fetchone()
+
+
 # ------------------------------------------------------------------ khuyến mãi
 def ctkm_dang_chay(ngay=None) -> dict | None:
     """Đợt khuyến mãi đang chạy hôm nay (mới nhất). None = không có đợt nào."""
@@ -267,11 +297,17 @@ def ghi_cham(customer_id: int, *, nguoi: int | None, kenh: str = "chat",
 # ------------------------------------------------------------------ bảng việc
 # Khách của bảng CSKH = khách ĐÃ TỪNG NHẬN HÀNG (có last_delivered_at). Chưa
 # nhận hàng lần nào là việc của Sale, không phải của bảng này.
-_CHON = """
-    c.id, c.full_name, c.primary_phone, c.card_rank, c.do_not_contact,
+# Số ngày kể từ NGÀY NHẬN HÀNG CUỐI — trục thời gian của cả quy trình CSKH.
+# Để một chỗ vì nó vừa nằm trong SELECT vừa nằm trong WHERE (bộ lọc dải ngày):
+# chép hai bản là sớm muộn cũng lệch một bản, mà lệch kiểu này rất khó thấy.
+_NGAY_SQL = ("(now() at time zone 'Asia/Ho_Chi_Minh')::date"
+             " - (c.last_delivered_at at time zone 'Asia/Ho_Chi_Minh')::date")
+
+_CHON = f"""
+    c.id, c.full_name, c.primary_phone, c.card_rank, c.total_spent,
+    c.do_not_contact,
     c.last_delivered_at, c.cskh_column, c.cskh_column_at,
-    (now() at time zone 'Asia/Ho_Chi_Minh')::date
-        - (c.last_delivered_at at time zone 'Asia/Ho_Chi_Minh')::date as ngay,
+    {_NGAY_SQL} as ngay,
     ht.khach_cuoi, ht.shop_cuoi,
     cs.cham_cuoi, cs.cham_hom_nay,
     dh.dang_chay,
@@ -323,23 +359,64 @@ _TU = """
 """
 
 
+def _dk_vong(ngay_buong: int) -> list[str]:
+    """Điều kiện "khách đang trong VÒNG CHĂM" — dùng chung cho bảng việc và mọi
+    ô đếm, để số trên dải lọc không bao giờ đá với số thẻ bày ra."""
+    return ["c.deleted_at is null", "c.status <> 'merged'",
+            "c.last_delivered_at is not null",
+            f"{_NGAY_SQL} <= %(buong)s"]
+
+
 def bang_viec(*, owner_id: int | None = None, q: str = "",
-              ngay_buong: int = 210, limit: int = 500) -> list[dict]:
+              ngay_buong: int = 210, limit: int = 500,
+              staff_id: int | None = None, chua_gan: bool = False,
+              page_id: int | None = None, hang_the: str = "",
+              nhan_tu: int | None = None,
+              nhan_den: int | None = None) -> list[dict]:
     """Khách đang trong VÒNG CHĂM — service tự xếp cột.
 
     Cắt sẵn ở tầng SQL hai nhóm không bao giờ lên bảng: khách chưa nhận hàng
     bao giờ, và khách đã quá ngày buông (mẫu: >210 ngày = coi như ngủ, thuộc
     màn Khách ngủ chứ không phải bảng việc).
+
+    Bộ lọc màn (port từ dải lọc `index.php?bp=cskh`):
+      `owner_id`         — bó về "khách của tôi" (do route quyết theo quyền).
+      `staff_id`         — quản lý chọn XEM CỦA AI. Đi cùng `chua_gan`.
+      `chua_gan`         — khách chưa có người phụ trách CSKH ("— Chưa gán —").
+      `page_id`          — fanpage của hội thoại MỚI NHẤT của khách.
+      `hang_the`         — mã hạng thẻ; "chua_xep_hang" = chưa có hạng nào.
+      `nhan_tu/nhan_den` — DẢI SỐ NGÀY kể từ ngày nhận hàng cuối (không phải
+                           ngày dương lịch): mẫu lọc "nhận hàng cách đây 45–104
+                           ngày", vì cột trên bảng cũng đo bằng thang đó.
+
+    🔑 `hang_the="chua_xep_hang"` là `card_rank is null` chứ không phải chuỗi
+    rỗng: mẫu tính "Chưa xếp hạng" là trạng thái thứ 6 có thật (khách chi tiêu
+    đúng 0đ), đếm riêng — không phải rác dữ liệu.
     """
-    dk = ["c.deleted_at is null", "c.status <> 'merged'",
-          "c.last_delivered_at is not null",
-          "(now() at time zone 'Asia/Ho_Chi_Minh')::date"
-          " - (c.last_delivered_at at time zone 'Asia/Ho_Chi_Minh')::date"
-          " <= %(buong)s"]
+    dk = _dk_vong(ngay_buong)
     ts: dict = {"buong": ngay_buong, "lim": limit}
     if owner_id:
         dk.append("pt.owner_id = %(nv)s")
         ts["nv"] = owner_id
+    if staff_id:
+        dk.append("pt.owner_id = %(nv2)s")
+        ts["nv2"] = staff_id
+    if chua_gan:
+        dk.append("pt.owner_id is null")
+    if page_id:
+        dk.append("cv.page_id = %(page)s")
+        ts["page"] = page_id
+    if hang_the == "chua_xep_hang":
+        dk.append("c.card_rank is null")
+    elif hang_the:
+        dk.append("c.card_rank = %(hang)s")
+        ts["hang"] = hang_the
+    if nhan_tu is not None:
+        dk.append(f"{_NGAY_SQL} >= %(ntu)s")
+        ts["ntu"] = nhan_tu
+    if nhan_den is not None:
+        dk.append(f"{_NGAY_SQL} <= %(nden)s")
+        ts["nden"] = nhan_den
     if q.strip():
         dk.append("(c.full_name ilike %(q)s or c.primary_phone like %(q)s)")
         ts["q"] = f"%{q.strip()}%"
@@ -350,6 +427,114 @@ def bang_viec(*, owner_id: int | None = None, q: str = "",
             "order by c.last_delivered_at desc nulls last limit %(lim)s",
             ts,
         ).fetchall()
+
+
+# ------------------------------------------------------------ nguồn ô xổ lọc
+def nhan_vien_co_khach(ngay_buong: int = 210) -> list[dict]:
+    """Người đang phụ trách khách CSKH còn trong vòng chăm — nguồn ô lọc
+    "nhân viên".
+
+    Cố ý KHÔNG lấy cả bảng `users`: danh sách đó gồm kế toán, admin, người đã
+    nghỉ — chọn xong bảng trắng mà không hiểu vì sao. Tên nào hiện ra ở đây
+    cũng chắc chắn bấm vào là có thẻ.
+    """
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            f"""
+            select u.id, u.name, count(*) as so_khach
+              from crm.customers c
+              join crm.customer_assignments a
+                on a.customer_id = c.id and a.end_at is null
+               and a.assignment_type = 'cskh'
+              join crm.users u on u.id = a.user_id
+             where {' and '.join(_dk_vong(ngay_buong))}
+             group by u.id, u.name
+             order by u.name
+            """,
+            {"buong": ngay_buong},
+        ).fetchall()
+
+
+def fanpage_co_khach(ngay_buong: int = 210) -> list[dict]:
+    """Fanpage có khách CSKH còn trong vòng chăm — nguồn ô lọc "fanpage"."""
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            f"""
+            select p.id, p.name, count(*) as so_khach
+              from crm.customers c
+              join lateral (
+                  select cv.page_id from crm.conversations cv
+                   where cv.customer_id = c.id
+                   order by cv.last_message_at desc nulls last limit 1
+              ) cv on true
+              join crm.pages p on p.id = cv.page_id
+             where {' and '.join(_dk_vong(ngay_buong))}
+             group by p.id, p.name
+             order by p.name
+            """,
+            {"buong": ngay_buong},
+        ).fetchall()
+
+
+def hoi_thoai_map(ids: list[int]) -> dict[int, dict]:
+    """Hội thoại MỚI NHẤT của mỗi khách — nuôi cột phải của màn focus 1 cột.
+
+    Chỉ đọc `crm.conversations` (đã có sẵn `snippet` + `last_message_at` do
+    worker đổ về), KHÔNG đụng `crm.messages`: danh sách bên phải chỉ cần một
+    dòng xem trước, mở hẳn khung chat mới cần tin thật.
+    """
+    ids = [int(i) for i in set(ids or []) if i]
+    if not ids:
+        return {}
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        rows = conn.execute(
+            """
+            select distinct on (cv.customer_id)
+                   cv.customer_id, cv.id as conversation_id, cv.snippet,
+                   cv.last_message_at, cv.unread_count,
+                   cv.external_conversation_id, p.external_page_id
+              from crm.conversations cv
+              left join crm.pages p on p.id = cv.page_id
+             where cv.customer_id = any(%(ids)s)
+             order by cv.customer_id, cv.last_message_at desc nulls last
+            """,
+            {"ids": ids},
+        ).fetchall()
+    return {int(r["customer_id"]): dict(r) for r in rows}
+
+
+def hang_the_ds() -> list[dict]:
+    """Bậc thang hạng thẻ, hạng TO trước — nguồn ô lọc "hạng thẻ"."""
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            "select code, name, emoji from crm.card_ranks "
+            "order by sort_order desc, code"
+        ).fetchall()
+
+
+def dem_khach_ngu(ngay_buong: int = 210) -> int:
+    """Khách đã QUÁ ngày buông = coi như ngủ, chỉ chăm khi có chiến dịch.
+
+    Mẫu bày con số này ngay trên bảng việc CSKH: họ không nằm trong bảng nhưng
+    vẫn là khách của mình — giấu hẳn thì đội tưởng đã mất.
+    """
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        r = conn.execute(
+            f"""
+            select count(*) as n from crm.customers c
+             where c.deleted_at is null and c.status <> 'merged'
+               and c.last_delivered_at is not null
+               and not c.do_not_contact
+               and {_NGAY_SQL} > %(buong)s
+            """,
+            {"buong": ngay_buong},
+        ).fetchone()
+    return int((r or {}).get("n") or 0)
 
 
 def mot_khach(customer_id: int) -> dict | None:

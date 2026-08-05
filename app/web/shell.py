@@ -16,7 +16,9 @@ phần thân HTML rồi bọc lại bằng `render_shell`.
 Bố cục tự co theo bề rộng: dưới 900px sidebar chuyển thành thanh ngang trên đầu.
 """
 
+import hashlib
 import time
+from functools import lru_cache
 from html import escape
 
 from app.core.request_context import current_user
@@ -93,6 +95,9 @@ _ICONS = {
     "timer": '<path d="M10 2h4"/><path d="m12 14 3-3"/><circle cx="12" cy="14" r="8"/>',
     "panel-left-close": '<rect x="3" y="3" width="18" height="18" rx="2"/>'
                         '<path d="M9 3v18"/><path d="m16 15-3-3 3-3"/>',
+    # đáy menu trái: nút Đăng xuất trong khối tài khoản (_side_foot)
+    "log-out": '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>'
+               '<path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
     "search": '<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>',
     "sliders": '<path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/>'
                '<path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/>'
@@ -119,6 +124,10 @@ _ICONS = {
     "copy": '<rect x="8" y="8" width="14" height="14" rx="2"/>'
             '<path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>',
     "check": '<path d="M20 6 9 17l-5-5"/>',
+    # Hai dấu tích chồng = "đã xong rồi, xác nhận rồi" — mẫu dùng cho số việc
+    # đã chăm xong hôm nay, phân biệt với `check` (một việc lẻ).
+    "check-check": '<path d="M18 6 7 17l-5-5"/><path d="m22 10-7.5 7.5L13 16"/>',
+    "x": '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
     "dots-h": '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'
               '<circle cx="5" cy="12" r="1"/>',
     "chevron-down": '<path d="m6 9 6 6 6-6"/>',
@@ -262,32 +271,81 @@ MENU_GROUPS: list[tuple[str, list[tuple[str, str, str, str, str]]]] = [
         ("/data/kich-ban", "Dữ liệu bot", "data", "data", "bot.view"),
     ]),
     # Khu Quản trị đứng CUỐI menu, dưới cả nhóm Bot Pancake — việc thiết lập chứ
-    # không phải việc hằng ngày. CỐ Ý để nhóm KHÔNG TÊN: _sidebar in vạch ngăn
-    # (nav-sep) thay tiêu đề, và `scripts/thu_man11.py` mục 7 kiểm đúng vạch này.
-    # Thứ tự theo mẫu Kallet: Nhân viên/Phân quyền → Thông báo & Nhật ký → Dữ liệu.
-    ("", [
-        # Nhân viên · Vai trò & quyền · Cài đặt · Nhật ký nằm trong dải tab của
-        # chính màn này (app/web/views/admin.py:_TABS) nên menu chỉ cần 1 mục.
-        ("/quan-tri/nhan-vien", "Quản trị", "admin", "admin",
+    # không phải việc hằng ngày. Là NHÓM xổ/thu y hệt Bot Pancake (trước đây chỉ
+    # là MỘT nút, các màn con giấu trong dải tab của views/admin.py:_TABS): mở
+    # thẳng đúng màn cần từ menu, khỏi vào Nhân viên rồi mới bấm tab.
+    # Quyền từng mục bám đúng route (app/web/routes/admin.py) nên trưởng nhóm chỉ
+    # thấy Nhân viên, người có audit.view chỉ thấy Nhật ký...
+    # Thông báo · Giám sát · Kho data GỘP VÀO ĐÂY (trước là nhóm KHÔNG TÊN ngăn
+    # bằng vạch nav-sep): cũng là màn theo dõi/dữ liệu chứ không phải việc hằng
+    # ngày, để riêng thì menu có một cụm 3 mục trôi nổi không tiêu đề, gập nhóm
+    # Quản trị lại vẫn còn nguyên đó.
+    # Thứ tự trong nhóm: Người → Thiết lập → Theo dõi → Dữ liệu.
+    ("Quản trị", [
+        ("/quan-tri/nhan-vien", "Nhân viên", "admin-nhan-vien", "customers",
          "user.manage|user.manage_team"),
-        # Màn 3 — trung tâm thông báo (chuông ở góc phải cũng trỏ về đây)
+        ("/quan-tri/phan-quyen", "Vai trò & quyền", "admin-phan-quyen", "lock",
+         "user.manage"),
+        ("/quan-tri/the-pancake", "Thẻ Pancake", "admin-the-pancake", "ticket",
+         "user.manage"),
+        ("/quan-tri/cai-dat", "Cài đặt", "admin-cai-dat", "admin", "user.manage"),
+        # BRD mục 4 — khu Tích hợp Pancake (kết nối, nhật ký/lỗi đồng bộ, ánh xạ)
+        ("/quan-tri/tich-hop", "Tích hợp", "tich-hop", "data", "integration.manage"),
+        # Màn 3 — trung tâm thông báo (chuông ở góc phải cũng trỏ về đây). Mục
+        # DUY NHẤT trong nhóm không đòi quyền: ai cũng có thông báo của mình.
         ("/crm/thong-bao", "Thông báo", "crm-notify", "bell", ""),
+        ("/quan-tri/nhat-ky", "Nhật ký", "admin-nhat-ky", "clock", "audit.view"),
         # C4 — lich-su.php: vòng xác minh công (soi tin nhắn thật)
         ("/crm/giam-sat", "Giám sát", "crm-audit-work", "search",
          "audit.view"),
         # C4 — kho-data.php: khách chưa chia · khách kẹt · nhật ký
         ("/crm/kho-data", "Kho data", "crm-data", "data", "data.export"),
-        # BRD mục 4 — khu Tích hợp Pancake (kết nối, nhật ký/lỗi đồng bộ, ánh xạ)
-        ("/quan-tri/tich-hop", "Tích hợp", "tich-hop", "data", "integration.manage"),
     ]),
 ]
 
 
 # Nhóm menu XỔ/THU được: tiêu đề nhóm thành <summary> bấm gập cả cụm mục bên
-# dưới, trạng thái nhớ trong localStorage (xem `_NAV_JS`). Bot Pancake là khu
-# phụ, ngày thường không đụng tới nên gập lại cho menu CRM đỡ dài. Muốn nhóm
-# khác cũng gập được thì thêm đúng tên nhóm vào đây, khỏi sửa gì thêm.
-_NHOM_THU_GON: frozenset[str] = frozenset({"Bot Pancake"})
+# dưới, trạng thái nhớ trong localStorage (xem `_NAV_JS`). MỌI nhóm CÓ TÊN đều
+# gập được: 6 nhóm là hơn 30 mục, không ai dùng cả 6 cùng lúc — Sale gập Tiền,
+# kế toán gập Bộ phận, còn Bot Pancake/Quản trị là khu phụ ngày thường không
+# đụng tới. Muốn thêm nhóm mới thì bỏ đúng tên nhóm vào đây, khỏi sửa gì thêm.
+# Nay MENU_GROUPS không còn nhóm KHÔNG TÊN nào (3 mục cũ đã gộp vào Quản trị)
+# nên cả 6 nhóm đều gập được. Nhánh vạch ngăn trong `_sidebar` vẫn giữ để thêm
+# nhóm không tên về sau khỏi vỡ menu — nhưng nhóm KHÔNG TÊN thì đừng bỏ vào đây:
+# không có tiêu đề là không có chỗ bấm để mở lại.
+_NHOM_THU_GON: frozenset[str] = frozenset({
+    "Chung", "Bộ phận", "Ưu đãi", "Tiền", "Bot Pancake", "Quản trị",
+})
+
+# Nhóm GHIM ở đáy menu: không nằm trong <nav> cuộn mà xuống khối `.side-bottom`
+# cố định cùng khối tài khoản.
+#
+# HIỆN TRỐNG — Quản trị đã ĐƯA VỀ trong <nav>, đứng cuối cùng chung với 5 nhóm
+# kia (mẫu Kallet cũng để nhóm Quản trị trong vùng cuộn, chỉ ghim nút Thu gọn +
+# khối tài khoản). Ghim riêng làm nó trông như một khu tách rời khỏi menu.
+# Giữ lại cơ chế để sau này muốn ghim nhóm nào thì bỏ tên vào đây là xong; tên
+# phải có trong MENU_GROUPS và nên gập được (_NHOM_THU_GON) kẻo nhóm dài chiếm
+# mất phần cuộn phía trên.
+_NHOM_GHIM: frozenset[str] = frozenset()
+
+
+# MÀU RIÊNG CỦA TỪNG NHÓM — in ra biến CSS `--gc` trên thẻ <details> của nhóm,
+# các mục con thừa hưởng: icon, tiêu đề nhóm, nền lúc rê chuột, quầng sáng của
+# mục đang chọn, sọc trái khối bộ phận. Icon mỗi nhóm một màu thì quét mắt
+# nhanh hơn hẳn một dải icon trắng như nhau (nhớ theo màu, không phải đọc chữ).
+#
+# Bảng màu bám nền tím→hồng của sidebar: 4 nhóm nghiệp vụ lấy màu tươi và tách
+# bạch, còn Bot Pancake/Quản trị là khu phụ nên để tông trầm — đỡ thành cầu vồng
+# mà vẫn nói được "hai cái này không phải việc hằng ngày".
+# Sáng cỡ 300 (pastel) chứ đừng đậm hơn: nền tím vốn tối, màu đậm là chìm mất.
+_MAU_NHOM: dict[str, str] = {
+    "Chung": "#8ecdff",         # xanh trời — việc mở suốt ngày
+    "Bộ phận": "#ffd27a",       # hổ phách, khớp chữ CRM ở logo
+    "Ưu đãi": "#ffb0c8",        # hồng — quà, voucher
+    "Tiền": "#93e6b8",          # bạc hà — tiền nong
+    "Bot Pancake": "#bcb3e8",   # tím nhạt trầm — khu phụ
+    "Quản trị": "#cfc6d8",      # xám tím trầm — thiết lập, không phải nghiệp vụ
+}
 
 
 def _icon(name: str) -> str:
@@ -346,7 +404,7 @@ def _sale_dept(active: str, perms: list) -> str:
                 "<span>🏷️ Bảng giá &amp; liệu trình</span></a>")
     # C5 — cấu hình thang bám đuổi (chỉ người quản lý mới cần)
     if "user.manage" in perms:
-        cong_cu += ('<a class="nd-link" href="/crm/thang-sale">'
+        cong_cu += ('<a class="nd-link" href="/quan-tri/cai-dat?sec=moc#k1a">'
                     "<span>⚙️ Thang bám đuổi</span></a>")
 
     return (
@@ -421,10 +479,12 @@ def _sidebar(active: str) -> str:
     chỉ hiện khi người đăng nhập có quyền đó (đọc từ contextvar middleware đặt)."""
     user = current_user.get()
     perms = (user or {}).get("perms") or []
-    items = ""
+    # "items" = phần menu CUỘN được; "ghim" = nhóm dán ở đáy (xem _NHOM_GHIM)
+    phan = {"items": "", "ghim": ""}
     for ten_nhom, muc in MENU_GROUPS:
         muc_hien = ""
-        for href, label, key, icon, quyen in muc:
+        so_muc = 0          # số mục THẬT SỰ hiện (đã lọc quyền) — hiện trên
+        for href, label, key, icon, quyen in muc:   # huy hiệu lúc nhóm thu gọn
             if quyen and not any(m in perms for m in quyen.split("|")):
                 continue
             if key == "crm-pipeline":
@@ -432,29 +492,53 @@ def _sidebar(active: str) -> str:
                 # nhau (kiểu Pancake): Sale → Chăm sóc khách hàng, đúng thứ tự
                 # khách chạy qua (Sale chốt đơn → bàn giao sang CSKH).
                 muc_hien += _sale_dept(active, perms) + _dept_cskh(active)
+                so_muc += 2
                 continue
             cls = "nav-item on" if key == active else "nav-item"
+            # escape nhãn: nhóm Quản trị có mục "Vai trò & quyền" — dấu & trần
+            # là HTML hỏng (tabs_bar cũng escape y vậy).
+            # `title` để lúc menu thu về rail icon (.side.mini) rê chuột còn
+            # biết mục nào là mục nào — chữ bị giấu hết.
             muc_hien += (
-                f'<a class="{cls}" href="{href}">{_icon(icon)}<span>{label}</span></a>'
+                f'<a class="{cls}" href="{href}" title="{escape(label)}">'
+                f"{_icon(icon)}<span>{escape(label)}</span></a>"
             )
+            so_muc += 1
         # cả nhóm bị ẩn theo quyền -> khỏi in tên nhóm trơ trọi; nhóm không tên
         # (khu quản trị ở cuối menu) thì chỉ in mục, không in tiêu đề nhóm
         if not muc_hien:
             continue
+        # Nhóm GHIM không nằm trong <nav> cuộn mà xuống khối đáy cố định.
+        khoi = "ghim" if ten_nhom in _NHOM_GHIM else "items"
+        # Màu nhóm truyền xuống bằng biến CSS, mọi mục con thừa hưởng (_MAU_NHOM)
+        mau = _MAU_NHOM.get(ten_nhom, "")
+        style = f' style="--gc:{mau}"' if mau else ""
         if ten_nhom in _NHOM_THU_GON:
             # LUÔN in `open`: không có JS (hoặc màn hẹp — menu nằm ngang) thì
             # nhóm trải phẳng như cũ, chứ không kẹt ở trạng thái đóng. Người
             # dùng thu gọn thì _NAV_JS đóng lại ngay lúc dựng trang (thẻ script
             # nằm cuối <body> nên đóng xong mới vẽ, không thấy nhấp nháy).
-            items += (
-                f'<details class="nav-grp" data-nhom="{escape(ten_nhom)}" open>'
+            phan[khoi] += (
+                f'<details class="nav-grp" data-nhom="{escape(ten_nhom)}"'
+                f"{style} open>"
                 f'<summary class="nav-group">{escape(ten_nhom)}'
+                # huy hiệu số: CSS chỉ cho hiện khi nhóm đang thu gọn — lúc đó
+                # tiêu đề là thứ duy nhất còn thấy nên phải nói được bên trong
+                # còn bao nhiêu mục.
+                f'<span class="grp-so">{so_muc}</span>'
                 '<span class="grp-chev">▸</span></summary>'
                 f'<div class="nav-grp-kids">{muc_hien}</div></details>'
             )
         else:
-            items += (f'<div class="nav-group">{escape(ten_nhom)}</div>'
-                      if ten_nhom else '<div class="nav-sep"></div>') + muc_hien
+            # Nhóm không gập được: gói trong <div> mang màu để mục con vẫn thừa
+            # hưởng --gc (nhánh này hiện không dùng — mọi nhóm đều gập được).
+            phan[khoi] += (
+                f"<div{style}>"
+                + (f'<div class="nav-group">{escape(ten_nhom)}</div>'
+                   if ten_nhom else '<div class="nav-sep"></div>')
+                + muc_hien + "</div>"
+            )
+    items, ghim = phan["items"], phan["ghim"]
     return (
         '<aside class="side">'
         # Logo dựng theo mẫu Kallet: huy hiệu vuông trắng (dấu) + viên thuốc
@@ -468,7 +552,39 @@ def _sidebar(active: str) -> str:
         '<span class="bname">Sales Bot</span>'
         '<span class="btag">CRM</span></a>'
         f'<nav class="nav">{items}</nav>'
-        "</aside>"
+        + f'<div class="side-bottom">{ghim}{_side_foot()}</div>'
+        + "</aside>"
+    )
+
+
+def _side_foot() -> str:
+    """Đáy menu trái (port từ mẫu Kallet): nút thu/phóng menu + khối tài khoản
+    đang đăng nhập.
+
+    Khối user ở topbar (`_user_box`) VẪN GIỮ — mẫu có cả hai chỗ, và khi menu
+    thu về rail icon thì chuông/tên trên topbar là thứ duy nhất còn đọc được,
+    còn ở đây chỉ còn avatar. Đăng xuất phải là form POST y như topbar:
+    /dang-xuat không nhận GET.
+    """
+    user = current_user.get()
+    if not user:
+        return ""
+    ten = (user.get("name") or user.get("username") or "?").strip()
+    # Chữ trên avatar lấy TỪ CUỐI của tên: người Việt gọi nhau bằng tên, chứ
+    # "Nguyễn Thị Nga" mà hiện "N" (họ Nguyễn) thì ai cũng giống ai.
+    chu = (ten.split()[-1][:1] if ten.split() else "?").upper()
+    vai = user.get("role") or ""
+    return (
+        '<button class="foot-btn" type="button" id="navToggle" '
+        'title="Thu gọn menu" aria-label="Thu gọn menu">'
+        f'{_icon("panel-left-close")}<span>Thu gọn</span></button>'
+        '<div class="side-foot">'
+        f'<span class="sf-ava" aria-hidden="true">{escape(chu)}</span>'
+        f'<span class="sf-who"><b title="{escape(ten)}">{escape(ten)}</b>'
+        f'<small>{escape(vai)}</small></span>'
+        '<form method="post" action="/dang-xuat" class="sf-form" data-native>'
+        f'<button class="sf-out" title="Đăng xuất">{_icon("log-out")}</button>'
+        "</form></div>"
     )
 
 
@@ -562,6 +678,23 @@ def stat(
     return f'<div class="stat{tone_cls}">{inner}</div>'
 
 
+@lru_cache(maxsize=1)
+def _ui_ver() -> str:
+    """Vân tay của CSS+JS khung, in vào <meta name=ui-ver>.
+
+    PJAX chỉ thay ruột .side/.main nên <head> (chứa toàn bộ <style>) KHÔNG bao
+    giờ được cập nhật: một tab đang mở mà server đổi giao diện thì nó nhận
+    markup mới nhưng vẫn dùng CSS cũ — layout vỡ mà không hiểu vì sao, cứ tưởng
+    code sai. `applyDoc` so vân tay này, lệch thì nạp lại cả trang.
+
+    Tính LƯỜI (lru_cache) chứ không phải hằng số module: `_NAV_JS` khai báo tận
+    cuối file, sau hàm này. Uvicorn --reload nạp lại module là hash tự đổi theo.
+    """
+    return hashlib.blake2s(
+        (_CSS + _NAV_JS).encode("utf-8"), digest_size=6
+    ).hexdigest()
+
+
 def render_shell(
     title: str,
     active: str,
@@ -598,6 +731,7 @@ def render_shell(
     return (
         "<!doctype html><html lang=\"vi\"><head><meta charset=\"utf-8\">"
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<meta name="ui-ver" content="{_ui_ver()}">'
         f"<title>{escape(title)} — FB Sales Bot</title>"
         f"<style>{_CSS}</style></head><body>"
         + _sidebar(active)
@@ -676,7 +810,10 @@ a{color:var(--accent)}
   /* align-self:flex-start là BẮT BUỘC: mặc định flex item bị kéo giãn (stretch)
      cao bằng cả body, mà đã cao bằng khung chứa thì sticky không còn khoảng nào
      để bám -> vẫn trôi. Cố định 100vh rồi tự cuộn bên trong nếu menu dài. */
-  position:sticky; top:0; align-self:flex-start; height:100vh; overflow-y:auto;
+  /* overflow:hidden chứ KHÔNG auto: nay chỉ <nav> cuộn, còn khối đáy
+     (.side-bottom: nhóm Quản trị + tài khoản) phải đứng yên. Cả cột cùng cuộn
+     thì cuộn xuống mục cuối là mất luôn avatar lẫn nút thu gọn. */
+  position:sticky; top:0; align-self:flex-start; height:100vh; overflow:hidden;
   display:flex; flex-direction:column;
   padding:16px 12px; box-shadow:2px 0 12px rgba(111,90,156,.18);
 }
@@ -697,30 +834,98 @@ a{color:var(--accent)}
   letter-spacing:-.01em;white-space:nowrap;
   box-shadow:0 2px 6px rgba(43,34,48,.18)}
 .btag{font-weight:800;font-size:17px;letter-spacing:.2px;color:var(--brand-tag)}
-.nav{display:flex;flex-direction:column;gap:2px}
+/* min-height:0 là BẮT BUỘC cạnh flex:1 — mặc định min-height:auto không cho
+   flex item co nhỏ hơn nội dung, nav sẽ đội khối đáy tụt khỏi màn thay vì cuộn */
+/* scrollbar-gutter:stable — luôn chừa sẵn rãnh 6px kể cả lúc chưa cần cuộn, để
+   mục trong <nav> và mục ở khối ghim (không có thanh cuộn) thẳng hàng mép phải.
+   Lệch 6px giữa hai cụm là đủ làm khối ghim trông như một khu khác. */
+.nav{display:flex;flex-direction:column;gap:2px;
+  flex:1 1 auto;min-height:0;overflow-y:auto;scrollbar-gutter:stable;
+  scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.25) transparent}
+.nav::-webkit-scrollbar{width:6px}
+.nav::-webkit-scrollbar-track{background:transparent}
+.nav::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:99px}
+.nav::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.35)}
+/* Mép dưới mờ dần khi CÒN nội dung phía dưới (mẫu Kallet: .nav.more, class do
+   _NAV_JS gắn). Không có nó thì mục cuối bị cắt ngang trông như hỏng, mà cũng
+   chẳng ai biết là còn cuộn được — nhất là khi khối ghim che ngay bên dưới. */
+.nav.more{-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 24px),transparent);
+  mask-image:linear-gradient(to bottom,#000 calc(100% - 24px),transparent)}
+/* --gc = màu của nhóm đang chứa mục này (_MAU_NHOM in vào thẻ <details>).
+   Đây là giá trị lùi cho mục không nằm trong nhóm nào. */
+.nav,.side-bottom{--gc:rgba(255,255,255,.85)}
 .nav-item{
   display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:9px;
   color:var(--side-tx);text-decoration:none;font-size:14px;font-weight:500;
 }
-.nav-item:hover{background:var(--side-on);color:#fff}
+/* Icon mang màu nhóm — đây mới là thứ làm menu dễ quét: 30 icon trắng như nhau
+   thì phải đọc chữ mới biết mục nào, có màu thì nhớ được bằng mắt. */
+.nav-item .ico,.nav-dept>summary .ico{color:var(--gc)}
+.nav-item:hover{background:color-mix(in srgb,var(--gc) 22%,transparent);color:#fff}
+/* Mục ĐANG CHỌN giữ nền trắng chữ tím (tương phản cao nhất), chỉ mượn màu nhóm
+   làm quầng sáng. Icon phải về màu tím: pastel trên nền trắng là chìm nghỉm. */
 .nav-item.on{background:#fff;color:var(--accent);font-weight:650;
-  box-shadow:0 3px 10px rgba(80,50,100,.18)}
+  box-shadow:0 3px 12px color-mix(in srgb,var(--gc) 45%,transparent)}
+.nav-item.on .ico{color:var(--accent)}
 .ico{width:19px;height:19px;flex:0 0 auto}
-/* tên nhóm menu (CRM / Bot Pancake) */
+/* tên nhóm menu (CRM / Bot Pancake) — mang luôn màu nhóm */
 .nav-group{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
-  color:var(--side-tx);opacity:.55;padding:12px 10px 4px}
-/* vạch ngăn thay tên nhóm — dùng cho nhóm KHÔNG TÊN ở cuối menu (Quản trị) */
+  color:var(--gc);opacity:.75;padding:12px 10px 4px}
+/* vạch ngăn thay tên nhóm KHÔNG TÊN — hiện MENU_GROUPS không còn nhóm nào như
+   vậy (Thông báo/Giám sát/Kho data đã gộp vào Quản trị), giữ cho lần sau */
 .nav-sep{height:1px;background:rgba(255,255,255,.16);margin:12px 10px 8px}
-/* nhóm menu XỔ/THU được (_NHOM_THU_GON — nay là Bot Pancake): tiêu đề nhóm
-   thành <summary> bấm gập. Vẫn dùng nguyên class .nav-group nên nhìn y hệt
-   nhóm thường, chỉ thêm mũi chevron bên phải. */
+/* nhóm menu XỔ/THU được (_NHOM_THU_GON — mọi nhóm có tên): tiêu đề nhóm
+   thành <summary> bấm gập.
+   ĐỘ NỔI ĐỔI THEO TRẠNG THÁI — mắt luôn bắt đúng thứ đang bấm được:
+     · THU GỌN: cả cụm chỉ còn đúng dòng tiêu đề này -> chữ TRẮNG, ĐẬM, to hơn
+       một chút. KHÔNG nền, KHÔNG viền: một khối trắng nằm giữa menu tối trông
+       như mục đang chọn (.nav-item.on cũng nền trắng), gây nhầm.
+     · XỔ RA: tiêu đề lùi về nhãn mờ như cũ, nhường sáng cho các bộ phận/mục
+       con bên dưới (xem .nav-grp[open] ... ở dưới).
+   GHIM ĐẦU KHUNG: summary position:sticky, thanh cuộn là <nav> còn khung chặn
+   là chính <details> của nhóm -> cuộn tới đâu tiêu đề nhóm đó dán ở mép trên,
+   khi <details> trôi hết thì nhóm sau tự đẩy nó lên thay chỗ. Nền frost chỉ
+   bật lúc ĐANG DÍNH (class .stuck do _NAV_JS gắn) — không có nền thì mục cuộn
+   qua đâm xuyên chữ, mà để nền sẵn thì lại thành cái khối màu như vừa bỏ. */
 .nav-grp>summary{list-style:none;cursor:pointer;user-select:none;
-  display:flex;align-items:center;gap:6px}
+  display:flex;align-items:center;gap:6px;
+  padding:7px 10px;margin-top:11px;border-radius:9px;
+  position:sticky;top:0;z-index:2;
+  transition:background .15s,color .15s,opacity .15s}
 .nav-grp>summary::-webkit-details-marker{display:none}
-.nav-grp>summary:hover{opacity:.85}
+.nav-grp>summary.stuck{background:rgba(28,18,40,.55);
+  -webkit-backdrop-filter:blur(9px);backdrop-filter:blur(9px);
+  border-radius:0;margin-left:-12px;margin-right:-12px;padding-left:22px;
+  padding-right:16px;box-shadow:0 7px 12px -9px rgba(0,0,0,.65)}
 .grp-chev{margin-left:auto;font-size:10px;transition:transform .15s}
 .nav-grp[open]>summary .grp-chev{transform:rotate(90deg)}
+/* --- XỔ RA: tiêu đề nhạt đi --- */
+.nav-grp[open]>summary{opacity:.55}
+.nav-grp[open]>summary:hover{opacity:.85}
+.nav-grp[open]>summary.stuck{opacity:1;color:color-mix(in srgb,var(--gc) 80%,#fff)}
+/* --- THU GỌN: chỉ to + đậm lên, không vẽ nền --- */
+.nav-grp:not([open])>summary{opacity:1;color:var(--gc);font-weight:800;
+  font-size:12px;letter-spacing:.07em}
+.nav-grp:not([open])>summary:hover{opacity:.8}
+.nav-grp:not([open])>summary .grp-chev{margin-left:6px;opacity:1}
+/* số mục đang bị gập bên trong — chỉ hiện lúc THU GỌN, để biết cụm này còn gì */
+.grp-so{display:none}
+.nav-grp:not([open])>summary .grp-so{display:inline-flex;margin-left:auto;
+  align-items:center;justify-content:center;min-width:18px;height:16px;
+  padding:0 5px;border-radius:8px;color:var(--gc);
+  background:color-mix(in srgb,var(--gc) 26%,transparent);
+  font-size:10px;font-weight:700;letter-spacing:0}
 .nav-grp-kids{display:flex;flex-direction:column;gap:2px}
+/* XỔ RA: mục con chỉ SÁNG hơn tiêu đề nhóm, KHÔNG thụt vào và không vạch dọc —
+   menu chỉ rộng 236px, thụt 18px là mấy nhãn dài ("Đối soát thưởng", "Vai trò
+   & quyền") cụt mất; tiêu đề nhóm mờ + mục sáng đã đủ phân cấp. */
+.nav-grp[open]>.nav-grp-kids{margin:2px 0}
+/* `:not(.on)` là BẮT BUỘC: mục đang xem có nền TRẮNG (.nav-item.on), bộ chọn
+   này lại nặng ký hơn (.nav-grp+[open]+.nav-grp-kids+.nav-item) nên bỏ quên là
+   nó đè cả chữ lẫn icon (stroke=currentColor) thành trắng -> trắng trên trắng,
+   mục đang chọn biến thành vệt trắng trơn. Hover khai lại cho khỏi bị hụt. */
+.nav-grp[open]>.nav-grp-kids>.nav-item:not(.on){color:rgba(255,255,255,.93)}
+.nav-grp[open]>.nav-grp-kids>.nav-item:not(.on):hover{color:#fff}
 /* ---------- khối bộ phận xổ/thu trong menu trái (Sale, CSKH — kiểu Kallet) ---------- */
 .mobile-only{display:none}          /* link phẳng dự phòng — chỉ hiện màn hẹp */
 .dept>summary{list-style:none;cursor:pointer;user-select:none}
@@ -735,7 +940,8 @@ a{color:var(--accent)}
   padding:6px 10px 6px 40px;border-radius:8px;color:var(--side-tx);
   text-decoration:none;font-size:13px}
 .sm-child{padding-left:52px}
-.sm-link:hover,.sm-child:hover{background:var(--side-on);color:#fff}
+.sm-link:hover,.sm-child:hover{color:#fff;
+  background:color-mix(in srgb,var(--gc) 20%,transparent)}
 /* chấm màu trong khối menu: đè .dot toàn cục (chấm live có animation) */
 .sm-link .dot,.sm-child .dot{width:8px;height:8px;border-radius:50%;
   flex:0 0 auto;box-shadow:none;animation:none}
@@ -743,18 +949,25 @@ a{color:var(--accent)}
 /* mục XỔ XUỐNG trong menu (Sale · Chăm sóc khách hàng — kiểu Kallet):
    summary trông như nav-item, con thụt vào có chấm màu + số đếm */
 .nav-dept>summary{display:flex;align-items:center;gap:10px;padding:9px 10px;
-  border-radius:10px;color:var(--side-tx);font-size:14px;font-weight:500;
+  border-radius:10px;color:var(--side-tx);font-size:14px;font-weight:600;
   cursor:pointer;list-style:none;user-select:none}
 .nav-dept>summary::-webkit-details-marker{display:none}
-.nav-dept>summary:hover{background:var(--side-on);color:#fff}
-/* đang XỔ: cả khối nhận nền tối mờ + viền nhẹ để nổi khỏi phần menu còn lại
+.nav-dept>summary:hover{background:color-mix(in srgb,var(--gc) 22%,transparent);
+  color:#fff}
+/* Bộ phận nặng hơn mục thường (600 vs 500) kể cả lúc thu: trong một nhóm đã xổ
+   ra thì ĐÂY là cấp mắt phải bắt trước, mục phẳng chỉ là hàng ngang cấp dưới. */
+.dept>summary.nav-item{font-weight:600}
+/* đang XỔ: cả khối nhận nền tối mờ + viền nhẹ + SỌC HỔ PHÁCH bên trái để nổi
+   hẳn khỏi phần menu còn lại — nhóm đã phóng ra thì bộ phận phải rõ hơn cả
+   tiêu đề nhóm (tiêu đề lúc này chỉ còn là nhãn mờ .nav-grp[open]>summary).
    (phủ cả 2 khối: Sale = .nav-dept, CSKH = .dept; :not(.on) để summary đang
    active giữ nền trắng chữ tím của .nav-item.on, không bị chữ trắng đè) */
-.nav-dept[open],.dept[open]{background:rgba(0,0,0,.16);
-  border:1px solid rgba(255,255,255,.08);border-radius:12px;
-  padding:2px 4px 8px;margin:2px 0}
+.nav-dept[open],.dept[open]{background:rgba(0,0,0,.22);
+  border:1px solid rgba(255,255,255,.14);
+  border-left:3px solid var(--gc);border-radius:12px;
+  padding:2px 4px 8px;margin:4px 0;box-shadow:0 2px 10px rgba(0,0,0,.14)}
 .nav-dept[open]>summary:not(.on),.dept[open]>summary:not(.on){
-  color:#fff;font-weight:650}
+  color:#fff;font-weight:700}
 .nav-dept[open]>summary:hover,.dept[open]>summary:hover{background:var(--side-on)}
 .nd-chev{margin-left:auto;font-size:10px;opacity:.7;transition:transform .18s}
 .nav-dept:not([open]) .nd-chev{transform:rotate(-90deg)}
@@ -762,7 +975,7 @@ a{color:var(--accent)}
   color:var(--side-tx);opacity:.5;padding:8px 10px 3px 24px}
 .nd-link{display:flex;align-items:center;gap:8px;padding:6px 10px 6px 24px;
   border-radius:8px;color:var(--side-tx);text-decoration:none;font-size:13px}
-.nd-link:hover{background:var(--side-on);color:#fff}
+.nd-link:hover{color:#fff;background:color-mix(in srgb,var(--gc) 20%,transparent)}
 .nd-link.on{background:#fff;color:var(--accent);font-weight:650}
 .nd-link>span:not(.nd-dot):not(.nd-count){overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap}
@@ -770,6 +983,60 @@ a{color:var(--accent)}
 .nd-count{margin-left:auto;font-size:11px;background:var(--side-on);
   border-radius:12px;padding:1px 8px;min-width:22px;text-align:center;flex:none}
 .nd-link.on .nd-count{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+/* ---------- khối GHIM ở đáy menu: nút thu/phóng + tài khoản ----------
+   Nằm NGOÀI <nav> nên không cuộn theo menu. Đây là "chân trang" của cột menu
+   chứ KHÔNG chứa mục nghiệp vụ nào — mọi nhóm (kể cả Quản trị) đều ở trong
+   vùng cuộn, đúng nếp mẫu Kallet.
+   `flex:0 0 auto` + KHÔNG overflow: cả cột menu chỉ được có ĐÚNG MỘT thanh
+   cuộn (ở <nav>) — cho khối này cuộn riêng là ra thanh thứ hai dính nhau.
+   Viền + bóng đổ ngược lên (mẫu: .foot-btn) cho thấy danh sách trôi xuống dưới
+   nó chứ không phải hết menu. */
+.side-bottom{flex:0 0 auto;display:flex;flex-direction:column;padding-right:6px;
+  border-top:1px solid rgba(255,255,255,.12);
+  box-shadow:0 -10px 16px -10px rgba(0,0,0,.45)}
+.foot-btn{margin:8px 0;display:flex;align-items:center;gap:11px;
+  padding:9px 10px;border:1px solid rgba(255,255,255,.14);border-radius:9px;
+  background:none;color:var(--side-tx);font:inherit;font-size:13px;
+  font-weight:500;cursor:pointer;flex:0 0 auto}
+.foot-btn:hover{background:var(--side-on);color:#fff}
+.side-foot{display:flex;align-items:center;gap:9px;flex:0 0 auto;
+  padding-top:10px;border-top:1px solid rgba(255,255,255,.10)}
+.sf-ava{width:32px;height:32px;border-radius:50%;flex:0 0 auto;
+  display:grid;place-items:center;background:#fff;color:var(--accent);
+  font-weight:800;font-size:14px;box-shadow:0 2px 6px rgba(43,34,48,.18)}
+.sf-who{min-width:0;flex:1 1 auto;display:flex;flex-direction:column;line-height:1.25}
+.sf-who b{font-size:13px;font-weight:650;color:#fff;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sf-who small{font-size:10.5px;opacity:.7;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sf-form{flex:0 0 auto;display:flex}
+.sf-out{display:grid;place-items:center;width:30px;height:30px;padding:0;
+  border:none;border-radius:8px;background:none;color:var(--side-tx);
+  cursor:pointer}
+.sf-out:hover{background:var(--side-on);color:#fff}
+/* ---------- menu THU về rail icon (bấm #navToggle, nhớ trong localStorage) ----
+   Chỉ giấu CHỮ và co bề ngang — không đụng cấu trúc, nên bung ra là y như cũ.
+   Con của khối bộ phận (nd-link/sm-link) không có icon nên trong rail phải ẩn
+   hẳn; bấm vào tiêu đề bộ phận lúc đó thì _NAV_JS bung menu ra lại. */
+.side.mini{flex-basis:66px;width:66px;padding:16px 8px}
+.side.mini .brand{justify-content:center;margin:-16px -8px 10px;padding:0;gap:0}
+.side.mini .bname,.side.mini .btag{display:none}
+.side.mini .nav-item,.side.mini .nav-dept>summary{justify-content:center;
+  gap:0;padding:9px 0}
+.side.mini .nav-item>span,.side.mini .nav-dept>summary>span{display:none}
+/* tiêu đề nhóm co thành vạch ngăn — vẫn thấy được ranh giới giữa các nhóm */
+.side.mini .nav-grp>summary{height:1px;padding:0;margin:11px 8px 7px;
+  font-size:0;background:rgba(255,255,255,.18);border-radius:0;box-shadow:none;
+  position:static;backdrop-filter:none;-webkit-backdrop-filter:none}
+.side.mini .grp-chev,.side.mini .grp-so{display:none}
+.side.mini .nd-group,.side.mini .nd-link,.side.mini .nav-kids{display:none}
+.side.mini .nav-dept[open],.side.mini .dept[open]{background:none;border:0;
+  box-shadow:none;padding:0;margin:0}
+.side.mini .foot-btn{justify-content:center;gap:0;padding:9px 0}
+.side.mini .foot-btn>span{display:none}
+.side.mini .foot-btn .ico{transform:rotate(180deg)}   /* thành "mở rộng" */
+.side.mini .side-foot{flex-direction:column;gap:6px}
+.side.mini .sf-who{display:none}
 /* Kanban khung (màn CRM tạm): cột giai đoạn + thẻ lead */
 .kanban{display:flex;gap:10px;overflow-x:auto;padding:4px 0}
 .kcol{min-width:150px;flex:1;background:var(--soft);border:1px solid var(--border);
@@ -1602,11 +1869,15 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
   min-width:18px;height:18px;line-height:18px;text-align:center;
   border-radius:999px;padding:0 5px;flex:0 0 auto}
 .ht-r3{display:flex;align-items:center;gap:6px;margin-top:4px}
-.ht-fp{font-size:10.5px;color:var(--sub)}
+/* Cắt bằng ba chấm chứ không để tràn: fanpage tên dài ("Nha khoa … Cơ sở 2")
+   mà không cắt thì chữ đè lên chip thẻ bên phải khi cột danh sách hẹp lại. */
+.ht-fp{font-size:10.5px;color:var(--sub);min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
 /* Chip giai đoạn: nền lấy từ biến --c đặt inline (mỗi giai đoạn một màu) nên
    CSS khỏi liệt kê 12 lớp con. */
-.ht-stage{margin-left:auto;font-size:9.5px;font-weight:700;padding:1px 8px;
-  border-radius:999px;color:#fff;white-space:nowrap;background:var(--c,var(--accent))}
+.ht-stage{margin-left:auto;flex:0 0 auto;font-size:9.5px;font-weight:700;
+  padding:1px 8px;border-radius:999px;color:#fff;white-space:nowrap;
+  background:var(--c,var(--accent))}
 /* display:block bắt buộc — thẻ này là <span>, để inline thì margin-top không
    ăn và chip cửa dính sát dòng fanpage phía trên. */
 .ht-r4{display:block;margin-top:5px}
@@ -1633,10 +1904,13 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
 .ht-chead .ht-av{width:40px;height:40px;font-size:14px}
 .ht-cwho{flex:1 1 auto;min-width:0}
 .ht-cline{display:flex;align-items:center;gap:8px}
-.ht-cname{font-weight:600;font-size:15px;color:var(--text)}
+/* Cắt ba chấm: khung chat hẹp lại thì tên khách dài đẩy chip hạng thẻ tràn
+   ra ngoài đầu khung. */
+.ht-cname{font-weight:600;font-size:15px;color:var(--text);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ht-tier{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;
   font-weight:700;border-radius:999px;padding:2px 9px;background:var(--soft);
-  color:var(--accent)}
+  color:var(--accent);flex:0 0 auto}
 .ht-tier .ico{width:12px;height:12px}
 .ht-cmeta{display:flex;align-items:center;gap:6px 14px;margin-top:3px;
   font-size:11.5px;color:var(--sub);flex-wrap:wrap}
@@ -1653,6 +1927,9 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
   place-items:center;flex:0 0 auto}
 .ht-ic:hover{border-color:var(--accent);color:var(--accent)}
 .ht-ic .ico{width:16px;height:16px}
+/* Nút "← Danh sách" — CHỈ có nghĩa ở bố cục một cột (<900px), nơi danh sách bị
+   khung chat che mất. Màn rộng hai thứ đứng cạnh nhau nên giấu đi. */
+.ht-back{display:none;text-decoration:none}
 /* Nút chữ ở đầu khung (người phụ trách · Chưa đọc) — cùng chiều cao 34px */
 .ht-cbtn{display:inline-flex;align-items:center;gap:6px;height:34px;
   padding:0 11px;border:1px solid var(--border);border-radius:9px;
@@ -1735,6 +2012,25 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
 .ht-empty{flex:1 1 auto;display:grid;place-items:center;text-align:center;
   color:var(--sub);padding:40px}
 
+/* --- màn Hội thoại, khổ VỪA (900–1200px) ---
+   Ba cột vẫn đứng cạnh nhau nhưng cột chat chỉ còn 236 (menu) + 52 (rail) +
+   320 (danh sách) trừ đi -> ~450px. Không rút bớt thì đầu khung và dải công cụ
+   xuống dòng lung tung. Ngưỡng 900px bên dưới mới đổi hẳn bố cục. */
+@media (max-width:1200px){
+  .ht-list{flex:0 0 272px}
+  /* Nút đầu khung bỏ NHÃN CHỮ, chừa icon — nghĩa đầy đủ vẫn nằm ở tooltip.
+     `font-size:0` là cách duy nhất giấu được chữ TRẦN (không có thẻ bọc để
+     mà display:none); con nào vẫn cần chữ thì tự đặt lại cỡ. */
+  .ht-cact .ht-cbtn{font-size:0;gap:0;padding:0 8px}
+  .ht-cact .ht-cbtn .mini{font-size:10px}
+  /* Thanh đẩy phải biến mất: nó là `flex:1 1 auto` nên khi cụm nút trợ lý
+     xuống dòng, nó vẫn chiếm hết dòng trên -> chip cửa dính mép trái rồi chừa
+     một khoảng trắng to đúng bằng nửa dải. Bỏ nó thì các mục chảy liền nhau. */
+  .ht-wgap{display:none}
+  .ht-win{row-gap:8px;padding-bottom:2px}
+  .ht-tool{padding:0 9px}
+}
+
 /* ---------- co theo màn hình nhỏ ---------- */
 @media (max-width:900px){
   body{flex-direction:column}
@@ -1758,24 +2054,60 @@ mark.kw{background:var(--warn-bg);color:var(--text);font-weight:650;
      mục thành con trực tiếp của .nav). _NAV_JS bỏ qua màn hẹp nên nhóm luôn ở
      trạng thái `open` server in ra -> không lo con bị <details> giấu mất. */
   .nav-grp,.nav-grp-kids{display:contents}
-  .grp-chev{display:none}
+  .grp-chev,.grp-so{display:none}
+  /* menu nằm ngang: bỏ khoảng cách trên + nền của tiêu đề nhóm (dựng cho cột
+     dọc), kẻo mỗi nhãn nhóm bị đẩy lệch khỏi hàng icon */
+  .nav-grp>summary{margin-top:0;padding:9px 4px;background:none;box-shadow:none}
+  /* menu đã nằm ngang thì rail icon vô nghĩa: giấu nút thu gọn, và nếu class
+     `mini` còn sót lại từ lúc màn rộng (đổi cỡ cửa sổ giữa chừng) thì vô hiệu
+     hoá nó ở đây — _NAV_JS cũng bỏ qua mini trên màn hẹp. */
+  .foot-btn{display:none}
+  .side.mini{flex-basis:auto;width:100%;padding:10px 12px}
+  .side.mini .brand{margin:0;justify-content:flex-start}
+  .side.mini .bname{display:flex}
+  .side.mini .btag{display:inline}
+  /* menu nằm ngang: khối ghim nối tiếp hàng icon chứ không phải cột dưới đáy
+     (nhóm Quản trị trong đó đã display:contents nên trải thẳng vào hàng) */
+  .side-bottom{flex-direction:row;align-items:center;gap:4px;
+    border-top:0;box-shadow:none;padding:0;margin:0}
+  .side-foot{flex:0 0 auto;border-top:0;padding-top:0;margin-left:6px}
+  .sf-who{display:none}
   .topbar,.tabs{padding-left:16px;padding-right:16px}
   .content{padding:16px}
   .inbox{flex-direction:column}
   .inbox-list{flex:0 0 auto;max-height:38vh;border-right:0;
     border-bottom:1px solid var(--border)}
-  /* Màn Hội thoại hẹp: rail nằm ngang trên cùng, danh sách thu còn 34vh, chat
-     chiếm phần còn lại. Dải meta ở đầu khung chat tự xuống dòng sẵn. */
+  /* Màn Hội thoại hẹp: MỘT cột kiểu Messenger/Zalo, không phải hai khung chồng
+     nhau. Xếp chồng thì danh sách 34vh và chat phần còn lại đều bẹp, không cái
+     nào dùng được. Ở đây: chưa chọn -> cả màn là danh sách; chọn rồi -> cả màn
+     là khung chat, quay lại bằng nút ← ở đầu khung.
+     Trạng thái do server đánh dấu bằng lớp `.chon` trên `.ht` (views/crm.py),
+     không cần JS: mỗi lần chọn/quay lại là một lượt điều hướng thật. */
   .ht{flex-direction:column}
   .ht-rail{flex:0 0 auto;flex-direction:row;justify-content:flex-start;
     gap:4px;padding:8px 10px;border-right:0;
     border-bottom:1px solid var(--border);overflow-x:auto}
   .ht-rsep{width:1px;height:24px;margin:0 4px}
-  .ht-list{flex:0 0 auto;max-width:none;max-height:34vh;border-right:0;
-    border-bottom:1px solid var(--border)}
+  .ht-list{flex:1 1 auto;max-width:none;min-height:0;border-right:0;
+    border-bottom:0}
+  /* Chưa chọn: giấu khung chat — lời nhắc "chọn một hội thoại BÊN TRÁI" vô
+     nghĩa khi danh sách đang nằm ngay trên chỗ nó. */
+  .ht-chat{display:none}
+  /* Đã chọn: rail + danh sách nhường cả màn cho khung chat */
+  .ht.chon .ht-rail,.ht.chon .ht-list{display:none}
+  .ht.chon .ht-chat{display:flex}
+  .ht-back{display:grid}
   .ht-chead{padding:11px 14px}
   .ht-thread{padding:16px 14px}
   .ht-win,.ht-composer{padding-left:14px;padding-right:14px}
+}
+
+/* --- điện thoại (<560px): đầu khung chat còn ~330px, không đủ cho 5 nút.
+   Giấu những nút CHƯA LÀM ĐƯỢC (viền đứt, bấm không ra gì) và chừa lại nút
+   thật: người phụ trách + mở bên Pancake. --- */
+@media (max-width:560px){
+  .ht-cact button.ht-todo{display:none}
+  .ht-tier{display:none}
 }
 
 /* ---------- tab "Thử API" (bố cục kiểu Postman) ---------- */
@@ -2164,14 +2496,20 @@ code.pm-pid:hover{background:var(--soft)}
   font-style:italic}
 .ht-h{display:flex;align-items:center;justify-content:space-between;gap:12px;
   font-size:15px;font-weight:700;margin-bottom:14px}
-.ht-rows{display:flex;flex-direction:column;gap:8px}
-.ht-row{display:flex;align-items:center;gap:12px;border:1px solid var(--border);
+/* `hz-` chứ KHÔNG phải `ht-` như cả khối này: `.ht-row` đã là hàng hội thoại
+   của màn Hội thoại (xem mục "cột 2"), mà khối này nằm sau nên từng đè lên nó
+   — hàng hội thoại bị bọc viền kín, bo tròn, vạch nhấn "chưa đọc" teo còn 1px.
+   Hai màn không liên quan gì nhau thì không được dùng chung tên lớp. */
+.hz-rows{display:flex;flex-direction:column;gap:8px}
+.hz-row{display:flex;align-items:center;gap:12px;border:1px solid var(--border);
   border-radius:11px;padding:9px 14px;flex-wrap:wrap}
-.ht-row .ic{font-size:18px}
-.ht-row .ten{font-weight:600;font-size:13px;width:110px;flex:0 0 auto}
-.ht-row .tu{font-size:11.5px;color:var(--sub)}
-.ht-row .mo{font-size:12px;color:var(--sub);flex:1 1 auto}
-.ht-row-f{display:flex;align-items:center;gap:8px}
+.hz-row .ic{font-size:18px}
+.hz-row .ten{font-weight:600;font-size:13px;width:110px;flex:0 0 auto}
+.hz-row .tu{font-size:11.5px;color:var(--sub)}
+.hz-row .mo{font-size:12px;color:var(--sub);flex:1 1 auto}
+/* T3 — ngưỡng chỉ đọc ở đây, nên đầu khối chỉ còn cặp nút "Sửa" + "Tính lại". */
+.ht-hnut{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.ht-hnut form{margin:0}
 .ht-in{width:140px;height:32px;display:inline-flex;align-items:center;
   justify-content:flex-end;border:1px solid var(--border);background:var(--soft);
   border-radius:8px;padding:0 10px;font:inherit;font-size:13px;color:var(--text)}
@@ -2250,7 +2588,89 @@ code.pm-pid:hover{background:var(--soft)}
 .kb-f{display:flex;align-items:center;gap:8px;margin-top:9px}
 .gy-item{border-left:3px solid var(--accent);padding-left:10px;margin-bottom:10px}
 
-/* ---------- C5 · Bảng việc Sale (app/web/views/sale.py) ---------- */
+/* ---------- C5 · Bảng việc Sale (app/web/views/sale.py) ----------
+   Bố cục 3 tầng port từ mẫu (templatemaux/index.php?bp=sale):
+     tầng 1 `.bv-bar1` — đổi bộ phận · đã xong hôm nay · ô tìm · chọn chế độ
+     tầng 2 `.bv-bar2` — dải bộ lọc
+     tầng 3 `.bv-tabs` — tab đếm việc (bấm = đặt bộ lọc)
+   Ba tầng dính nhau trên nền THẺ (`.bv-head`), khu nội dung nền CHÌM — mẫu tách
+   hai vùng bằng nền chứ không bằng đường kẻ. Màn chạy `full=True` nên bề ngang
+   không bị bó 1280px: bảng kanban 15 cột cần hết chỗ có thể. */
+.bv-wrap{flex:1;min-width:0;display:flex;flex-direction:column}
+.bv-head{flex:0 0 auto;background:var(--card);
+  border-bottom:1px solid var(--border)}
+.bv-than{flex:1 1 auto;min-height:0;overflow-y:auto;padding:14px 24px 40px}
+.bv-bar1{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:14px 24px 10px}
+.bv-gap{flex:1 1 auto;min-width:8px}
+/* Cặp nút "một trong hai" — dùng cho cả Sale/CSKH lẫn Bảng/Pipeline */
+.bv-seg2{display:flex;gap:3px;background:var(--soft);border-radius:10px;
+  padding:3px;flex:0 0 auto}
+.bv-seg2 a{padding:5px 13px;border-radius:7px;text-decoration:none;
+  font-size:12.5px;font-weight:600;color:var(--sub);white-space:nowrap}
+.bv-seg2 a.on{background:var(--card);color:var(--accent);box-shadow:var(--shadow)}
+.bv-seg2 a:hover{color:var(--text)}
+.bv-done{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;
+  background:var(--ok-bg);color:var(--ok);border-radius:999px;padding:6px 13px;
+  font-size:12.5px;font-weight:600}
+.bv-done .ico{width:15px;height:15px}
+.bv-find{position:relative;flex:0 0 auto;margin:0}
+.bv-find .ico{width:15px;height:15px;position:absolute;left:11px;top:50%;
+  transform:translateY(-50%);color:var(--sub);pointer-events:none}
+.bv-find input{width:210px;max-width:100%;height:36px;
+  border:1px solid var(--border);background:var(--soft);border-radius:10px;
+  padding:0 12px 0 32px;font:inherit;font-size:13px;color:var(--text);
+  outline:none}
+.bv-find input:focus{border-color:var(--accent)}
+.bv-bar2{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:0 24px 12px;margin:0}
+.bv-ck{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;
+  border:1px solid var(--border);background:var(--card);border-radius:9px;
+  font-size:12.5px;color:var(--text);cursor:pointer;flex:0 0 auto}
+.bv-ck:hover{border-color:var(--accent)}
+.bv-xoa{display:inline-flex;align-items:center;gap:5px;height:34px;
+  color:var(--accent);font-size:12.5px;font-weight:600;text-decoration:none;
+  flex:0 0 auto}
+.bv-xoa .ico{width:14px;height:14px}
+/* Ô xổ trong dải lọc — cùng cỡ 34px với ô tích để dải không lởm chởm */
+.bv-sel{height:34px;max-width:230px;border:1px solid var(--border);
+  background:var(--card);border-radius:9px;padding:0 10px;font:inherit;
+  font-size:12.5px;color:var(--text);cursor:pointer;flex:0 0 auto}
+.bv-sel:hover{border-color:var(--accent)}
+/* Ô "Của tôi" — chỗ đáng lẽ là ô chọn nhân viên, nhưng người này không có
+   quyền xem của người khác. In ra chữ chứ không bỏ trống: phải nói rõ phạm vi
+   đang bó, kẻo tưởng đang xem hết. */
+.bv-ro{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;
+  border:1px solid var(--border);background:var(--card);border-radius:9px;
+  font-size:12.5px;color:var(--sub);flex:0 0 auto}
+.bv-ro .ico{width:14px;height:14px}
+.bv-ngay{display:flex;align-items:center;gap:5px;height:34px;
+  border:1px solid var(--border);background:var(--card);border-radius:9px;
+  padding:0 10px;font-size:12px;color:var(--sub);flex:0 0 auto}
+.bv-ngay .ico{width:14px;height:14px;flex:0 0 auto}
+.bv-ngay input{height:24px;border:1px solid var(--border);background:var(--soft);
+  border-radius:6px;padding:0 5px;font:inherit;font-size:12px;
+  color:var(--text);outline:none}
+.bv-ngay input:focus{border-color:var(--accent)}
+.bv-cnt{font-size:12.5px;color:var(--sub);flex:0 0 auto}
+/* Tab đếm: gạch chân chứ không phải viên thuốc — mẫu để chúng như tab thật để
+   phân biệt với dải lọc ngay trên. */
+.bv-tabs{display:flex;align-items:center;gap:22px;padding:0 24px;
+  flex-wrap:wrap}
+.bv-tab{text-decoration:none;font-size:13px;padding:2px 0 7px;
+  color:var(--sub);font-weight:500;border-bottom:2px solid transparent}
+.bv-tab:hover{color:var(--text)}
+.bv-tab.on{color:var(--accent);font-weight:700;border-bottom-color:var(--accent)}
+.bv-tab b{font-weight:800}
+.bv-tab b.err{color:var(--err)}
+/* Dải ghi chú trong khu nội dung (đã ẩn N khách · máy đọc tin thật) */
+.bv-note{display:flex;align-items:center;gap:9px;background:var(--soft);
+  border:1px dashed var(--border);border-radius:11px;padding:8px 13px;
+  margin-bottom:12px;font-size:12px;color:var(--sub);line-height:1.5}
+.bv-note .ico{width:15px;height:15px;color:var(--ok);flex:0 0 auto}
+.bv-note span{flex:1 1 auto;min-width:0}
+.bv-note a{color:var(--accent);font-weight:600;flex:0 0 auto}
+
 .bv-board{display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;
   align-items:flex-start}
 .bv-cot{flex:0 0 260px;background:var(--soft);border-radius:12px;padding:8px}
@@ -2264,7 +2684,47 @@ code.pm-pid:hover{background:var(--soft)}
 .bv-the{background:var(--card);border:1px solid var(--border);border-radius:10px;
   padding:9px 11px;margin-bottom:8px}
 .bv-the.nong{border-color:var(--hot)}
+/* Hẹn mua TRƯỢT ngày — tài liệu mẫu (C1) bắt "ở lại cột Hẹn mua, viền đỏ".
+   Viền dày hơn thẻ thường 1px để phân biệt được cả khi in đen trắng; và LUÔN
+   đi kèm dòng chữ `.bv-qh` do view in ra (luật vàng B3.5: màu không bao giờ
+   đứng một mình). Đừng bỏ dòng chữ đó đi mà chỉ giữ viền. */
+.bv-the.tre{border-color:var(--err);border-width:2px;padding:10px 11px}
+.kh-tbl tr.tre>td:first-child{box-shadow:inset 3px 0 0 var(--err)}
 .bv-h{display:flex;align-items:center;gap:6px;font-size:13px}
+/* --- Hàng meta của thẻ: hạng thẻ + tổng chi · nguồn · SĐT bấm-chép --- */
+.bv-meta{display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:4px}
+.bv-hang{font-size:10.5px;font-weight:700;border-radius:999px;padding:2px 8px;
+  white-space:nowrap}
+.bv-nguon{font-size:10px;font-weight:600;color:var(--sub);background:var(--soft);
+  border-radius:999px;padding:2px 8px;white-space:nowrap}
+.bv-tel{font-size:10.5px;padding:2px 8px;border-radius:999px;
+  background:var(--ok-bg);color:var(--ok);border:0;cursor:pointer;
+  display:inline-flex;align-items:center;gap:4px;font-family:inherit}
+.bv-tel .ico{width:11px;height:11px}
+/* Dấu đã xem / chưa đọc — chỉ vẽ khi kho hội thoại của watcher có dữ liệu */
+.bv-xem{display:inline-flex;flex:0 0 auto}
+.bv-xem .ico{width:13px;height:13px}
+.bv-xem.da{color:var(--ok)}
+.bv-xem.chua{color:var(--err)}
+.bv-xem.chua-xem{color:var(--sub);opacity:.65}
+/* Cửa gửi tin 24 giờ — cùng bộ 3 trạng thái với màn Hội thoại */
+.bv-cua-r{margin-top:7px}
+.bv-cua{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;
+  font-weight:700;border-radius:999px;padding:2px 9px;white-space:nowrap}
+.bv-cua i{width:6px;height:6px;border-radius:999px;background:currentcolor;
+  flex:0 0 auto;display:block}
+.bv-cua.open{background:var(--ok-bg);color:var(--ok)}
+.bv-cua.tpl{background:var(--warn-bg);color:var(--warn)}
+.bv-cua.unk{background:var(--in);color:var(--sub)}
+/* Thanh tiến trình thang bước.
+   🔴 Thanh này ĐẦY DẦN VỀ PHÍA XẤU (đi hết thang = sắp buông khách) trong khi
+   mắt đọc "đầy = tốt" — bẫy B4 của mẫu. Nên màu do Python đặt inline theo tỉ lệ
+   (xanh→vàng→đỏ) và LUÔN có dòng chữ mốc bên dưới. Đừng bao giờ bỏ dòng chữ. */
+.bv-tien{margin-top:7px}
+.bv-tien-r{height:5px;border-radius:999px;background:var(--in);overflow:hidden}
+.bv-tien-f{height:100%;border-radius:999px}
+.bv-tien-c{font-size:10.5px;color:var(--sub);margin-top:3px;line-height:1.4}
+.bv-tdo{min-width:150px}
 .bv-nong{font-size:10px;font-weight:700;color:var(--hot);background:var(--hot-bg);
   border-radius:999px;padding:1px 7px}
 /* câu 📌 "việc cần làm" — thứ nhân viên đọc đầu tiên, đừng làm mờ đi */
@@ -2276,6 +2736,57 @@ code.pm-pid:hover{background:var(--soft)}
 .bv-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
 .bv-chip{font-size:10.5px;background:var(--card);border:1px solid var(--border);
   border-radius:999px;padding:2px 8px;color:var(--sub)}
+/* --- Thanh hàng loạt (port includes/bulkbar.php) ---
+   Dính đáy màn, MỜ đi khi chưa tích thẻ nào chứ không giấu hẳn: giấu thì người
+   dùng không biết là có thao tác hàng loạt, mà bày sáng thì bấm vào báo lỗi. */
+.bv-hl{position:sticky;bottom:0;z-index:30;display:flex;align-items:center;
+  gap:8px;flex-wrap:wrap;margin:0 0 12px;padding:10px 14px;background:var(--card);
+  border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow-lg);
+  opacity:.45;pointer-events:none;transition:opacity .12s}
+.bv-hl.on{opacity:1;pointer-events:auto;border-color:var(--accent)}
+.bv-hl-n{font-size:12.5px;color:var(--sub);flex:0 0 auto}
+.bv-hl-n b{color:var(--accent);font-size:14px}
+.bv-hl-g{position:relative;flex:0 0 auto}
+.bv-hl-g>summary{list-style:none;cursor:pointer}
+.bv-hl-g>summary::-webkit-details-marker{display:none}
+.bv-hl-p{position:absolute;z-index:40;bottom:38px;left:0;min-width:230px;
+  max-height:280px;overflow-y:auto;background:var(--card);
+  border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow-lg);
+  padding:9px;display:flex;flex-direction:column;gap:5px}
+.bv-hl-nv{display:flex;align-items:center;gap:7px;font-size:12.5px;
+  padding:3px 4px;cursor:pointer;border-radius:7px}
+.bv-hl-nv:hover{background:var(--soft)}
+.bv-tick{width:15px;height:15px;flex:0 0 auto;cursor:pointer;accent-color:var(--accent)}
+.bv-tdc{width:34px;text-align:center}
+
+/* --- Hàng nút trên thẻ (port render_actions của mẫu) --- */
+.bv-nutr{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin-top:9px}
+.bv-nutr form{margin:0}
+.bv-nut-ic{width:29px;height:29px;border:1px solid var(--border);
+  border-radius:8px;background:var(--card);color:var(--sub);cursor:pointer;
+  display:inline-grid;place-items:center;flex:0 0 auto;text-decoration:none;
+  padding:0}
+.bv-nut-ic:hover{border-color:var(--accent);color:var(--accent)}
+.bv-nut-ic .ico{width:15px;height:15px}
+.bv-nut-ic.ok{color:var(--ok)}
+.bv-nut-ic.go{color:var(--accent)}
+/* Menu ⋯ — mọi thứ không dùng hằng ngày. `position:relative` trên <details> để
+   khay bung ra bám đúng nút, không nhảy về góc thẻ. */
+.bv-menu{position:relative;flex:0 0 auto}
+.bv-menu>summary{list-style:none}
+.bv-menu>summary::-webkit-details-marker{display:none}
+.bv-menu-p{position:absolute;z-index:40;right:0;top:33px;min-width:225px;
+  background:var(--card);border:1px solid var(--border);border-radius:11px;
+  box-shadow:var(--shadow-lg);padding:9px;display:flex;flex-direction:column;
+  gap:8px}
+.bv-menu-p form{display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+.bv-menu-p label{width:100%;font-size:11px;font-weight:700;color:var(--sub)}
+.bv-menu-p input[type=datetime-local],.bv-menu-p select{flex:1 1 120px;
+  min-width:0;height:30px;border:1px solid var(--border);background:var(--soft);
+  border-radius:8px;padding:0 8px;font:inherit;font-size:12px;
+  color:var(--text)}
+.bv-menu-p .kh-btn{height:30px;font-size:12px}
+.bv-menu-sep{height:1px;background:var(--border);margin:2px 0}
 .bv-f{display:flex;align-items:center;gap:6px;margin-top:8px}
 .bv-f select{height:28px;flex:1;min-width:0;border:1px solid var(--border);
   border-radius:8px;background:var(--card);font:inherit;font-size:11.5px;
@@ -2283,6 +2794,276 @@ code.pm-pid:hover{background:var(--soft)}
 .bv-nut{margin-top:6px}
 .bv-nut summary{font-size:11px;color:var(--sub);cursor:pointer}
 .bv-nut .ds-acts{margin-top:6px}
+
+/* ---------- C8 · Màn Cài đặt (app/web/views/cai_dat.py) ---------- */
+.cd-wrap{display:flex;gap:18px;align-items:flex-start}
+/* Menu mục con DÍNH — cuộn nội dung bên phải mà menu vẫn nằm trong tầm mắt */
+.cd-menu{flex:0 0 232px;background:var(--card);border:1px solid var(--border);
+  border-radius:14px;padding:7px;position:sticky;top:8px;box-shadow:var(--shadow)}
+.cd-nav{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;
+  font-size:12.5px;font-weight:600;color:var(--text);text-decoration:none;margin:1px 0}
+.cd-nav:hover{background:var(--soft)}
+.cd-nav.on{background:var(--soft);color:var(--accent)}
+.cd-nav .cd-ic{flex:0 0 auto}
+.cd-nav .cd-lb{flex:1 1 auto;min-width:0}
+.cd-nav b{font-size:10.5px;color:var(--sub);font-weight:700;flex:0 0 auto}
+/* chuông cam = số ô CHƯA ĐIỀN của mục — thấy ngay chỗ nào còn thiếu cấu hình */
+.cd-cam{font-style:normal;font-size:10px;font-weight:800;color:#fff;
+  background:var(--warn);border-radius:999px;padding:1px 6px;flex:0 0 auto}
+.cd-nav.ngoai{color:var(--sub)}
+.cd-nav-g{font-size:10.5px;font-weight:700;text-transform:uppercase;
+  color:var(--sub);opacity:.75;padding:10px 10px 4px;letter-spacing:.4px}
+.cd-than{flex:1 1 auto;min-width:0}
+.cd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+  gap:11px}
+.cd-o{display:flex;flex-direction:column;gap:4px;border:1px solid var(--border);
+  border-radius:12px;padding:11px 13px}
+/* Ô chưa điền: viền + chữ CAM. Màu không đứng một mình — luôn kèm chữ
+   "chưa điền" ở pill bên cạnh (luật A3/B3.5 của mẫu). */
+.cd-o.trong{border-color:#f0d3c4;background:var(--warn-bg)}
+.cd-h{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.cd-h code{font-size:10.5px;color:var(--accent);font-weight:700}
+.cd-ten{font-size:12.5px;font-weight:700;color:var(--text)}
+.cd-mo{font-size:11px;color:var(--sub);line-height:1.45}
+.cd-dk{display:flex;align-items:center;gap:7px;margin-top:3px}
+.cd-in{height:34px;border:1px solid var(--border);background:var(--bg);
+  border-radius:9px;padding:0 10px;font:inherit;font-size:12.5px;
+  color:var(--text);width:100%;min-width:0;box-sizing:border-box}
+.cd-in.num{text-align:right;font-variant-numeric:tabular-nums}
+.cd-in.trong{border-color:#f0d3c4;color:var(--warn)}
+.cd-in.trong::placeholder{color:var(--warn);opacity:.8}
+.cd-dv{font-size:11.5px;color:var(--sub);flex:0 0 auto}
+.cd-md{font-size:10.5px;color:var(--sub);opacity:.85}
+.pill.cam{background:var(--warn-bg);color:var(--warn)}
+@media (max-width:900px){
+  .cd-wrap{flex-direction:column}
+  .cd-menu{position:static;flex:1 1 auto;width:100%;
+    display:flex;flex-wrap:wrap;gap:4px}
+  .cd-nav{flex:0 1 auto}
+  .cd-nav-g{width:100%}
+}
+
+/* ---------- Đợt 2 · Cài đặt → công tắc gửi tin (3 trạng thái, 2 lớp khoá) --- */
+.ctcard{border:1.5px solid #f0d3c4}
+.ctkhoa{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  background:var(--soft);border-radius:11px;padding:10px 14px;font-size:12.5px;
+  margin:12px 0}
+.ctkhoa .chan{color:var(--border)}
+.ctkhoa .het{flex:1 1 auto;text-align:right;font-size:11.5px;color:var(--sub)}
+.ctkhoa b.tot{color:var(--ok)}
+.ctkhoa b.xau{color:var(--danger)}
+.ctnuts{display:flex;gap:10px;flex-wrap:wrap}
+.ctnut{flex:1 1 170px;text-align:left;border:1.5px solid var(--border);
+  border-radius:12px;padding:11px 14px;background:var(--card);color:var(--sub);
+  font:inherit;cursor:pointer}
+.ctnut b{display:block;font-size:13.5px}
+.ctnut i{display:block;font-size:11.5px;font-style:normal;margin-top:3px;
+  opacity:.85}
+.ctnut.on{border-color:var(--brand);background:var(--soft);color:var(--text)}
+.ctnut:disabled{opacity:.55;cursor:not-allowed}
+.ctwhy{margin-top:12px;background:var(--danger-bg,#fdecec);color:var(--danger);
+  border-radius:10px;padding:10px 12px;font-size:11.5px;font-weight:600}
+
+/* ---------- Đợt 3 · Luồng tự động (KHUNG — chưa gửi tin) ------------------- */
+.afcanh{border:1.5px solid #f0d3c4}
+.afwhy{margin-top:10px;background:var(--soft);border-left:3px solid var(--danger);
+  border-radius:8px;padding:10px 12px;font-size:12px;color:var(--text)}
+.afrow{border:1px solid var(--border);border-radius:12px;padding:12px 14px;
+  margin-top:10px}
+.afrow.tat{opacity:.55}
+.afh{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13.5px}
+.afmo{font-size:12px;color:var(--sub);margin-top:4px}
+.afnut{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.afgrid{display:flex;gap:12px;flex-wrap:wrap;margin-top:11px}
+.afl{flex:1 1 220px;display:flex;flex-direction:column;gap:4px;font-size:12px;
+  color:var(--sub)}
+.afl input,.afl select{height:36px;border:1px solid var(--border);
+  background:var(--soft);border-radius:9px;padding:0 11px;font:inherit;
+  font-size:12.5px;color:var(--text)}
+.afl select[multiple]{height:auto;padding:6px 8px}
+.afck{flex-direction:row;align-items:center;gap:8px;color:var(--text)}
+.afck input{height:auto;flex:0 0 auto}
+.afkq{border:1.5px solid var(--brand)}
+.afso{font-size:22px;font-weight:800;margin:6px 0}
+.afkhs{display:flex;flex-wrap:wrap;gap:7px;margin-top:11px}
+.afkh{display:flex;gap:7px;align-items:baseline;border:1px solid var(--border);
+  border-radius:999px;padding:4px 12px;font-size:12px}
+.afsua{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}
+.afsua>summary{cursor:pointer;font-size:12px;color:var(--sub);list-style:none}
+.afsua>summary::-webkit-details-marker{display:none}
+.afhist{margin-top:10px;border-top:1px dashed var(--border);padding-top:8px}
+.afls{font-size:11.5px;color:var(--sub);padding:2px 0}
+
+/* ---------- Đợt 2 · Kịch bản nhận diện + Gợi ý kịch bản -------------------- */
+.ndthes{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.ndthe{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);
+  border-radius:999px;padding:4px 6px 4px 11px;font-size:12px;background:var(--card)}
+.ndthe .mo{opacity:.6}
+.ndthe.tat{opacity:.5;background:var(--soft)}
+/* Mẫu NỀN: viền đứt + không có nút — nhìn là biết ngay cái này không xoá được */
+.ndthe.nen{border-style:dashed;background:var(--soft);color:var(--sub);
+  padding:4px 11px}
+.ndthe .x{border:none;background:none;cursor:pointer;color:var(--ok);
+  font:inherit;line-height:1;padding:0 2px}
+.ndthe .x.xoa{color:var(--danger)}
+.ndadd{display:flex;gap:7px;flex-wrap:wrap;margin-top:11px}
+.ndadd input,.ndadd select{flex:1 1 160px;height:34px;border:1px solid var(--border);
+  background:var(--soft);border-radius:8px;padding:0 11px;font:inherit;
+  font-size:12.5px;color:var(--text)}
+.ndadd .btn{flex:0 0 auto}
+.ndkq{display:flex;align-items:center;gap:10px;margin-top:11px;flex-wrap:wrap}
+.ndtag{font-size:12.5px;font-weight:700;border:1px solid var(--sub);
+  border-radius:999px;padding:3px 12px;color:var(--sub)}
+.ndtag.goi{color:var(--ok);border-color:var(--ok)}
+.ndtag.vc{color:var(--brand);border-color:var(--brand)}
+.ndtag.chan{color:var(--danger);border-color:var(--danger)}
+.ndwhy{font-size:12px;color:var(--sub);flex:1 1 220px}
+.gytbl{border:1px solid var(--border);border-radius:12px;overflow:hidden;
+  margin-top:10px}
+.gyrow{display:flex;align-items:center;gap:12px;padding:10px 14px;
+  border-top:1px solid var(--border);flex-wrap:wrap}
+.gyrow:first-child{border-top:none}
+.gyrow.tat{opacity:.5}
+.gyrow .kw{flex:1 1 200px;font-size:12.5px}
+.gyrow .mui{color:var(--sub)}
+.gyrow .sc{flex:0 1 260px;font-size:12px;color:var(--sub)}
+.gyn{display:flex;gap:6px;flex:0 0 auto}
+.gyn .x{border:none;background:none;cursor:pointer;color:var(--ok);font:inherit;
+  line-height:1;padding:0 2px}
+.gyn .x.xoa{color:var(--danger)}
+
+/* ---------- Đợt 1 · Cài đặt → Mốc thời gian (views/cai_dat_moc.py) ---------- */
+.mocg{border:1px solid var(--border);border-radius:13px;overflow:hidden;
+  background:var(--card);margin-top:10px}
+.mocg>summary{display:flex;align-items:center;gap:9px;padding:12px 15px;
+  cursor:pointer;background:var(--soft);list-style:none}
+.mocg>summary::-webkit-details-marker{display:none}
+.mocg .chev{color:var(--sub);transform:rotate(-90deg);transition:transform .15s}
+.mocg[open] .chev{transform:rotate(0)}
+.mocg .gttl{flex:1 1 auto;min-width:0;font-size:13.5px;font-weight:700}
+.mocg .gsub{font-weight:400;color:var(--sub);font-size:11.5px}
+.mocg .gcnt{flex:0 0 auto;font-size:11.5px;color:var(--sub)}
+.gbody{padding:12px 15px;display:flex;flex-direction:column;gap:9px}
+.mnhom{font-size:10.5px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--sub);margin:10px 0 2px}
+.mitem{border:1px solid var(--border);border-radius:11px;padding:9px 12px}
+.mitem.off{opacity:.55}
+.mrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+/* nút gạt: input ẩn + label vẽ — bấm nhãn là đổi, không cần JS */
+.msw{position:absolute;width:0;height:0;opacity:0}
+.swui{width:42px;height:24px;border-radius:999px;background:var(--border);
+  padding:3px;flex:0 0 auto;cursor:pointer;display:block;transition:background .15s}
+.swui>span{width:18px;height:18px;border-radius:999px;background:#fff;
+  box-shadow:var(--shadow);display:block;transition:margin-left .15s}
+.msw:checked+.swui{background:var(--accent)}
+.msw:checked+.swui>span{margin-left:18px}
+.mitem.crit .msw:checked+.swui{background:#0E9488}
+.mname{flex:0 0 118px;min-width:0;font-size:12.5px;font-weight:600;line-height:1.25}
+.mname small{display:block;font-size:10px;font-weight:400;color:var(--sub);
+  font-family:ui-monospace,monospace}
+.mnum{flex:0 0 56px;width:56px;height:32px;border:1px solid var(--border);
+  background:var(--bg);border-radius:8px;padding:0 8px;font:inherit;
+  font-size:12.5px;text-align:center;color:var(--text)}
+.munit{flex:0 0 auto;font-size:11.5px;color:var(--sub)}
+.nhanin{flex:1 1 180px;min-width:90px;height:32px;border:1px solid var(--border);
+  background:var(--card);border-radius:8px;padding:0 10px;font:inherit;
+  font-size:12.5px;font-weight:600;color:var(--accent)}
+.nhanin::placeholder{font-weight:400;color:var(--sub)}
+.offlbl{display:none;flex:0 0 auto;font-size:10.5px;font-weight:600;
+  color:var(--sub);background:var(--soft);border-radius:999px;padding:2px 8px}
+.mitem.off .offlbl{display:block}
+.aigui{flex:0 0 auto;display:flex;gap:3px;background:var(--soft);
+  border-radius:9px;padding:3px}
+.aib{width:30px;height:25px;border:1px solid transparent;background:none;
+  font:inherit;font-size:13px;border-radius:7px;cursor:pointer;opacity:.45;
+  filter:grayscale(1)}
+.aib.on{border-color:var(--accent);background:var(--card);opacity:1;
+  filter:none;box-shadow:var(--shadow)}
+/* cảnh báo mốc GẮT — hỏi lại tại chỗ, không dùng confirm() dễ bấm nhầm */
+.critw{display:flex;align-items:center;gap:10px;background:var(--warn-bg);
+  border-radius:10px;padding:9px 12px;margin-top:7px;font-size:12px}
+.critw .msg{flex:1 1 auto;color:var(--warn);line-height:1.45}
+.critw button{font:inherit;font-size:12px;font-weight:600;padding:5px 11px;
+  border-radius:8px;cursor:pointer;flex:0 0 auto}
+.critw .keep{border:1px solid var(--border);background:var(--card);color:var(--text)}
+.critw .force{border:none;background:var(--warn);color:#fff}
+/* hàng từ khoá kiểu THẺ */
+.kwrow{display:flex;align-items:flex-start;gap:9px;margin:6px 0 0 50px;
+  padding-left:10px;border-left:2px solid var(--border)}
+.kwrow.kh{border-left-color:#4E7FE8}
+.kwrow.kh .kwlb{color:#4E7FE8}
+.kwrow.kh .kwtag{border-color:#BBD3F5;background:#E2EAFB;color:#1B4C8F}
+.kwlb{flex:0 0 auto;font-size:11px;color:var(--sub);padding-top:8px;
+  white-space:nowrap;cursor:help}
+.kwbox{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;align-items:center;
+  gap:5px;min-height:32px;border:1px solid var(--border);background:var(--bg);
+  border-radius:9px;padding:5px 6px;cursor:text}
+.kwbox:focus-within{border-color:var(--accent)}
+.kwtag{display:inline-flex;align-items:center;gap:3px;max-width:100%;
+  font-size:11.5px;line-height:1;background:var(--card);
+  border:1px solid var(--border);border-radius:999px;padding:4px 4px 4px 9px}
+.kwtag b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kwtag.sp{color:var(--accent);background:var(--soft);border-color:var(--accent)}
+/* thẻ THỪA (chỉ khác dấu) — mờ đi để lộ ra ngay, không phải soi bằng mắt */
+.kwtag.dup{opacity:.45}
+.kwx{width:16px;height:16px;padding:0;border:none;background:none;
+  border-radius:999px;color:var(--sub);font:inherit;font-size:13px;line-height:1;
+  cursor:pointer;display:flex;align-items:center;justify-content:center}
+.kwx:hover{background:var(--err-bg);color:var(--err)}
+.kwadd{flex:1 1 110px;min-width:110px;height:22px;border:none;background:none;
+  outline:none;padding:0 3px;font:inherit;font-size:11.5px;color:var(--text)}
+.kwside{flex:0 0 96px;padding-top:8px;font-size:10.5px;color:var(--sub);
+  text-align:right;line-height:1.5}
+.kwdup{display:block;margin-left:auto;border:none;background:none;padding:0;
+  font:inherit;font-size:10.5px;color:var(--accent);text-decoration:underline;
+  cursor:pointer}
+/* ô 🧪 Thử một câu */
+.kwtry{margin-top:10px;border:1px dashed var(--accent);border-radius:11px;
+  background:var(--soft);padding:11px 13px}
+.kwtt{font-size:12px;font-weight:700;color:var(--accent)}
+.kwtt span{font-weight:400;font-size:11.5px}
+.kwtrow{display:flex;align-items:center;gap:9px;margin-top:8px;flex-wrap:wrap}
+.kwtrow input[type=text]{flex:1 1 260px;min-width:0;height:34px;
+  border:1px solid var(--border);background:var(--card);border-radius:9px;
+  padding:0 11px;font:inherit;font-size:12.5px;color:var(--text)}
+.kwtck,.kwtai{flex:0 0 auto;font-size:11.5px;color:var(--accent);cursor:pointer}
+.kwtai{display:inline-flex;gap:14px}
+.kwtai label{display:inline-flex;align-items:center;gap:5px;cursor:pointer}
+.kwtgo{flex:0 0 auto;height:34px;padding:0 15px;border:none;border-radius:9px;
+  background:var(--accent);color:#fff;font:inherit;font-size:12.5px;
+  font-weight:600;cursor:pointer}
+.kwtgo:disabled{opacity:.5;cursor:default}
+.kwtkq{margin-top:9px;font-size:12px;line-height:1.6;background:var(--card);
+  border-radius:9px;padding:9px 12px}
+.kwtkq .hit{display:inline-block;font-size:11px;color:var(--accent);
+  background:var(--soft);border-radius:999px;padding:1px 8px;margin:2px 3px 0 0}
+.kwtkq .no{color:var(--warn)}
+/* 1G/1H — hàng cột */
+.nrow{display:flex;align-items:center;gap:11px;padding:9px 2px}
+.nrow+.nrow{border-top:1px solid var(--border)}
+.nrow.chead{padding-bottom:3px;border:none}
+.nrow.chead .clab,.nrow.chead .cin{border:none;background:none;height:auto;
+  padding:0;font-size:10.5px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--sub)}
+.cdot{flex:0 0 auto;width:9px;height:9px;border-radius:999px}
+.clab{flex:0 0 150px;min-width:0;font-size:12.5px;font-weight:700;
+  display:flex;align-items:center;gap:6px}
+.cma{font-family:ui-monospace,monospace;font-size:11px;font-weight:400;
+  color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ctm{flex:0 0 auto;font-size:9.5px;font-weight:700;color:var(--accent);
+  background:var(--soft);border-radius:999px;padding:1px 6px;cursor:help}
+.cin{flex:1 1 auto;min-width:0;height:34px;border:1px solid var(--border);
+  background:var(--bg);border-radius:9px;padding:0 10px;font:inherit;
+  font-size:12.5px;color:var(--text)}
+.ctag{flex:0 0 62px;text-align:center;font-size:10px;font-weight:700;
+  color:var(--sub);background:var(--soft);border-radius:999px;padding:2px 8px}
+.ctag.on{color:var(--accent);background:var(--soft)}
+.gnote{font-size:11.5px;line-height:1.5;border-radius:10px;padding:9px 12px;
+  margin-top:6px;background:var(--soft);color:var(--text)}
+.savebar{display:flex;align-items:center;gap:12px;margin-top:16px;
+  padding-top:14px;border-top:1px solid var(--border)}
+.dirty{font-size:12px;color:var(--sub)}
+.dirty.on{color:var(--warn);font-weight:600}
 
 /* ---------- điều hướng kiểu AJAX (_NAV_JS) ---------- */
 html.pjax-loading{cursor:progress}
@@ -2334,7 +3115,9 @@ _NAV_JS = """
     for (var i = 0; i < nhom.length; i++) {
       var d = nhom[i];
       // Đang đứng trong nhóm nào thì nhóm đó luôn mở, kẻo mục đang xem bị giấu.
-      d.open = d.querySelector('.nav-item.on') !== null ||
+      // Dò '.on' trơ chứ không '.nav-item.on': mục đang xem có thể nằm trong
+      // khối bộ phận xổ/thu ở nhóm Bộ phận, ở đó link mang class nd-link/sm-link.
+      d.open = d.querySelector('.on') !== null ||
                thuGon.indexOf(d.getAttribute('data-nhom')) < 0;
     }
   }
@@ -2343,6 +3126,9 @@ _NAV_JS = """
   document.addEventListener('toggle', function(e){
     var d = e.target;
     if (!d.matches || !d.matches('.side details[data-nhom]')) return;
+    // Rail (.side.mini) bung hết nhóm bằng JS — mấy lượt `toggle` đó là của
+    // máy, ghi vào localStorage là xoá sạch lựa chọn gập của người dùng.
+    if (document.querySelector('.side.mini')) return;
     var ten = d.getAttribute('data-nhom');
     var thuGon = nhomDaThuGon();
     var i = thuGon.indexOf(ten);
@@ -2350,9 +3136,102 @@ _NAV_JS = """
     else if (i < 0) { thuGon.push(ten); }
     try { localStorage.setItem(KHOA_THU_GON, JSON.stringify(thuGon)); }
     catch (e2) {}                   // không lưu được thì thôi, đừng vỡ menu
+    veLaiMenu();  // gập/xổ đổi chiều cao menu -> tính lại mép mờ + ghim
   }, true);
 
   apDungThuGon();
+
+  // --- thu/phóng cả menu thành rail icon (nút #navToggle ở đáy) -------------
+  // Cùng nếp với nhóm thu gọn: nhớ ngoài DOM vì PJAX chép luôn className của
+  // .side từ trang mới (server không bao giờ in `mini`) -> mất class.
+  var KHOA_MINI = 'nav-mini';
+
+  function hep(){ return window.matchMedia('(max-width:900px)').matches; }
+
+  function apDungMini(){
+    var s = document.querySelector('.side');
+    if (!s) return;
+    var mini = false;
+    // Màn hẹp menu nằm ngang -> rail vô nghĩa, bỏ qua (nhưng KHÔNG xoá lựa
+    // chọn đã lưu: về màn rộng vẫn thu lại như cũ).
+    if (!hep()) { try { mini = localStorage.getItem(KHOA_MINI) === '1'; } catch (e) {} }
+    if (mini) s.classList.add('mini'); else s.classList.remove('mini');
+    var b = document.getElementById('navToggle');
+    if (b) b.title = mini ? 'Mở rộng menu' : 'Thu gọn menu';
+    if (mini) {
+      // Trong rail, tiêu đề nhóm co còn vạch 1px -> nhóm nào đang gập là icon
+      // của nó mất tăm mà chẳng còn chỗ bấm mở. Nên rail thì BUNG HẾT; lựa chọn
+      // gập vẫn nằm nguyên trong localStorage (handler `toggle` bên trên đã bỏ
+      // qua lúc mini) nên phóng menu ra là gập lại đúng như cũ.
+      var ds = document.querySelectorAll('.side details[data-nhom]');
+      for (var i = 0; i < ds.length; i++) ds[i].open = true;
+    } else {
+      apDungThuGon();
+    }
+  }
+
+  function datMini(mini){
+    try { localStorage.setItem(KHOA_MINI, mini ? '1' : '0'); } catch (e) {}
+    apDungMini();
+    veLaiMenu();  // rail đổi bề rộng -> menu cao khác đi
+  }
+
+  document.addEventListener('click', function(e){
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('#navToggle')) {
+      datMini(!document.querySelector('.side').classList.contains('mini'));
+      return;
+    }
+    // Trong rail, con của khối bộ phận bị ẩn (chúng không có icon) nên bấm
+    // tiêu đề bộ phận mà xổ ra thì chẳng thấy gì — bung cả menu ra thay vì xổ.
+    if (t.closest('.side.mini .nav-dept>summary,.side.mini .dept>summary')) {
+      e.preventDefault();
+      datMini(false);
+    }
+  });
+
+  apDungMini();
+
+  // --- mép dưới menu mờ dần khi còn nội dung cuộn (mẫu Kallet: .nav.more) ---
+  function moMep(){
+    var n = document.querySelector('.side .nav');
+    if (!n) return;
+    // -2px cho sai số làm tròn khi phóng to/thu nhỏ trang
+    var con = n.scrollTop + n.clientHeight < n.scrollHeight - 2;
+    if (con) n.classList.add('more'); else n.classList.remove('more');
+  }
+
+  // --- tiêu đề nhóm ĐANG DÍNH mép trên -> gắn .stuck (CSS mới cho nền frost) --
+  // Việc dán là của position:sticky, JS chỉ để biết CÁI NÀO đang dán: chưa có
+  // bộ chọn :stuck nào chạy được rộng rãi. So mép trên của summary với mép trên
+  // vùng cuộn — bằng nhau (trong 1px) nghĩa là nó đang bị giữ lại.
+  var choVe = false;
+  function tinhGhim(){
+    choVe = false;
+    var n = document.querySelector('.side .nav');
+    if (!n) return;
+    var moc = n.getBoundingClientRect().top;
+    var ss = n.querySelectorAll('.nav-grp>summary');
+    for (var i = 0; i < ss.length; i++) {
+      var dinh = ss[i].getBoundingClientRect().top <= moc + 1;
+      if (dinh) ss[i].classList.add('stuck'); else ss[i].classList.remove('stuck');
+    }
+  }
+  // Gộp vào 1 khung hình: scroll bắn liên tục, đo getBoundingClientRect mỗi lượt
+  // là bắt trình duyệt tính lại bố cục giữa chừng -> cuộn giật.
+  function xepGhim(){
+    if (!choVe) { choVe = true; requestAnimationFrame(tinhGhim); }
+  }
+  function veLaiMenu(){ moMep(); xepGhim(); }
+
+  // `scroll` KHÔNG nổi bọt -> bắt ở pha capture như handler `toggle` bên trên.
+  document.addEventListener('scroll', function(e){
+    var t = e.target;
+    if (t && t.classList && t.classList.contains('nav')) veLaiMenu();
+  }, true);
+  window.addEventListener('resize', veLaiMenu);
+  veLaiMenu();
 
   function runPageScript(doc){
     (window.__pjaxTimers || []).forEach(clearInterval);
@@ -2369,6 +3248,16 @@ _NAV_JS = """
   }
 
   function applyDoc(doc, url){
+    // CSS + JS của khung nằm trong <head>, mà PJAX chỉ thay ruột .side/.main ->
+    // tab mở từ TRƯỚC lần sửa giao diện sẽ ôm bản CSS cũ mãi mãi: markup mới +
+    // style cũ = layout vỡ (mục mới không có luật nào cho nó). Vân tay ở
+    // <meta name=ui-ver> đổi thì nạp lại cả trang cho ăn khớp.
+    var vCu = document.querySelector('meta[name="ui-ver"]');
+    var vMoi = doc.querySelector('meta[name="ui-ver"]');
+    if (vCu && vMoi && vCu.getAttribute('content') !== vMoi.getAttribute('content')) {
+      location.href = url;
+      return;
+    }
     document.title = doc.title;
     var newSide = doc.querySelector('.side');
     var newMain = doc.querySelector('.main');
@@ -2380,9 +3269,18 @@ _NAV_JS = """
     // đúng 1 màn hình, cuộn không được và phần dưới (vd nhật ký quét ở màn
     // Cảm xúc) bị cắt mất.
     if (newSide && curSide) {
+      // <nav> nay tự cuộn (khối đáy ghim cố định) mà innerHTML thay cả nó ->
+      // đang xem mục cuối menu, bấm phát nào menu giật về đầu phát ấy. Nhớ lại
+      // chỗ cuộn rồi đặt về sau khi vẽ.
+      var navCu = curSide.querySelector('.nav');
+      var navTop = navCu ? navCu.scrollTop : 0;
       curSide.className = newSide.className;
       curSide.innerHTML = newSide.innerHTML;
       apDungThuGon();   // .side vừa bị vẽ lại -> nhóm thu gọn bung ra, gập lại
+      apDungMini();     // ... và className vừa bị chép đè -> đắp lại `mini`
+      var navMoi = curSide.querySelector('.nav');
+      if (navMoi) navMoi.scrollTop = navTop;
+      veLaiMenu();      // menu vừa vẽ lại -> tính lại mép mờ + ghim
     }
     if (newMain && curMain) {
       curMain.className = newMain.className;

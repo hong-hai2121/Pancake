@@ -19,6 +19,7 @@ Du lieu gia mang dau `__c5__`, don sach dau/cuoi. KHONG goi mang.
 Chay:  python scripts/thu_c5_sale.py
 """
 
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -359,7 +360,14 @@ def main() -> None:  # noqa: PLR0915 — script nghiem thu
     ok("bao ro cot do MAY doc tin nhan that suy ra",
        "máy đọc tin nhắn thật" in r.text)
     ok("noi ro khac Pipeline giai doan", "/crm/pipeline" in r.text)
-    ok("co du 4 o dem tren man", r.text.count("vc-tile") >= 4)
+    # Đếm trên MARKUP (`class="bv-tab`), không đếm tên lớp trần: chuỗi "bv-tab"
+    # trơn còn nằm trong CSS của shell nên phép đếm cũ vẫn xanh kể cả khi màn
+    # đã bỏ hết ô đếm — chính cái bẫy đó đã cho bản `vc-tile` cũ qua mặt.
+    ok("co du 4 tab dem tren man", r.text.count('class="bv-tab') >= 4,
+       str(r.text.count('class="bv-tab')))
+    ok("3 tang cong cu/loc/tab deu co",
+       all(f'class="{k}"' in r.text for k in ("bv-bar1", "bv-bar2", "bv-tabs")))
+    ok("co nut doi bo phan sang CSKH", "/crm/bang-viec-cskh" in r.text)
     ok("giai thich 2 nut dong khach khac nhau",
        "Từ chối</b> = đóng đợt này" in r.text
        and "Ngừng chăm sóc</b> = dừng hẳn" in r.text)
@@ -403,6 +411,305 @@ def main() -> None:  # noqa: PLR0915 — script nghiem thu
        bool(sv.luu_buoc(9, name=f"{DAU}Thu", kw_nv="đắt quá, sao đắt")))
     with pool.connection() as conn:
         conn.execute("delete from crm.sale_steps where step_no = 9")
+
+    # =====================================================================
+    print("== 16. Bo loc bang viec (buoc 2) ==")
+    # Moi test lead deu: owner = nv · page = PAGE_GIA · tao hom nay hoac -5 ngay.
+    # Nen tung o loc phai GIU khi tri dung, va BO SACH khi tri sai.
+    ta = {x["id"] for x in sv.bang_viec(owner_id=uid["nv"])["the"]}
+    ok("chua loc thi co the", len(ta) >= 4, str(len(ta)))
+
+    def ids(**kw):
+        return {x["id"] for x in sv.bang_viec(owner_id=uid["nv"], **kw)["the"]}
+
+    ok("loc nhan vien DUNG -> giu nguyen", ids(staff_id=uid["nv"]) == ta)
+    ok("loc nhan vien KHAC -> rong", ids(staff_id=uid["tn"]) == set())
+    ok("loc 'chua gan' -> rong (moi lead deu co chu)",
+       ids(chua_gan=True) == set())
+    ok("loc fanpage DUNG -> giu nguyen", ids(page_id=page) == ta)
+    ok("loc fanpage KHAC -> rong", ids(page_id=page + 99999) == set())
+
+    hnay = gio.date()
+    ok("loc ngay nhan lan dau: tu 6 ngay truoc -> giu nguyen",
+       ids(tao_tu=str(hnay - timedelta(days=6))) == ta)
+    ok("loc ngay nhan lan dau: chi HOM NAY -> chi con lead tao hom nay",
+       ids(tao_tu=str(hnay)) == {lead["Moi"]} & ta or
+       ids(tao_tu=str(hnay)) < ta, str(len(ids(tao_tu=str(hnay)))))
+    ok("loc ngay: den TRUOC moi lead -> rong",
+       ids(tao_den=str(hnay - timedelta(days=30))) == set())
+
+    ok("pham vi 'con dong 14 ngay' -> giu nguyen", ids(hoat_dong_ngay=14) == ta)
+    ok("pham vi 'con dong 1 ngay' -> bot thi (lead cu roi ra)",
+       ids(hoat_dong_ngay=1) <= ta)
+
+    # Trang thai: lay dung mot cot dang co the roi loc theo no.
+    bv = sv.bang_viec(owner_id=uid["nv"])
+    cot_co = next((k for k, v in bv["theo_cot"].items() if v), "")
+    ok("co dem theo tung cot", bool(bv.get("dem_cot")), str(bv.get("dem_cot")))
+    ok("dem_cot khop so the that trong cot do",
+       bv["dem_cot"].get(cot_co) == len(bv["theo_cot"][cot_co]),
+       f'{cot_co}: {bv["dem_cot"].get(cot_co)}')
+    loc_cot = sv.bang_viec(owner_id=uid["nv"], trang_thai=cot_co)
+    ok("loc trang thai -> chi con the cua cot do",
+       {x["cot"] for x in loc_cot["the"]} == {cot_co}, cot_co)
+    ok("dem_cot KHONG ve 0 khi da loc mot cot (dem truoc, loc sau)",
+       sv.bang_viec(owner_id=uid["nv"],
+                    trang_thai=cot_co)["dem_cot"] == bv["dem_cot"])
+
+    # --- tren MAN, qua HTTP ---
+    dang_nhap(f"{DAU}tn")
+    r = web.get("/crm/bang-viec")
+    ok("man co du 7 o loc", all(k in r.text for k in (
+        'name="tt"', 'name="nv"', 'name="page"', 'name="tu"', 'name="den"',
+        'name="tatca"', 'name="hien_da_cham"')))
+    ok("o trang thai co kem so dem", re.search(r'name="tt"[\s\S]{0,4000}?\(\d+\)',
+                                               r.text) is not None)
+    ok("cap nut pham vi co mat", "Còn động" in r.text and "Tất cả lead" in r.text)
+    # 🚩 Soi MARKUP (`class="..."`), khong soi ten lop tran: "bv-the"/"kh-name"
+    #    con nam trong CSS cua shell nen phep kiem "not in" luon sai.
+    r2 = web.get(f"/crm/bang-viec?page={page + 99999}")
+    ok("loc fanpage sai tren man -> bang rong",
+       'class="bv-the' not in r2.text and 'class="kh-name"' not in r2.text)
+    ok("bang rong vi BO LOC thi noi dung ly do (khong do tai kho du lieu)",
+       "khớp bộ lọc đang bật" in r2.text and "fanpage" in r2.text,
+       r2.text[r2.text.find("flash warn"):][:150])
+    # 🚩 Lo xem trom: NV thuong gui tay ?nv=<id nguoi khac> phai bi BO QUA.
+    dang_nhap(f"{DAU}nv")
+    r3 = web.get(f"/crm/bang-viec?nv={uid['tn']}")
+    ok("NV thuong gui tay ?nv= cua nguoi khac -> bo qua, van thay cua minh",
+       "· của tôi" in r3.text and "kh-name" in r3.text)
+    ok("NV thuong khong duoc in o chon nhan vien",
+       'name="nv"' not in r3.text and "Của tôi" in r3.text)
+
+    # =====================================================================
+    print("== 17. The khach (buoc 3) ==")
+    from app.web.views import sale as vsale                      # noqa: PLC0415
+
+    tk = {"id": 1, "customer_id": 9, "full_name": "Lan", "primary_phone": "0912345678",
+          "owner_name": "NV1", "card_rank": "gold", "total_spent": 7500000,
+          "source": "facebook", "page_name": "FP A", "cot": "buoc_3",
+          "cot_vi_sao": "x", "goi_y": [], "cho_dap": False, "ly_do_cho": "",
+          "qua_han": "", "sale_step": 2, "khach_cuoi": gio - timedelta(hours=3),
+          "buoc_ke": {"step_no": 3, "name": "N", "work": "W", "san_sang": True,
+                      "nong": False}}
+    h = vsale._the(tk, [{"ma": "buoc_3", "ten": "B3", "mau": "#7FA33F",
+                         "viec": "x", "keo": True}], {"gold": "Gold"}, 8)
+    ok("the co hang the + tong chi", "Gold" in h and "7.500.000đ" in h)
+    ok("the co chip nguon khach", "facebook" in h and "bv-nguon" in h)
+    ok("the co SDT bam-chep (dung lai .kh-tel)",
+       'class="kh-tel bv-tel"' in h and 'data-so="0912345678"' in h)
+    ok("the co chip cua 24 gio", "Cửa tự do" in h)
+
+    # 🔴 BAY B4 cua mau: thanh DAY DAN VE PHIA XAU. Bat buoc doi mau theo ti le
+    #    VA luon kem chu — bo chu di la nguoi doc hieu NGUOC.
+    def tdo(buoc):
+        return vsale._tien_do(dict(tk, sale_step=buoc, buoc_ke=None), 8)
+
+    ok("tien do buoc dau -> XANH", "#2EAD6E" in tdo(2))
+    ok("tien do giua thang -> VANG", "#E0A417" in tdo(5))
+    ok("tien do cuoi thang -> DO", "#E5484D" in tdo(7))
+    ok("tien do LUON kem chu moc (bay B4)",
+       all("bv-tien-c" in tdo(b) and "bước" in tdo(b) for b in (2, 5, 7)))
+    ok("het thang thi noi ro da het bam duoi", "hết bám đuổi" in tdo(8))
+
+    # Cua 24h: BA trang thai, thieu moc thi KHONG duoc ket luan het cua.
+    ok("khach nhan 30h truoc -> ngoai cua, chi gui mau Meta",
+       "Cửa mẫu Meta" in vsale._cua_24h({"khach_cuoi": gio - timedelta(hours=30)}))
+    ok("thieu moc tin khach -> 'chua ro', KHONG ket luan het cua",
+       "Chưa rõ cửa" in vsale._cua_24h({"khach_cuoi": None}))
+
+    # Dau da xem: kho hoi thoai chua co thi KHONG duoc ve dau gia.
+    ok("khong co du lieu watcher -> khong ve dau da xem",
+       vsale._dau_xem({"id": 1}) == "")
+    ok("co tin chua doc -> dau do", "chua" in vsale._dau_xem({"unread_count": 3}))
+    ok("da xem -> dau xanh", 'bv-xem da' in vsale._dau_xem({"seen": True,
+                                                            "unread_count": 0}))
+    # Hang chua xep: card_rank NULL la trang thai THU 6, khong phai loi.
+    ok("khach chua xep hang van hien duoc",
+       "Chưa xếp hạng" in vsale._hang({"card_rank": None, "total_spent": 0}, {}))
+
+    dang_nhap(f"{DAU}tn")
+    r4 = web.get("/crm/bang-viec")
+    ok("man co bo chep SDT (toast + JS)",
+       'class="kh-toast"' in r4.text and "navigator.clipboard" in r4.text)
+    r5 = web.get("/crm/bang-viec?cd=pipeline")
+    ok("the tren pipeline co thanh tien do", 'class="bv-tien"' in r5.text)
+
+    # =====================================================================
+    print("== 18. Hang nut tren the (buoc 4) ==")
+    lid = lead["Cu"]
+    cid_cu = kh["Cu"]
+    hn = vsale._hang_nut(dict(tk, id=lid, customer_id=cid_cu,
+                              next_action_at=None), [])
+    ok("co nut chat trong CRM", f"/crm/khach-hang/{cid_cu}?tab=hoi-thoai" in hn)
+    ok("co nut thu vien kich ban", "/crm/kich-ban" in hn)
+    ok("co nut tu khai da nhan + da goi",
+       f"/crm/bang-viec/{lid}/tu-khai" in hn
+       and 'value="nhan"' in hn and 'value="goi"' in hn)
+    ok("co menu ... voi dat hen + chuyen cot + tra ve may",
+       all(f"/crm/bang-viec/{lid}/{x}" in hn for x in ("hen", "keo", "mo-lai")))
+    # Mau dan rieng: thu vien kich ban (chep tay) KHAC Botcake (may ban tin).
+    ok("Botcake danh dau CHUA LAM DUOC, khong gop voi thu vien kich ban",
+       "ht-todo" in hn and "Botcake chưa nối" in hn)
+    ok("chua co hen thi KHONG bay nut Xoa hen", "Xoá hẹn" not in hn)
+    ok("co hen roi thi hien nut Xoa hen",
+       "Xoá hẹn" in vsale._hang_nut(dict(tk, id=lid, customer_id=cid_cu,
+                                         next_action_at=gio), []))
+
+    # --- dat hen: chay THAT qua service ---
+    mai = (gio + timedelta(days=1)).strftime("%Y-%m-%dT09:00")
+    sv.dat_hen(lid, mai, nguoi=uid["nv"])
+    l_h = dict(sale_repo.get_lead_bang(lid))
+    ok("dat hen ghi duoc vao next_action_at", l_h["next_action_at"] is not None)
+    ok("co hen -> the nhay sang cot Hen mua", sv.cot_cua(l_h)[0] == "hen_mua",
+       sv.cot_cua(l_h)[0])
+    # 🚩 Loi that da sua 05/08: `qua_han` xet TRUOC `hen_mua` nen dong chu thich
+    #    "hen truot van o lai cot Hen mua" khong bao gio co hieu luc — lead ket
+    #    thang du lau de nguoi ta dat hen thi cung du lau de qua_han bat truoc.
+    #    NV dat hen xong thay the nhay sang "Qua han — xu ngay" la mat niem tin.
+    ok("lead DANG qua han ma co hen -> Hen mua thang (khong phai Qua han)",
+       sv.cot_cua(dict(l_h))[0] == "hen_mua", sv.cot_cua(dict(l_h))[0])
+    hom_qua = gio - timedelta(days=2)
+    sv.dat_hen(lid, hom_qua.strftime("%Y-%m-%dT09:00"), nguoi=uid["nv"])
+    l_tr = dict(sale_repo.get_lead_bang(lid))
+    ok("hen TRUOT ngay van o lai cot Hen mua, co ghi ro la truot",
+       sv.cot_cua(l_tr) == ("hen_mua", "hẹn đã trượt ngày"), str(sv.cot_cua(l_tr)))
+
+    # --- Tai lieu C1: hen truot "o lai cot Hen mua (VIEN DO)". Vien suong la
+    #     chua du — luat vang B3.5 cua chinh tai lieu: mau khong bao gio dung
+    #     mot minh, LUON kem chu/icon.
+    bv_tr = sv.bang_viec(owner_id=uid["nv"], an_da_cham=False)
+    the_tr = next((x for x in bv_tr["the"] if x["id"] == lid), None)
+    ok("service gan co hen_tre (khong bat giao dien so chuoi hien thi)",
+       bool(the_tr and the_tr.get("hen_tre")), str(the_tr and the_tr.get("cot")))
+    h_tr = vsale._the(the_tr, bv_tr["cot"], {}, 8)
+    ok("the hen truot co VIEN DO", 'class="bv-the tre"' in h_tr
+       or 'class="bv-the nong tre"' in h_tr, h_tr[:60])
+    ok("the hen truot co KEM CHU (luat B3.5), khong phai mau tron",
+       "Hẹn đã trượt ngày" in h_tr)
+    the_ok = dict(the_tr, hen_tre=False)
+    ok("hen SAP TOI thi khong vien do, khong canh bao",
+       "tre" not in vsale._the(the_ok, bv_tr["cot"], {}, 8)[:60]
+       and "Hẹn đã trượt" not in vsale._the(the_ok, bv_tr["cot"], {}, 8))
+    sv.dat_hen(lid, "", nguoi=uid["nv"])
+    ok("xoa hen -> next_action_at ve rong",
+       sale_repo.get_lead_bang(lid)["next_action_at"] is None)
+    ok("xoa hen roi thi quay ve dung cot cu (Qua han)",
+       sv.cot_cua(dict(sale_repo.get_lead_bang(lid)))[0] == "qua_han")
+    loi2 = ""
+    try:
+        sv.dat_hen(lid, "khong-phai-ngay", nguoi=uid["nv"])
+    except Exception as err:  # noqa: BLE001
+        loi2 = getattr(err, "message", str(err))
+    ok("ngay hen bay ba -> bao loi ro rang", "không đọc được" in loi2, loi2)
+
+    # --- tu khai: PHAI di qua cong ghi cong (chong trung trong ngay) ---
+    with pool.connection() as conn:
+        conn.execute("delete from crm.care_interactions where customer_id = %s",
+                     (cid_cu,))
+    ok("tu khai lan dau -> ghi cong moi",
+       sv.tu_khai(lid, "nhan", nguoi=uid["nv"]) == "moi")
+    ok("tu khai lan hai cung ngay -> bao TRUNG, khong cong them",
+       sv.tu_khai(lid, "nhan", nguoi=uid["nv"]) == "trung")
+    ok("da goi la hanh dong KHAC, van ghi duoc",
+       sv.tu_khai(lid, "goi", nguoi=uid["nv"]) == "moi")
+    loi3 = ""
+    try:
+        sv.tu_khai(lid, "nhay-mua", nguoi=uid["nv"])
+    except Exception as err:  # noqa: BLE001
+        loi3 = getattr(err, "message", str(err))
+    ok("viec la -> chan", "Việc lạ" in loi3, loi3)
+
+    # --- qua HTTP ---
+    r6 = web.post(f"/crm/bang-viec/{lid}/hen", data={"khi": mai},
+                  follow_redirects=False)
+    ok("POST dat hen -> 303 ve bang viec", r6.status_code == 303,
+       str(r6.status_code))
+    ok("dat hen qua HTTP an that",
+       sale_repo.get_lead_bang(lid)["next_action_at"] is not None)
+    r7 = web.post(f"/crm/bang-viec/{lid}/hen", data={"khi": ""},
+                  follow_redirects=False)
+    ok("POST xoa hen an that", r7.status_code == 303
+       and sale_repo.get_lead_bang(lid)["next_action_at"] is None)
+    r8 = web.get("/crm/bang-viec")
+    ok("che do Bang cung co hang nut (2 che do lam duoc viec nhu nhau)",
+       'class="bv-nutr"' in r8.text)
+
+    # =====================================================================
+    print("== 19. Thanh hang loat (buoc 6) ==")
+    dang_nhap(f"{DAU}tn")
+    r = web.get("/crm/bang-viec")
+    ok("quan ly thay thanh hang loat + o tich",
+       'id="bv-hl"' in r.text and 'class="bv-tick"' in r.text)
+    # 🔴 Tai lieu C1 CAM hai viec nay lam hang loat. Test khoa lai de sau nay
+    #    khong ai "tien tay" them vao.
+    ok("CAM tang voucher hang loat", 'value="voucher"' not in r.text)
+    ok("CAM tu khai hang loat", 'value="tu_khai"' not in r.text)
+    ok("viec chua noi duoc thi danh dau, khong bay nut chet",
+       "chiến dịch dựng theo BỘ LỌC" in r.text and "Botcake chưa nối" in r.text)
+
+    # --- giao/chia nhan vien: chay THAT ---
+    ids = [lead["Buoc"], lead["Cho"], lead["Cu"]]
+    kq = sv.giao_hang_loat(ids, [uid["tn"]], nguoi=uid["tn"])
+    ok("giao het cho 1 nguoi", kq["doi"] == 3, str(kq))
+    ok("owner_id doi that trong DB",
+       all(sale_repo.get_lead_bang(i)["owner_id"] == uid["tn"] for i in ids))
+    kq2 = sv.giao_hang_loat(ids, [uid["nv"], uid["tn"]], nguoi=uid["tn"])
+    chu = [sale_repo.get_lead_bang(i)["owner_id"] for i in ids]
+    ok("chia deu 3 the cho 2 nguoi -> lech khong qua 1",
+       kq2["doi"] == 3 and abs(chu.count(uid["nv"]) - chu.count(uid["tn"])) <= 1,
+       str(chu))
+    for i in ids:                      # tra lai chu cu cho cac muc sau
+        sale_repo.giao_lead([i], uid["nv"])
+    for xau, dk in (("chua chon the", ([], [uid["nv"]])),
+                    ("chua chon nhan vien", (ids, []))):
+        loi4 = ""
+        try:
+            sv.giao_hang_loat(*dk, nguoi=uid["tn"])
+        except Exception as err:  # noqa: BLE001
+            loi4 = getattr(err, "message", str(err))
+        ok(f"giao ma {xau} -> chan, noi ro", "Chưa chọn" in loi4, loi4)
+
+    # --- xuat CSV ---
+    csv_co = sv.xuat_csv(ids, co_sdt=True)
+    ok("CSV co dong tieu de + du dong du lieu",
+       csv_co.count("\r\n") >= 4 and "Tên khách" in csv_co, str(len(csv_co)))
+    ok("CSV co SDT khi duoc phep", "0944" in csv_co)
+    # 🚩 File roi khoi he thong la khong thu ve duoc: nguoi khong duoc xem SDT
+    #    tren man thi cung khong duoc xuat SDT ra file.
+    csv_khong = sv.xuat_csv(ids, co_sdt=False)
+    ok("KHONG duoc xem SDT -> cot dien thoai bi che",
+       "0944" not in csv_khong and "***" in csv_khong)
+    loi5 = ""
+    try:
+        sv.xuat_csv([], co_sdt=True)
+    except Exception as err:  # noqa: BLE001
+        loi5 = getattr(err, "message", str(err))
+    ok("xuat ma chua chon the -> chan", "Chưa chọn" in loi5, loi5)
+
+    # --- qua HTTP ---
+    r9 = web.post("/crm/bang-viec/hang-loat",
+                  data={"act": "xuat", "ids": [str(i) for i in ids]})
+    ok("POST xuat -> tra file CSV that",
+       r9.status_code == 200 and "text/csv" in r9.headers.get("content-type", ""),
+       f'{r9.status_code} {r9.headers.get("content-type")}')
+    ok("CSV co BOM cho Excel ban Viet khoi vo dau",
+       r9.content.startswith("﻿".encode()))
+    ok("co ten file dinh kem",
+       "attachment" in r9.headers.get("content-disposition", ""))
+    r10 = web.post("/crm/bang-viec/hang-loat", data={"act": "nghich-pha"},
+                   follow_redirects=False)
+    ok("hanh dong la -> khong lam gi, bao loi", r10.status_code == 303)
+
+    # 🚩 Lo phan quyen: NV THUONG khong duoc thao tac hang loat.
+    dang_nhap(f"{DAU}nv")
+    r11 = web.get("/crm/bang-viec")
+    ok("NV thuong KHONG thay thanh hang loat", 'id="bv-hl"' not in r11.text)
+    r12 = web.post("/crm/bang-viec/hang-loat",
+                   data={"act": "giao", "ids": [str(ids[0])],
+                         "bb_nv": [str(uid["nv"])]})
+    ok("NV thuong goi thang endpoint hang loat -> 403",
+       r12.status_code == 403, str(r12.status_code))
 
     with pool.connection() as conn:
         don_dep(conn)

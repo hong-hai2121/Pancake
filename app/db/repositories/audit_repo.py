@@ -105,6 +105,33 @@ def list_logs(
     return rows, total
 
 
+def nhat_ky_cai_dat(limit: int = 60) -> list[dict]:
+    """Nhật ký CẤU HÌNH (C8, màn Cài đặt → mục Nhật ký).
+
+    Khác `list_logs`: hàm kia CỐ Ý không kéo `old_value`/`new_value` (bảng danh
+    sách 30 dòng mà kéo cả jsonb thì nặng vô ích). Nhật ký cấu hình lại sống
+    bằng đúng hai cột đó — người xem cần thấy "đổi từ gì sang gì", không phải
+    chỉ biết "có ai đó đã đổi".
+    """
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        return conn.execute(
+            """
+            select a.id, a.user_id, u.name as user_name, a.action,
+                   a.old_value, a.new_value, a.created_at
+              from crm.audit_logs a
+              left join crm.users u on u.id = a.user_id
+             where (a.object_type = 'app_settings'
+                        and a.action in ('setting_update', 'setting_reset'))
+                -- T3: ngưỡng hạng thẻ giờ cũng sửa NGAY TRÊN màn Cài đặt, nên
+                -- phải hiện ở đây; lọc theo mình bảng app_settings sẽ bỏ sót.
+                or a.action = 'sua_nguong_hang_the'
+             order by a.id desc limit %s
+            """,
+            (limit,),
+        ).fetchall()
+
+
 def get_log(audit_id: int) -> dict | None:
     """AUDIT-002: chi tiết 1 dòng, kèm old/new value đầy đủ."""
     pool = get_pg_pool()

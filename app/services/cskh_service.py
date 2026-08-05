@@ -120,6 +120,16 @@ def nhip_voucher() -> list[int]:
     return sorted(set(ra), reverse=True)      # xa → gần, dò nhịp đúng thứ tự
 
 
+def may_tu_tang_voucher() -> bool:
+    """Đ2 — công tắc luật "máy tự tặng voucher sau đơn đầu".
+
+    Tách khỏi mệnh giá CỐ Ý: mệnh giá = 0 nghĩa là CHƯA cấu hình, còn tắt công
+    tắc này nghĩa là đã cấu hình xong nhưng tạm ngưng. Gộp làm một thì muốn tạm
+    ngưng phải xoá mệnh giá đi, bật lại là phải nhớ mà gõ lại con số.
+    """
+    return bool(runtime_config.bat("voucher_first_auto_on"))
+
+
 def menh_gia_voucher() -> float:
     """LUẬT 4 — mệnh giá máy tự tặng. 0 = máy KHÔNG tặng, để người tặng tay."""
     return max(0.0, float(runtime_config.so("voucher_first_value", 0)))
@@ -228,10 +238,14 @@ def don_thanh_cong(order_id: int, dry: bool = True) -> dict:
     if con_song and not (dry and cu and int(con_song["id"]) == int(cu["id"])):
         ra["viec"].append("không tặng — khách vẫn còn mã sống")
         return ra
+    if not may_tu_tang_voucher():
+        ra["viec"].append("không tặng — luật «máy tự tặng voucher sau đơn đầu» "
+                          "đang TẮT (Cài đặt → Vòng đời khách)")
+        return ra
     tien = menh_gia_voucher()
     if tien <= 0:
         ra["viec"].append("không tặng — CHƯA CẤU HÌNH mệnh giá "
-                          "(Cài đặt → voucher_first_value)")
+                          "(Cài đặt → Ưu đãi → voucher_first_value)")
         return ra
 
     han = han_voucher()
@@ -450,6 +464,40 @@ def dai_ngay(d: int | None) -> str:
     return "sap_roi_bo"
 
 
+def dai_presets() -> list[tuple[str, str]]:
+    """Dải "ngày nhận hàng" cho ô lọc nhanh — sinh từ ĐÚNG ngưỡng `nguong()`.
+
+    Nhờ vậy bật/tắt công tắc hay đổi mốc đầu / khoảng cách ở Cài đặt là dải tự
+    đi theo: chọn "Chăm định kỳ" luôn ra đúng nhóm khách của cột đó, không bao
+    giờ lệch. Nhãn mượn TÊN CỘT thật (đổi tên ở 1H thì đây đổi theo).
+
+    🔑 Không có dải "đã buông": khách quá ngày buông không đứng ở cột nào, bày
+    ra là thêm một nút bấm vào chẳng thấy gì.
+    """
+    buong = ngay_buong()
+    dau, b1, b2 = nguong()
+    b1, b2 = min(b1, buong), min(b2, buong)
+    ten = {c["ma"]: c["ten"] for c in cac_cot()}
+    ra = [("0-3", "Vừa nhận hàng (0–3 ngày)")]
+    if dau > 4:
+        ra.append((f"0-{dau - 1}",
+                   f'{ten.get("moi_nhan_hang", "Mới nhận hàng")} '
+                   f"(0–{dau - 1} ngày)"))
+    if b1 > dau:
+        ra.append((f"{dau}-{b1 - 1}",
+                   f'{ten.get("cham_dinh_ky", "Chăm định kỳ")} '
+                   f"({dau}–{b1 - 1} ngày)"))
+    if b2 > b1:
+        ra.append((f"{b1}-{b2 - 1}",
+                   f'{ten.get("den_ky_mua_lai", "Đến kỳ mua lại")} '
+                   f"({b1}–{b2 - 1} ngày)"))
+    if buong > b2:
+        ra.append((f"{b2}-{buong}",
+                   f'{ten.get("sap_roi_bo", "Sắp rời bỏ")} '
+                   f"({b2}–{buong} ngày)"))
+    return ra
+
+
 def _da_phan_hoi(kh: dict) -> bool:
     """Khách có nói gì SAU khi nhận hàng không?"""
     nhan, cuoi = kh.get("last_delivered_at"), kh.get("khach_cuoi")
@@ -502,8 +550,17 @@ def qua_han_moc(kh: dict, d: int | None) -> int | None:
 
 
 # Cột bảng việc CSKH. (mã, tên, màu, câu việc, cho kéo tay)
-def cac_cot() -> list[dict]:
-    """Cột bảng việc. Tên/câu đổi theo công tắc: TẮT thì y như cũ."""
+def cac_cot(goc: bool = False) -> list[dict]:
+    """Cột bảng việc. Tên/câu đổi theo công tắc: TẮT thì y như cũ.
+
+    `goc=True` trả về tên GỐC trong mã, bỏ qua phần người dùng đặt lại — màn
+    Cài đặt 1H cần nó để in chữ mờ trong ô ("chữ gốc là gì nếu xoá trắng").
+
+    Tên cột và câu việc 📌 sửa được ở **Cài đặt → Mốc thời gian → 1H**, lưu
+    dưới khoá tự do `bn_cskh_<mã>` / `bw_cskh_<mã>`. Đổi ở đó là đổi MỌI nơi
+    hiện tên cột (bảng · pipeline · ô lọc trạng thái) vì tất cả đều đọc qua
+    hàm này — mẫu Kallet cũng gom về một cửa đúng như vậy.
+    """
     tren = bat()
     dau, cach = moc_dau(), moc_cach()
 
@@ -534,7 +591,18 @@ def cac_cot() -> list[dict]:
         ("ngung", "Ngừng liên hệ", "#5A5A5A", "Khách yêu cầu ngừng — không nhắn",
          False),
     ]
-    return [{"ma": m, "ten": t, "mau": c, "viec": v, "keo": k}
+    if goc:
+        return [{"ma": m, "ten": t, "mau": c, "viec": v, "keo": k}
+                for m, t, c, v, k in ds]
+    # Đọc MỘT LẦN cho cả 12 cột. Gọi `lay_tu_do` từng khoá là 24 lượt quét bảng
+    # cấu hình cho mỗi lần vẽ bảng việc.
+    ten_dat = runtime_config.lay_tu_do_theo_tien_to("bn_cskh_")
+    viec_dat = runtime_config.lay_tu_do_theo_tien_to("bw_cskh_")
+    return [{"ma": m,
+             "ten": (ten_dat.get(f"bn_cskh_{m}") or "").strip() or t,
+             "mau": c,
+             "viec": (viec_dat.get(f"bw_cskh_{m}") or "").strip() or v,
+             "keo": k}
             for m, t, c, v, k in ds]
 
 
@@ -652,10 +720,46 @@ def uu_tien(kh: dict, cot: str, d: int | None) -> tuple:
 
 
 # ------------------------------------------------------------------ bảng việc
+QUET_TOI_DA = 3000      # trần QUÉT — số trên tab/ô lọc đếm trong phạm vi này
+HIEN_TOI_DA = 500       # trần BÀY ra màn, thẻ gấp nhất trước
+
+
+def _da_cham_xong(kh: dict) -> bool:
+    """Đã chăm hôm nay VÀ khách chưa nhắn lại sau đó → xong việc, ẩn khỏi bảng.
+
+    Mốc so là GIỜ chăm chứ không phải ngày: nhân viên nhắn lúc 9h, khách đáp
+    lúc 14h thì việc CHƯA xong — so theo ngày sẽ nuốt mất ca này.
+    """
+    if int(kh.get("cham_hom_nay") or 0) <= 0:
+        return False
+    khach, cham = kh.get("khach_cuoi"), kh.get("cham_cuoi")
+    return not khach or not cham or khach <= cham
+
+
 def bang_viec(*, owner_id: int | None = None, q: str = "",
-              chi_viec: bool = False) -> dict:
-    """Số liệu màn Bảng việc CSKH: thẻ đã xếp cột + các ô đếm."""
-    rows = repo.bang_viec(owner_id=owner_id, q=q, ngay_buong=ngay_buong())
+              chi_viec: bool = False, an_da_cham: bool = True,
+              staff_id: int | None = None, chua_gan: bool = False,
+              page_id: int | None = None, hang_the: str = "",
+              nhan_tu: int | None = None, nhan_den: int | None = None,
+              trang_thai: str = "") -> dict:
+    """Số liệu màn Bảng việc CSKH: thẻ đã xếp cột + các ô đếm.
+
+    `an_da_cham` — khách ĐÃ CHĂM HÔM NAY thì ẩn đi, TRỪ KHI khách nhắn lại SAU
+    lần chăm (còn phải xử tiếp). Không có luật này thì bảng đầy thẻ đã làm xong
+    và không ai biết hôm nay còn việc gì.
+
+    Bộ lọc `staff_id`/`chua_gan`/`page_id`/`hang_the`/`nhan_tu`/`nhan_den` lọc ở
+    SQL; riêng `chi_viec` và `trang_thai` (cột) lọc ở ĐÂY vì cột là thứ Python
+    suy ra từ ngày nhận hàng + voucher + tin nhắn, SQL không biết.
+
+    Thứ tự CÓ Ý NGHĨA: xếp cột cho toàn bộ phạm vi quét → ĐẾM → rồi mới lọc và
+    cắt danh sách. Đếm sau khi lọc thì mọi cột không được chọn đều về 0, mà ô
+    lọc trạng thái lại đang bày chính mấy con số đó.
+    """
+    rows = repo.bang_viec(
+        owner_id=owner_id, q=q, ngay_buong=ngay_buong(), limit=QUET_TOI_DA,
+        staff_id=staff_id, chua_gan=chua_gan, page_id=page_id,
+        hang_the=hang_the, nhan_tu=nhan_tu, nhan_den=nhan_den)
     ids = [int(r["id"]) for r in rows]
     v_map = repo.voucher_map(ids) if bat() else {}
     # Đợt gọi tính từ ngày vào cửa sổ mốc gần nhất — đơn giản hoá: lấy cả
@@ -666,17 +770,23 @@ def bang_viec(*, owner_id: int | None = None, q: str = "",
     cot_ds = cac_cot()
     theo_cot: dict[str, list] = {c["ma"]: [] for c in cot_ds}
     the: list[dict] = []
+    # Đếm RIÊNG, không suy từ `the`: thẻ đã chăm bị `continue` bỏ khỏi `the` nên
+    # đếm sau vòng lặp là ra 0. Màn cần cả hai số — "hôm nay đã xong N" (khích
+    # lệ) và "đã ẩn N thẻ" (giải thích vì sao bảng ngắn hơn mình tưởng).
+    xong_hom_nay = da_an = 0
     for r in rows:
         kh = dict(r)
+        if int(kh.get("cham_hom_nay") or 0) > 0:
+            xong_hom_nay += 1
+        if an_da_cham and _da_cham_xong(kh):
+            da_an += 1
+            continue
         d = int(kh["ngay"]) if kh.get("ngay") is not None else None
         v = v_map.get(int(kh["id"]))
         goi = goi_map.get(int(kh["id"]))
         ma, vi_sao = cot_cua(kh, v, goi)
-        viec = la_viec(kh, ma, d)
-        if chi_viec and not viec:
-            continue
         kh.update({
-            "cot": ma, "cot_vi_sao": vi_sao, "la_viec": viec,
+            "cot": ma, "cot_vi_sao": vi_sao, "la_viec": la_viec(kh, ma, d),
             "cau_viec": cau_viec(kh, ma, d, v, goi),
             "voucher": v, "goi": goi,
             "moc": moc_hien_tai(d), "moc_lo": moc_lo(kh, d),
@@ -687,18 +797,41 @@ def bang_viec(*, owner_id: int | None = None, q: str = "",
         theo_cot.setdefault(ma, []).append(kh)
     for ds in theo_cot.values():
         ds.sort(key=lambda x: x["uu_tien"])
+    # Chế độ Bảng đọc thẳng `the`, mà danh sách còn bị cắt ở `HIEN_TOI_DA` —
+    # không xếp theo cùng khoá ưu tiên thì cái bị cắt đi lại là thẻ gấp nhất.
+    the.sort(key=lambda x: x["uu_tien"])
+
+    # --- đếm TRƯỚC khi lọc theo tab/cột ---
+    dem = {
+        "viec_hom_nay": sum(1 for x in the if x["la_viec"]),
+        "qua_han": len(theo_cot.get("qua_han", [])),
+        "nhac_goi": len(theo_cot.get("nhac_goi", [])),
+        "vua_phan_hoi": sum(1 for x in the if x["cho_dap"]),
+        "cho_tang_voucher": len(theo_cot.get("can_tang_voucher", [])),
+        "nhac_han": len(theo_cot.get("nhac_han_voucher", [])),
+        "tong": len(the),
+    }
+    dem_cot = {c["ma"]: len(theo_cot.get(c["ma"], [])) for c in cot_ds}
+
+    # --- lọc tab/cột, rồi mới cắt danh sách bày ra ---
+    if chi_viec:
+        the = [x for x in the if x["la_viec"]]
+    if trang_thai and trang_thai in theo_cot:
+        the = [x for x in the if x["cot"] == trang_thai]
+    tong = len(the)
+    if tong > HIEN_TOI_DA:
+        the = the[:HIEN_TOI_DA]
+    giu = {x["id"] for x in the}
+    theo_cot = {k: [x for x in v if x["id"] in giu]
+                for k, v in theo_cot.items()}
 
     return {
         "cot": cot_ds, "theo_cot": theo_cot, "the": the,
+        "tong": tong, "cham_tran": len(rows) >= QUET_TOI_DA,
+        "xong_hom_nay": xong_hom_nay, "da_an": da_an,
         "bat": bat(), "ctkm": ctkm_dang_chay(),
-        "dem": {
-            "viec_hom_nay": sum(1 for x in the if x["la_viec"]),
-            "qua_han": len(theo_cot.get("qua_han", [])),
-            "vua_phan_hoi": sum(1 for x in the if x["cho_dap"]),
-            "cho_tang_voucher": len(theo_cot.get("can_tang_voucher", [])),
-            "nhac_han": len(theo_cot.get("nhac_han_voucher", [])),
-            "tong": len(the),
-        },
+        "khach_ngu": repo.dem_khach_ngu(ngay_buong()),
+        "dem": dem, "dem_cot": dem_cot,
     }
 
 

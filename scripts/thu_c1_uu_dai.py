@@ -243,9 +243,28 @@ def main() -> None:  # noqa: PLR0915 — script nghiem thu
     ok("cot Hang the hien pill that (khong con 'chua co bang hang the')",
        "kh-tier" in r.text and "chưa có bảng hạng thẻ" not in r.text)
 
-    print("== 9. Sua nguong hang the ==")
-    r = web.post("/crm/hang-the/nguong", data={"ma": "silver", "nguong": ""},
-                 follow_redirects=False)
+    print("== 9. Sua nguong hang the (T3: mot cua o man Cai dat) ==")
+
+    def dat_nguong(gia_tri: str):
+        """Ngưỡng nay sửa ở Cài đặt → Ưu đãi, không còn ô nhập ở /crm/hang-the.
+
+        Phải gửi ĐỦ ô của nhóm y như trình duyệt gửi: công tắc vắng mặt nghĩa là
+        TẮT, gửi thiếu là vô tình tắt mất công tắc của nhóm.
+        """
+        from app.core import runtime_config as _rc
+
+        du = {"nhom": "uu_dai", "nguong_silver": gia_tri}
+        for m in _rc.danh_sach():
+            if m["nhom"] != "uu_dai":
+                continue
+            if m["kieu"] == "bool":
+                if m["gia_tri"]:
+                    du[m["code"]] = "1"
+            else:
+                du[m["code"]] = "" if m["gia_tri"] is None else str(m["gia_tri"])
+        return web.post("/quan-tri/cai-dat", data=du, follow_redirects=False)
+
+    r = dat_nguong("")
     ok("xoa nguong tra 303", r.status_code == 303, str(r.status_code))
     with pool.connection() as conn:
         v = conn.execute("select min_spent from crm.card_ranks where code = "
@@ -254,8 +273,9 @@ def main() -> None:  # noqa: PLR0915 — script nghiem thu
        str(dict(v)))
     r = web.get("/crm/hang-the")
     ok("man hien chu 'chua dien' mau cam", "chưa điền" in r.text)
-    web.post("/crm/hang-the/nguong", data={"ma": "silver", "nguong": "3.000.000"},
-             follow_redirects=False)
+    ok("man Hang the CHI DOC — khong con o nhap nguong",
+       'name="nguong"' not in r.text)
+    dat_nguong("3.000.000")
     with pool.connection() as conn:
         v = conn.execute("select min_spent from crm.card_ranks where code = "
                          "'silver'").fetchone()

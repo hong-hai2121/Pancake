@@ -13,12 +13,15 @@
     luong.py        — tính lại lương kỳ hiện tại + truy thu đơn hoàn (C2)
     soi_tin.py      — soi tin nhắn thật xác minh công chăm sóc (C4)
     sale_buoc.py    — dò con trỏ thang bám đuổi Sale từ tin nhắn (C5)
+    auto_flow_viec.py — luồng tự động SINH VIỆC cho nhân viên (Đợt 3).
+                      🔴 KHÔNG gửi tin: nó chỉ đặt dòng vào crm.tasks
 
 Tất cả được khởi động ở `app/main.py` (lifespan) nên **chạy suốt lúc server còn
 sống**, không phụ thuộc việc có ai đang mở màn Tin nhắn hay không.
 """
 
 from app.workers.ads_cost import ads_cost_loop
+from app.workers.auto_flow_viec import auto_flow_viec_loop
 from app.workers.care_steps import care_steps_loop
 from app.workers.messages import messages_loop
 from app.workers.notifications import notifications_loop
@@ -33,7 +36,7 @@ from app.workers.tasks_qua_han import task_escalation_loop
 from app.workers.voucher_han import voucher_han_loop
 
 __all__ = [
-    "ads_cost_loop", "care_steps_loop", "luong_loop", "messages_loop",
+    "ads_cost_loop", "auto_flow_viec_loop", "care_steps_loop", "luong_loop", "messages_loop",
     "notifications_loop", "poll_loop", "pos_orders_loop", "sale_buoc_loop",
     "sentiment_loop", "soi_tin_loop", "sync_retry_loop",
     "task_escalation_loop", "voucher_han_loop",

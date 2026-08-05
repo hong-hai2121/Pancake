@@ -46,6 +46,7 @@ async def lifespan(_app: FastAPI):
     """
     tasks: list[asyncio.Task] = []
     from app.workers import (
+        auto_flow_viec_loop,
         care_steps_loop,
         luong_loop,
         messages_loop,
@@ -79,6 +80,9 @@ async def lifespan(_app: FastAPI):
     tasks.append(asyncio.create_task(soi_tin_loop(), name="soi-tin"))
     # C5: dò con trỏ thang bám đuổi Sale từ tin nhắn (SALE_SCAN_ENABLED).
     tasks.append(asyncio.create_task(sale_buoc_loop(), name="sale-buoc"))
+    # Đợt 3: luồng tự động SINH VIỆC cho nhân viên (AUTO_FLOW_TASK_ENABLED,
+    # mặc định TẮT). Worker này KHÔNG gửi tin — chỉ đặt dòng vào crm.tasks.
+    tasks.append(asyncio.create_task(auto_flow_viec_loop(), name="auto-flow-viec"))
     # B7 + mục 4 (quảng cáo): cần cấu hình POS mới tạo được task.
     if settings.pancake_pos_api_key and settings.pancake_pos_shop_id:
         from app.workers import ads_cost_loop, pos_orders_loop

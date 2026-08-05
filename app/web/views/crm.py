@@ -15,7 +15,9 @@ from urllib.parse import quote
 from app.integrations.pancake.links import link_hoi_thoai
 # Dùng lại đúng bộ tiện ích màn Tin nhắn đang dùng để hai màn hiển thị
 # giờ giấc và tên/màu thẻ y hệt nhau, không lệch mỗi nơi một kiểu.
-from app.web.views.pancake import _parse_dt, _relative_time, _tag_color, tag_label
+from app.web.views.pancake import (
+    _DISPLAY_TZ, _parse_dt, _relative_time, _tag_color, tag_label,
+)
 # `_icon` gạch dưới là quy ước "nội bộ gói web", không phải cấm dùng — màn Hội
 # thoại cần đúng bộ SVG mà menu trái đang dùng để icon cả trang cùng một nét.
 from app.web.shell import _icon, render_shell, stat
@@ -722,22 +724,35 @@ _KH_CHUA_LAM: list[tuple[str, str]] = [
      "bảng đang sắp cố định theo ngày nhận hàng cuối"),
 ]
 
-# Ô đếm đầu màn: (khoá lọc, nhãn, biến màu). Bấm vào là lọc theo tình trạng đó.
-_KH_O_DEM = [
-    ("", "tổng khách", "var(--accent)"),
-    ("active", "đang chăm · ≤180 ngày", "var(--ok)"),
-    ("fading", "sắp buông · 181–210 ngày", "var(--warn)"),
-    ("sleep", "ngủ · quá 210 ngày", "var(--sub)"),
-    ("chua_mua", "chưa mua đơn nào", "var(--hot)"),
-]
+# Ô đếm đầu màn + nhãn tình trạng. T4 — SỐ TRONG NHÃN sinh từ cùng một nguồn
+# với câu SQL đếm (`crm_screens_repo.dai_cham_soc`). Ghi cứng "≤180 ngày" ở đây
+# mà SQL lại đếm theo mốc khác là kiểu sai tệ nhất: số đúng nhưng chữ nói dối,
+# người dùng không có cách nào biết.
+def _kh_dai() -> tuple[int, int]:
+    from app.db.repositories.crm_screens_repo import dai_cham_soc
 
-# Tình trạng chăm sóc -> (nhãn, lớp pill). Ngưỡng khớp `crm_screens_repo`.
-_KH_TINH_TRANG = {
-    "active": ("đang chăm", "active"),
-    "fading": ("sắp buông · 181–210 ngày", "fading"),
-    "sleep": ("ngủ · quá 210 ngày", "sleep"),
-    "chua_mua": ("chưa mua", "chua"),
-}
+    return dai_cham_soc()
+
+
+def _kh_o_dem_dinh() -> list[tuple[str, str, str]]:
+    cuoi, roi = _kh_dai()
+    return [
+        ("", "tổng khách", "var(--accent)"),
+        ("active", f"đang chăm · ≤{cuoi} ngày", "var(--ok)"),
+        ("fading", f"sắp buông · {cuoi + 1}–{roi} ngày", "var(--warn)"),
+        ("sleep", f"ngủ · quá {roi} ngày", "var(--sub)"),
+        ("chua_mua", "chưa mua đơn nào", "var(--hot)"),
+    ]
+
+
+def _kh_tinh_trang_dinh() -> dict[str, tuple[str, str]]:
+    cuoi, roi = _kh_dai()
+    return {
+        "active": ("đang chăm", "active"),
+        "fading": (f"sắp buông · {cuoi + 1}–{roi} ngày", "fading"),
+        "sleep": (f"ngủ · quá {roi} ngày", "sleep"),
+        "chua_mua": ("chưa mua", "chua"),
+    }
 
 _KH_BUCKET_NHAN = [
     ("", "Ngày mua cuối: tất cả"), ("0-30", "≤30 ngày"), ("31-60", "31–60 ngày"),
@@ -786,14 +801,16 @@ def _kh_truoc(dt) -> str:
 
 
 def _kh_tinh_trang(r: dict) -> tuple[str, str]:
+    nhan = _kh_tinh_trang_dinh()
     ngay = r.get("ngay_tu_mua")
     if ngay is None:
-        return _KH_TINH_TRANG["chua_mua"]
-    if ngay <= 180:
-        return _KH_TINH_TRANG["active"]
-    if ngay <= 210:
-        return _KH_TINH_TRANG["fading"]
-    return _KH_TINH_TRANG["sleep"]
+        return nhan["chua_mua"]
+    cuoi, roi = _kh_dai()               # T4 — cùng mốc với câu SQL đếm
+    if ngay <= cuoi:
+        return nhan["active"]
+    if ngay <= roi:
+        return nhan["fading"]
+    return nhan["sleep"]
 
 
 def _kh_url(loc: dict, **doi) -> str:
@@ -843,7 +860,7 @@ def _kh_o_dem(dem: dict, loc: dict) -> str:
     khoa = {"": "tong", "active": "dang_cham", "fading": "sap_buong",
             "sleep": "ngu", "chua_mua": "chua_mua"}
     ra = ""
-    for ma, nhan, mau in _KH_O_DEM:
+    for ma, nhan, mau in _kh_o_dem_dinh():
         bat = (loc.get("tt") or "") == ma
         so = int((dem or {}).get(khoa[ma]) or 0)
         href = _kh_url(loc, tt="" if bat else ma, trang=1)
@@ -861,7 +878,7 @@ def _kh_dai_loc(loc: dict, nhan_vien: list[dict], fanpages: list[dict],
     fp = [("", "Tất cả fanpage")] + [(str(p["id"]), p["name"])
                                      for p in (fanpages or [])]
     tt = [("", "Tất cả tình trạng")] + [
-        (ma, nhan) for ma, (nhan, _) in _KH_TINH_TRANG.items()]
+        (ma, nhan) for ma, (nhan, _) in _kh_tinh_trang_dinh().items()]
     # Bậc thang đọc THẲNG từ crm.card_ranks (C1) — thêm/sửa hạng ở màn Hạng thẻ
     # là ô lọc này đổi theo, không cần sửa code. "Chưa xếp hạng" là hạng thứ 6
     # (card_rank NULL) nên phải thêm tay, nó không có dòng trong bảng.
@@ -2580,8 +2597,12 @@ def _ht_phu_trach(c: dict, nhan_su: dict) -> dict | None:
 
 
 def _ht_khung_chat(c: dict | None, thread: dict | None,
-                   nhan_su: dict | None = None) -> str:
-    """Cột 3 — đầu khung (kiêm hồ sơ khách), luồng tin, dải cửa và ô soạn tin."""
+                   nhan_su: dict | None = None, tab: str = "all") -> str:
+    """Cột 3 — đầu khung (kiêm hồ sơ khách), luồng tin, dải cửa và ô soạn tin.
+
+    `tab` chỉ dùng cho nút "← Danh sách" (chỉ hiện ở màn hẹp, xem CSS `.ht-back`):
+    bỏ `chon` khỏi URL là quay về danh sách mà vẫn giữ đúng tab đang xem.
+    """
     if not c:
         return ('<div class="ht-chat"><div class="ht-empty">'
                 "<div><b>Chọn một hội thoại bên trái</b>"
@@ -2589,9 +2610,13 @@ def _ht_khung_chat(c: dict | None, thread: dict | None,
                 "được đẩy lên đầu danh sách.</div></div></div></div>")
 
     # --- luồng tin: cùng nguồn với màn Tin nhắn (Pancake trả cũ -> mới) ---
+    # Pancake trả mốc theo UTC -> PHẢI đổi sang giờ VN trước khi in, y như
+    # `_fmt_dt` bên màn Tin nhắn; in thẳng là lệch đúng 7 tiếng (cả vạch ngày).
     tin, ngay_truoc = "", ""
     for m in (thread or {}).get("messages") or []:
         dt = _parse_dt(m.get("inserted_at") or "")
+        if dt:
+            dt = dt.astimezone(_DISPLAY_TZ)
         ngay = dt.strftime("%d/%m/%Y") if dt else ""
         if ngay and ngay != ngay_truoc:
             tin += f'<div class="ht-day">{escape(ngay)}</div>'
@@ -2695,8 +2720,11 @@ def _ht_khung_chat(c: dict | None, thread: dict | None,
     )
     return (
         '<div class="ht-chat">'
-        # --- đầu khung: avatar · tên + hạng thẻ · dải meta · cụm nút ---
+        # --- đầu khung: (← ở màn hẹp) avatar · tên + hạng thẻ · meta · cụm nút ---
         '<div class="ht-chead">'
+        f'<a class="ht-ic ht-back" href="{escape(_ht_url(tab, ""))}" '
+        f'title="Quay lại danh sách hội thoại" '
+        f'aria-label="Quay lại danh sách hội thoại">{_icon("chevron-left")}</a>'
         f'<span class="ht-av">{escape(chu)}</span>'
         '<div class="ht-cwho">'
         f'<div class="ht-cline"><span class="ht-cname">{escape(ten)}</span>'
@@ -2838,11 +2866,15 @@ def render_hoi_thoai(convs: list[dict], mo: dict | None = None,
     if da_gui:
         dai_loi += ('<div class="flash ok" style="margin:0;border-radius:0">'
                     "✓ Đã gửi tin cho khách.</div>")
+    # Lớp `chon` cho CSS biết ĐANG MỞ một hội thoại. Màn rộng không dùng tới
+    # (ba cột hiện cùng lúc); màn hẹp (<900px) đổi sang MỘT cột kiểu Messenger:
+    # chưa chọn -> cả màn là danh sách, chọn rồi -> cả màn là khung chat.
     body = (
         '<div class="ht-wrap">'
         + dai_loi + _ht_bang_chua_lam()
-        + '<div class="ht"><div class="ht-rail">' + rail + "</div>"
-        + danh_sach + _ht_khung_chat(mo, thread, nhan_su)
+        + f'<div class="ht{" chon" if mo else ""}"><div class="ht-rail">'
+        + rail + "</div>"
+        + danh_sach + _ht_khung_chat(mo, thread, nhan_su, tab)
         + "</div></div>"
     )
     # JS hai nút trợ lý chỉ nạp khi ĐANG MỞ một hội thoại — `__troly` cần form

@@ -161,11 +161,22 @@ async def _fetch_page(st: _PageState, page: dict) -> tuple[list[dict], int]:
         convs = await fetch_conversations_fresh(page["id"], limit=size)
         goi += 1
         if not convs:
-            return [], goi
+            moi = []
+            break
         moi = [c for c in convs if (c.get("updated_at") or "") > st.moc] if st.moc else convs
         # Thấy ít nhất 1 dòng KHÔNG mới hơn mốc -> đã chạm vùng dữ liệu cũ, đủ.
         if len(moi) < len(convs):
             break
+
+    # Đ2 — BÌNH LUẬN chỉ kéo khi admin cố ý tắt "bảng việc chỉ nhận lead inbox".
+    # Mặc định KHÔNG kéo: mỗi page thêm một lượt gọi Pancake nữa, mà lead bình
+    # luận thì nhân viên mở ra thường chẳng có gì để tư vấn.
+    if not cfg.bat("board_chi_inbox"):
+        cmts = await fetch_conversations_fresh(
+            page["id"], msg_type="COMMENT", limit=_catch_up_sizes()[0])
+        goi += 1
+        moi += ([c for c in cmts if (c.get("updated_at") or "") > st.moc]
+                if st.moc else cmts)
     return moi, goi
 
 

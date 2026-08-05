@@ -114,11 +114,21 @@ MAU_DA_GOI: list[str] = [
 MAU_CHAN_GOI: list[str] = [
     "goi lai cho em", "goi lai cho minh", "chi goi", "anh goi",
     "khi nao ranh goi", "co gi goi",
+    # Đ2 — HẸN gọi, chưa gọi. Thiếu mấy dòng này thì "lát em gọi lại cho chị"
+    # bị chấm là đã gọi (mẫu "goi cho" khớp qua chữ "lai" xen giữa).
+    "lat em goi", "lat nua em goi", "ti nua em goi", "chut nua em goi",
+    "em se goi", "minh se goi", "em goi sau", "de em goi",
 ]
 
 
 def la_tin_da_goi(noi_dung: str) -> bool:
-    """Tin của nhân viên có phải bằng chứng "đã gọi khách" không?"""
+    """Tin của nhân viên có phải bằng chứng "đã gọi khách" không?
+
+    ⚠️ Đây là bản NỀN, chỉ biết hai hằng ở trên và dò chuỗi thẳng. Đường chính
+    từ Đợt 2 là `services/nhan_dien.la_tin_da_goi` — nó cộng thêm mẫu admin khai
+    ở màn Cài đặt và cho chèn từ lạ giữa các từ của mẫu. Giữ hàm này để module
+    text vẫn tự chạy được (test đơn, script rời) mà không cần chạm DB.
+    """
     if khop_bat_ky(MAU_CHAN_GOI, noi_dung):
         return False
     return khop_bat_ky(MAU_DA_GOI, noi_dung) is not None

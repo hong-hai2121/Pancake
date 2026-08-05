@@ -61,17 +61,44 @@ class Settings(BaseSettings):
     voucher_expire_scan_enabled: bool = True
 
     # --- Gửi tin hàng loạt (C3 — chiến dịch 2 tầng) ---
-    # 🔴 GIỮ False. Bật là tin bay tới khách THẬT và không thu hồi được; đây là
+    # 🔴 GIỮ "tat". Bật là tin bay tới khách THẬT và không thu hồi được; đây là
     # bước cuối cùng của quy trình triển khai, không phải mặc định.
-    outbound_messaging_enabled: bool = False
+    # Đợt 2: BA trạng thái chứ không phải bật/tắt — xem services/cong_tac_gui_tin.
+    outbound_messaging_mode: str = "tat"      # tat | nhap | that
+    # 🔒 LỚP KHOÁ CỨNG — CỐ Ý chỉ có ở .env, KHÔNG bày ra màn Cài đặt. Còn True
+    # thì không ai bấm nút trên web mà gửi được tin thật, kể cả admin bị chiếm
+    # tài khoản. Mở lớp này là việc của người có quyền vào máy chủ.
+    outbound_hard_lock: bool = True
+    # 🔒 Khoá cứng RIÊNG cho LUỒNG TỰ ĐỘNG (Đợt 3), tách khỏi khoá trên: mở
+    # đường gửi TAY không được kéo theo việc máy tự bắn hàng loạt. Gửi tay sai
+    # một tin thì xin lỗi một khách; luật tự động sai thì sai với cả chục nghìn
+    # khách trong một đêm. Đợt 3 mới dựng KHUNG — engine chưa có mã gọi API nào,
+    # mở cờ này cũng chưa gửi được gì.
+    auto_flow_hard_lock: bool = True
+    outbound_messaging_enabled: bool = False  # cũ — chỉ còn để đọc dữ liệu di cư
     campaign_batch_max: int = 500        # trần tin mỗi lượt bấm tay
     campaign_auto_run: bool = False      # tự chạy đợt theo lịch
+    meta_door_24h_on: bool = True        # 3 cửa gửi tin của Meta
+    meta_door_ads_on: bool = True
+    meta_door_out_on: bool = False       # ngoài cửa: cần mẫu Meta đã duyệt
+
+    # --- Vòng đời khách & luật tự động (Đợt 2) ---
+    # Thu hồi mặc định TẮT: 30 ngày đầu nhập dữ liệu mà máy đã đi thu hồi thì
+    # khách rơi hàng loạt trước khi ai kịp nhận ra.
+    luat_thu_hoi_on: bool = False
+    luat_giam_quyenloi_on: bool = True
+    voucher_first_auto_on: bool = True
+    board_chi_inbox: bool = True         # bảng việc Sale chỉ nhận lead inbox
+    # Luồng tự động (Đợt 3) — chỉ SINH VIỆC, không gửi tin. Mặc định TẮT.
+    auto_flow_task_enabled: bool = False
+    af_gio_quet: int = 9                 # giờ VN worker quét một lượt/ngày
 
     # --- Giám sát & soi tin (C4 — vòng xác minh công) ---
     # Cửa sổ ±1 NGÀY là con số đã chốt của mẫu: nhân viên nhắn buổi sáng, tối
     # mới ngồi tick, soi gọn trong ngày là bác oan hàng loạt.
     verify_scan_enabled: bool = True
     verify_window_days: int = 1
+    nhandien_goi_gap: int = 2          # từ lạ cho chèn giữa các từ của mẫu
     verify_reject_hours: int = 72
 
     # --- Thang bám đuổi Sale (C5 — con trỏ đọc tin nhắn thật) ---

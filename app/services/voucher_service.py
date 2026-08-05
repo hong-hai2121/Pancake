@@ -59,6 +59,15 @@ def ngay_sap_het() -> int:
     return int(runtime_config.so("voucher_warn_days", 3))
 
 
+def giam_quyen_loi_bat() -> bool:
+    """Đ2 — công tắc luật "giảm quyền lợi ngầm" (Cài đặt → Vòng đời khách).
+
+    TẮT thì khách lâu không mua vẫn hưởng đủ quyền lợi hạng cũ. Đây là công tắc
+    LUẬT, khác với `ngay_giam_quyen_loi()` là NGƯỠNG của luật.
+    """
+    return bool(runtime_config.bat("luat_giam_quyenloi_on"))
+
+
 def ngay_giam_quyen_loi() -> int:
     """Luật 2. ĐỪNG nhầm với ba con số 180/180/210 khác nghĩa trong hệ thống
     (nhắc cuối · thôi phân công · rời bảng việc)."""
@@ -265,7 +274,11 @@ def toan_canh() -> dict:
         "dem": dem,
         "chua_xep": dem.get("", 0),
         "tong_khach": repo.tong_khach(),
-        "giam_quyen_loi": repo.dem_giam_quyen_loi(ngay_giam_quyen_loi()),
+        # Luật TẮT thì không ai bị giảm — trả 0 chứ không phải đếm rồi hiện số
+        # mà thực tế chẳng ai bị gì; số đó làm người xem tưởng luật đang chạy.
+        "giam_quyen_loi": (repo.dem_giam_quyen_loi(ngay_giam_quyen_loi())
+                           if giam_quyen_loi_bat() else 0),
+        "luat_giam_bat": giam_quyen_loi_bat(),
         "ngay_giam": ngay_giam_quyen_loi(),
         "thap_hon": hang_thap_hon(),
         "quyen_loi": repo.quyen_loi(),

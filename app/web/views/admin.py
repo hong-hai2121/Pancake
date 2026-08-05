@@ -18,8 +18,11 @@ def _shell(
     title: str, tab: str, body: str, ok: str = "", error: str = "",
     tabs_items: list | None = None, sub: str = "", script: str = "",
 ) -> str:
+    # Khoá `active` = "admin-<tab>" để menu trái tô đúng mục con trong nhóm
+    # Quản trị (nhóm này nay xổ ra đủ 5 mục, xem shell.MENU_GROUPS) — trước kia
+    # cả khu dùng chung một khoá "admin" vì menu chỉ có 1 nút.
     return render_shell(
-        title, "admin", flash(ok, error) + body,
+        title, f"admin-{tab}", flash(ok, error) + body,
         heading="Quản trị",
         sub=sub or "Tài khoản, vai trò, quyền và nhật ký hệ thống (A5)",
         tabs=tabs_bar(_TABS if tabs_items is None else tabs_items, tab),
@@ -631,86 +634,28 @@ def render_403(message: str = "", heading: str = "Quản trị") -> str:
 
 
 # ------------------------------------------------------------ màn 78: cài đặt
-def render_cai_dat(nhom: list[dict], *, ok: str = "", error: str = "") -> str:
-    """Công tắc bật/tắt + nhịp chạy của worker — đổi ngay, không restart server.
+def render_cai_dat(nhom: list[dict], *, sec: str = "", ok: str = "",
+                   error: str = "", nhat_ky: list[dict] | None = None,
+                   dac_biet: dict[str, str] | None = None,
+                   script: str = "",
+                   truoc: dict[str, str] | None = None,
+                   sau: dict[str, str] | None = None) -> str:
+    """Màn Cài đặt — bố cục menu mục con port từ mẫu Kallet (xem views/cai_dat).
 
-    Mỗi nhóm là một form riêng: bấm Lưu ở nhóm nào chỉ gửi các ô của nhóm đó,
-    nên sửa một chỗ không kéo theo rủi ro ghi đè chỗ khác đang mở ở tab kia.
+    Thân màn nằm ở `views/cai_dat.py`; ở đây chỉ bọc shell Quản trị cho khớp
+    dải tab với các màn quản trị khác.
     """
-    khoi = ""
-    for g in nhom:
-        hang = ""
-        for m in g["muc"]:
-            gt = m["gia_tri"]
-            if m["kieu"] == "bool":
-                dieu_khien = (
-                    f'<label class="sw"><input type="checkbox" name="{escape(m["code"])}"'
-                    f'{" checked" if gt else ""}><span></span>'
-                    f'<b>{"Bật" if gt else "Tắt"}</b></label>'
-                )
-            elif m["chon"]:
-                chon = "".join(
-                    f'<option value="{escape(c)}"'
-                    f'{" selected" if str(gt) == c else ""}>{escape(c)}</option>'
-                    for c in m["chon"]
-                )
-                dieu_khien = f'<select name="{escape(m["code"])}">{chon}</select>'
-            else:
-                buoc = "1" if m["kieu"] == "int" else "any"
-                gioi_han = ""
-                if m["nho_nhat"] is not None:
-                    gioi_han += f' min="{m["nho_nhat"]:g}"'
-                if m["lon_nhat"] is not None:
-                    gioi_han += f' max="{m["lon_nhat"]:g}"'
-                dieu_khien = (
-                    f'<input type="number" step="{buoc}"{gioi_han} '
-                    f'name="{escape(m["code"])}" value="{escape(str(gt))}" '
-                    'style="max-width:150px">'
-                    + (f' <span class="note">{escape(m["don_vi"])}</span>'
-                       if m["don_vi"] else "")
-                )
+    from app.web.views import cai_dat as v_cai_dat
 
-            dau = ""
-            if m["rieng"]:
-                dau = ' <span class="pill">công tắc riêng</span>'
-            elif m["da_doi"]:
-                dau = (f' <span class="pill warn" title="Mặc định trong .env: '
-                       f'{escape(str(m["mac_dinh"]))}">đã đổi</span>')
-            hang += (
-                f'<tr><td><b>{escape(m["ten"])}</b>{dau}'
-                f'<div class="note">{escape(m["mo_ta"])}'
-                f'{" · " if m["mo_ta"] else ""}<code>{escape(m["code"].upper())}</code></div></td>'
-                f'<td>{dieu_khien}</td>'
-                f'<td class="note">{escape(str(m["mac_dinh"])) if m["mac_dinh"] is not None else "—"}</td>'
-                "</tr>"
-            )
-        khoi += f"""
-<form class="card" method="post" action="/quan-tri/cai-dat" style="margin-bottom:14px">
-  <input type="hidden" name="nhom" value="{escape(g['ma'])}">
-  <h3>{escape(g['ten'])}</h3>
-  <div class="tblwrap"><table class="tbl">
-  <thead><tr><th>Cài đặt</th><th>Giá trị</th><th>Mặc định (.env)</th></tr></thead>
-  <tbody>{hang}</tbody></table></div>
-  <div style="margin-top:10px;display:flex;gap:8px">
-    <button class="btn primary">Lưu nhóm này</button>
-    <button class="btn" name="mac_dinh" value="1"
-            title="Bỏ mọi thay đổi của nhóm, quay về giá trị trong .env">Trả về mặc định</button>
-  </div>
-</form>"""
+    return _shell(
+        "Cài đặt hệ thống", "cai-dat",
+        v_cai_dat.render(nhom, sec=sec, nhat_ky=nhat_ky,
+                         dac_biet=dac_biet, truoc=truoc, sau=sau),
+        ok, error,
+        sub="Công tắc, nhịp worker và mốc nghiệp vụ (màn 78)",
+        script=script,
+    )
 
-    body = f"""
-<div class="card" style="margin-bottom:14px">
-  <p class="note" style="margin:0">Đổi ở đây có tác dụng <b>ngay ở lượt chạy kế tiếp</b>
-  của worker (chậm nhất khoảng 10 giây) — không phải khởi động lại server. Cột
-  <b>Mặc định</b> là giá trị đang khai trong <code>.env</code>; ô nào không đổi thì
-  hệ thống dùng đúng giá trị đó. Mọi thay đổi đều vào <a href="/quan-tri/nhat-ky">Nhật ký</a>.</p>
-  <p class="note">Token, mật khẩu và chuỗi kết nối <b>cố ý không</b> nằm ở đây — chúng
-  chỉ có trong <code>.env</code> trên máy chủ.</p>
-</div>
-{khoi}
-"""
-    return _shell("Cài đặt hệ thống", "cai-dat", body, ok, error,
-                  sub="Công tắc đồng bộ và nhịp chạy của worker (màn 78)")
 
 
 # ------------------------------------------------ thẻ Pancake (kho tên/màu thẻ)

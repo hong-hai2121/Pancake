@@ -510,6 +510,54 @@ def _kh_join_hien(co_cua: bool) -> str:
 # Số ngày kể từ lần nhận hàng cuối — viết một chỗ vì cả bộ lọc lẫn ô đếm dùng.
 _KH_NGAY = "(now()::date - dh.nhan_hang_cuoi::date)"
 
+
+# ------------------------------------------------------ T4: hết số ghi cứng
+# Ba dải tình trạng chăm sóc (đang chăm · sắp buông · ngủ) TRƯỚC ĐÂY ghi cứng
+# 180/210 — số của thang chăm CŨ (30·60·90·120·150·180, buông 210). Thang thật
+# bây giờ là C6: D45 → D195 cách nhau 15 ngày, buông ở `cskh_leave_days`.
+# Ghi cứng nghĩa là admin đổi mốc trên web mà màn Khách hàng vẫn đếm theo số cũ
+# — số hiện ra không khớp bảng việc, và không ai hiểu vì sao.
+#
+# Nguồn sự thật: bảng `crm.care_milestones` (thang thật) + cài đặt
+# `cskh_leave_days` (mốc rời bảng). Hỏng/rỗng thì lùi về 180/210 như cũ.
+def _moc_roi_bang() -> int:
+    """Quá bao nhiêu ngày không mua thì khách RỜI bảng việc (coi như ngủ)."""
+    try:
+        from app.core import runtime_config
+
+        return int(runtime_config.so("cskh_leave_days", 210))
+    except Exception:  # noqa: BLE001 — màn khách không được chết vì cài đặt
+        return 210
+
+
+def _moc_cham_cuoi() -> int:
+    """Mốc chăm CUỐI CÙNG của thang — hết mốc này là bước sang dải "sắp buông".
+
+    Lấy mốc lớn nhất đang bật, KHÔNG kể mốc rời bảng. Thang C6 mặc định cho
+    195 (D45…D195, buông 210)."""
+    roi = _moc_roi_bang()
+    try:
+        pool = get_pg_pool()
+        with pool.connection() as conn:
+            r = conn.execute(
+                "select max(offset_days) as n from crm.care_milestones "
+                "where active and dept = 'cskh' and offset_days < %s",
+                (roi,),
+            ).fetchone()
+        if r and r["n"]:
+            return int(r["n"])
+    except Exception:  # noqa: BLE001 — bảng chưa có thì dùng số cũ
+        pass
+    return min(180, roi - 1)
+
+
+def dai_cham_soc() -> tuple[int, int]:
+    """(mốc chăm cuối, mốc rời bảng) — mọi chỗ chia dải phải gọi hàm này."""
+    roi = _moc_roi_bang()
+    cuoi = _moc_cham_cuoi()
+    # Cấu hình lộn xộn (mốc chăm >= mốc buông) thì tự kéo về cho dải không rỗng.
+    return (min(cuoi, roi - 1), roi)
+
 # Khoảng "ngày mua cuối" của bộ lọc mẫu -> (từ, đến); None = không chặn đầu đó.
 KH_BUCKET: dict[str, tuple[int, int | None]] = {
     "0-30": (0, 30), "31-60": (31, 60), "61-90": (61, 90),
@@ -535,12 +583,18 @@ def _kh_loc(q: str, tt: str, bucket: str, owner_id: int, page_id: int,
         ts += [f"%{q}%", f"%{q}%", f"%{q}%"]
     if tt == "chua_mua":
         dk.append("dh.nhan_hang_cuoi is null")
-    elif tt == "active":
-        dk.append(f"dh.nhan_hang_cuoi is not null and {_KH_NGAY} <= 180")
-    elif tt == "fading":
-        dk.append(f"dh.nhan_hang_cuoi is not null and {_KH_NGAY} between 181 and 210")
-    elif tt == "sleep":
-        dk.append(f"dh.nhan_hang_cuoi is not null and {_KH_NGAY} > 210")
+    elif tt in ("active", "fading", "sleep"):
+        cuoi, roi = dai_cham_soc()          # T4 — không còn ghi cứng 180/210
+        if tt == "active":
+            dk.append(f"dh.nhan_hang_cuoi is not null and {_KH_NGAY} <= %s")
+            ts.append(cuoi)
+        elif tt == "fading":
+            dk.append(f"dh.nhan_hang_cuoi is not null "
+                      f"and {_KH_NGAY} between %s and %s")
+            ts += [cuoi + 1, roi]
+        else:
+            dk.append(f"dh.nhan_hang_cuoi is not null and {_KH_NGAY} > %s")
+            ts.append(roi)
     if bucket in KH_BUCKET:
         tu, den = KH_BUCKET[bucket]
         dk.append(f"dh.nhan_hang_cuoi is not null and {_KH_NGAY} >= %s")
@@ -659,17 +713,19 @@ def khach_hang_dem() -> dict:
             select count(*)                                         as tong,
                    count(*) filter (
                        where mua_cuoi is not null
-                         and now()::date - mua_cuoi::date <= 180)   as dang_cham,
+                         and now()::date - mua_cuoi::date <= %(cuoi)s) as dang_cham,
                    count(*) filter (
                        where mua_cuoi is not null
-                         and now()::date - mua_cuoi::date between 181 and 210
+                         and now()::date - mua_cuoi::date
+                             between %(cuoi)s + 1 and %(roi)s
                    )                                                as sap_buong,
                    count(*) filter (
                        where mua_cuoi is not null
-                         and now()::date - mua_cuoi::date > 210)     as ngu,
+                         and now()::date - mua_cuoi::date > %(roi)s)  as ngu,
                    count(*) filter (where mua_cuoi is null)          as chua_mua
               from m
-            """
+            """,
+            dict(zip(("cuoi", "roi"), dai_cham_soc())),
         ).fetchone()
 
 

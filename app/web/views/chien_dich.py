@@ -107,7 +107,7 @@ def _form_tao(xem_truoc: int | None, loc: dict, mau: list[dict],
     dùng chung một bộ lọc."""
     o_nhom = "".join(
         f'<option value="{ma}"{" selected" if loc.get("nhom") == ma else ""}>'
-        f"{escape(ten)}</option>" for ma, (ten, _, _) in svc.NHOM_TEP.items())
+        f"{escape(ten)}</option>" for ma, (ten, _, _) in svc.nhom_tep().items())
     o_mau = ('<option value="">— không gửi gì (chỉ gom tệp) —</option>'
              + "".join(f'<option value="{m["id"]}">{escape(m["code"])} · '
                        f'{escape(m["name"] or "")}</option>' for m in mau))

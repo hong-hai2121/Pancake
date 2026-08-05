@@ -48,6 +48,7 @@ NHOM = {
     "quang_cao": "Quảng cáo & chi phí",
     "uu_dai": "Voucher & hạng thẻ",
     "gui_tin": "Gửi tin hàng loạt (chiến dịch)",
+    "vong_doi": "Vòng đời khách & luật tự động",
     "giam_sat": "Giám sát & soi tin xác minh công",
     "sale": "Thang bám đuổi Sale",
     "cskh": "Quy trình CSKH (3 giai đoạn)",
@@ -107,22 +108,84 @@ MUC: tuple[Muc, ...] = (
     Muc("voucher_expire_scan_enabled", "uu_dai",
         "Tự chuyển voucher quá hạn sang 'hết hạn không dùng'", "bool",
         "Chạy mỗi ngày; tắt thì trạng thái voucher phải sửa tay"),
+    # T1 — HAI khoá này trước nằm ở nhóm CSKH, nay gom về đây. Voucher bị xé
+    # làm hai nhóm là kiểu lỗi âm thầm: admin đổi hạn ở một mục, đổi nhịp nhắc
+    # ở mục khác, rồi không ai để ý hai số đã lệch nhau.
+    Muc("voucher_remind_days", "uu_dai", "Nhịp nhắc hạn voucher", "str",
+        "Số ngày TRƯỚC ngày hết hạn, cách nhau dấu phẩy. 0 = nhắc đúng ngày "
+        "hết hạn. Ví dụ: 15,7,3,0"),
+    # 🔴 Mệnh giá máy tặng. 0 = KHÔNG tặng — xem luật 4 ở services/cskh_service.
+    Muc("voucher_first_value", "uu_dai", "🔴 Mệnh giá voucher MÁY tự tặng", "int",
+        "0 = máy KHÔNG tặng, để nhân viên tặng tay. Voucher là tiền: thà không "
+        "phát còn hơn phát bừa một mệnh giá đoán mò", 0, 100_000_000, "đ"),
 
     # --- Gửi tin hàng loạt (C3 — chiến dịch 2 tầng) ---
     # 🔴 CÔNG TẮC AN TOÀN. Mặc định TẮT và phải giữ TẮT suốt lúc đang dựng:
     # bật là tin bay thẳng tới khách thật, KHÔNG thu hồi được. Mẫu Kallet để
     # đây là BƯỚC CUỐI CÙNG của quy trình triển khai — làm xong hết mọi thứ
     # khác rồi mới bật.
-    Muc("outbound_messaging_enabled", "gui_tin",
-        "🔴 CHO PHÉP GỬI TIN THẬT tới khách", "bool",
-        "TẮT = chạy chế độ NHÁP: mọi thứ diễn ra như thật nhưng không tin nào "
-        "rời hệ thống, và khách KHÔNG bị đánh dấu 'đã gửi'"),
+    # Đợt 2 — BA trạng thái, không phải bật/tắt. "nhap" là trạng thái làm việc
+    # thật sự hữu ích (diễn tập đủ quy trình, không tin nào rời hệ thống), gộp
+    # nó chung với "tat" là mất mất một bước an toàn của quy trình triển khai.
+    Muc("outbound_messaging_mode", "gui_tin",
+        "🔴 Chế độ gửi tin ra ngoài", "str",
+        "tat = không chạy gì · nhap = diễn tập, không tin nào rời hệ thống · "
+        "that = tin bay tới khách THẬT",
+        chon=("tat", "nhap", "that")),
     Muc("campaign_batch_max", "gui_tin", "Trần số tin mỗi đợt chạy tay", "int",
         "Chặn tai nạn bấm nhầm gửi cả tệp trong một lượt", 1, 5000, "tin"),
     Muc("campaign_auto_run", "gui_tin", "Tự chạy đợt theo lịch chiến dịch",
         "bool", "Tắt thì mỗi đợt phải bấm tay ở màn Chiến dịch"),
+    # Ba cửa gửi tin của Meta. Cửa nào TẮT thì máy không gửi và dòng khách đó
+    # hiện KHOÁ kèm lời giải thích — im lặng bỏ qua là nhân viên tưởng máy hỏng.
+    Muc("meta_door_24h_on", "gui_tin", "Cửa 24 giờ — khách tự nhiên", "bool",
+        "24 giờ kể từ tin nhắn cuối của khách: gõ tay tự do, gửi gì cũng được"),
+    Muc("meta_door_ads_on", "gui_tin", "Cửa 7 ngày — khách từ quảng cáo", "bool",
+        "7 ngày kể từ lần bấm quảng cáo cuối; khách bấm lại thì làm mới 7 ngày"),
+    Muc("meta_door_out_on", "gui_tin", "Ngoài cửa — chỉ mẫu Meta đã duyệt",
+        "bool",
+        "Hết cả 24 giờ và 7 ngày: chỉ gửi được kịch bản có mẫu Meta đã duyệt"),
+
+    # --- Vòng đời khách & luật tự động (Đợt 2 — mẫu `cai-dat.php?sec=life`) ---
+    # Ba luật MÁY tự chạy. Mô tả CỐ Ý nói hậu quả khi TẮT chứ không tả lúc bật:
+    # người vào đây phần lớn là để tắt bớt, và cái họ cần biết là tắt rồi thì
+    # mất gì.
+    Muc("luat_thu_hoi_on", "vong_doi", "Máy tự thu hồi khách quá hạn", "bool",
+        "TẮT: khách quá hạn không bị máy chuyển sang người khác — dễ rơi khách, "
+        "nhưng nên tắt trong 30 ngày đầu lúc còn đang nhập dữ liệu. Thu hồi TAY "
+        "ở màn Kho data không phụ thuộc công tắc này"),
+    Muc("luat_giam_quyenloi_on", "vong_doi",
+        "Giảm quyền lợi NGẦM khi khách lâu không mua", "bool",
+        "TẮT: khách lâu không mua vẫn hưởng đủ quyền lợi hạng cũ. Số ngày lấy "
+        "từ card_rank_downgrade_days ở mục Ưu đãi"),
+    # Nguồn lead vào bảng việc Sale (mẫu `cai-dat.php?sec=board`). Hội thoại
+    # BÌNH LUẬN thường không kéo được nội dung tin và cửa gửi tin của Meta cũng
+    # khác inbox — lọt vào bảng việc thì nhân viên mở ra không có gì để tư vấn.
+    Muc("board_chi_inbox", "vong_doi",
+        "Bảng việc Sale chỉ nhận lead TIN NHẮN", "bool",
+        "BẬT (khuyến nghị): chỉ hội thoại inbox mới sinh việc, và poller cũng "
+        "chỉ kéo inbox về. TẮT: kéo thêm cả bình luận (tốn gấp đôi lượt gọi "
+        "Pancake) và cho lead bình luận lên bảng. Khách vừa bình luận vừa nhắn "
+        "tin thì LUÔN còn việc, dù bật hay tắt"),
+    # Luồng tự động — CHỈ sinh VIỆC cho nhân viên, không gửi tin (Đợt 3).
+    Muc("auto_flow_task_enabled", "vong_doi",
+        "Luồng tự động được SINH VIỆC cho nhân viên", "bool",
+        "Máy quét theo luật rồi đặt việc vào bảng việc; NGƯỜI vẫn là người đọc "
+        "và bấm gửi. Mặc định TẮT — bật lên là bảng việc cả phòng có thêm việc "
+        "do máy đẻ ra, nên khai luật và Chạy thử xong hẵng bật"),
+    Muc("af_gio_quet", "vong_doi", "Giờ trong ngày worker quét luồng tự động",
+        "int", "Quét một lượt mỗi ngày vào giờ này (0–23, giờ VN)", 0, 23, "giờ"),
+    Muc("voucher_first_auto_on", "vong_doi", "Máy tự tặng voucher sau đơn đầu",
+        "bool",
+        "TẮT: không tự tặng nữa, nhân viên phải tặng tay — khác với để mệnh giá "
+        "= 0 (nghĩa là CHƯA cấu hình); tắt ở đây giữ nguyên mệnh giá đã khai"),
 
     # --- Giám sát & soi tin (C4) ---
+    Muc("nhandien_goi_gap", "giam_sat",
+        "Cho chèn tối đa bao nhiêu từ lạ giữa các từ của mẫu", "int",
+        "«em vừa gọi» đặt 2 thì bắt được cả «em vừa mới alo gọi». Đặt lớn quá "
+        "là mẫu bắt bừa: hai chữ cách nhau chục từ thì chẳng liên quan gì nhau",
+        0, 5, "từ"),
     Muc("verify_scan_enabled", "giam_sat", "Tự soi tin xác minh công", "bool",
         "Máy đọc tin Pancake tìm bằng chứng nhân viên đã nhắn/gọi"),
     Muc("verify_window_days", "giam_sat", "Cửa sổ soi mỗi phía", "int",
@@ -187,14 +250,6 @@ MUC: tuple[Muc, ...] = (
     Muc("cskh_promo_days", "cskh", "Đợt bám đuổi khuyến mãi kéo dài", "int",
         "Ngày 1 gửi ưu đãi · ngày 2-3 gọi push · hết đợt thì hẹn dịp sau",
         1, 30, "ngày"),
-    Muc("voucher_remind_days", "cskh", "Nhịp nhắc hạn voucher", "str",
-        "Số ngày TRƯỚC ngày hết hạn, cách nhau dấu phẩy. 0 = nhắc đúng ngày "
-        "hết hạn. Ví dụ: 15,7,3,0"),
-    # 🔴 Mệnh giá máy tặng. 0 = KHÔNG tặng — xem luật 4 ở services/cskh_service.
-    Muc("voucher_first_value", "cskh", "🔴 Mệnh giá voucher MÁY tự tặng", "int",
-        "0 = máy KHÔNG tặng, để nhân viên tặng tay. Voucher là tiền: thà không "
-        "phát còn hơn phát bừa một mệnh giá đoán mò", 0, 100_000_000, "đ"),
-
     # --- Bot Pancake ---
     Muc("inbox_poll_enabled", "bot", "Poller kéo hội thoại Pancake", "bool",
         "Tắt = màn Tin nhắn gọi thẳng Pancake, kho hội thoại ngừng cập nhật"),
@@ -284,6 +339,12 @@ def bat(code: str) -> bool:
     return bool(lay(code))
 
 
+def chuoi(code: str, mac_dinh: str = "") -> str:
+    """Đọc một cài đặt kiểu CHỮ, luôn trả về str (None -> `mac_dinh`)."""
+    v = lay(code)
+    return mac_dinh if v is None else str(v)
+
+
 def so(code: str, mac_dinh: float = 0.0) -> float:
     """Đọc một con số, luôn trả về số (None/rác -> `mac_dinh`)."""
     v = lay(code)
@@ -296,6 +357,58 @@ def so(code: str, mac_dinh: float = 0.0) -> float:
 def da_doi(code: str) -> bool:
     """Cài đặt này đang bị ghi đè so với .env hay không (để giao diện đánh dấu)."""
     return code in _nap()
+
+
+# ================================================================ KHOÁ TỰ DO
+# Danh mục `MUC` ở trên là danh sách CỐ ĐỊNH, mỗi dòng một cài đặt có nhãn/kiểu/
+# khoảng hợp lệ — nó dựng nên màn Cài đặt. Nhưng có một loại cấu hình KHÔNG hợp
+# với danh mục đó: **khoá sinh theo dữ liệu**.
+#
+# Ví dụ thật (khối 1G/1H): mỗi cột bảng việc có 2 khoá `bn_<bp>_<cột>` (tên cột)
+# và `bw_<bp>_<cột>` (câu việc 📌). 7 cột Sale + 11 cột CSKH = 36 khoá, mà danh
+# sách cột lại đổi theo thang bước admin cấu hình. Nhét 36 dòng đó vào `MUC`
+# nghĩa là màn Cài đặt phình ra 36 ô rỗng vô nghĩa, và thêm/bớt một bước là danh
+# mục lệch ngay.
+#
+# ⇒ Chúng dùng CHUNG bảng `crm.app_settings` (một nguồn sự thật, một chỗ sao
+#    lưu) nhưng đi đường riêng: không có mục trong `MUC`, không lên màn Cài đặt
+#    dạng ô số, và luôn là CHUỖI. Trống = chưa đặt = dùng giá trị gốc trong code.
+def lay_tu_do(code: str, mac_dinh: str = "") -> str:
+    """Đọc một khoá tự do. Không có/rỗng -> `mac_dinh`."""
+    v = _nap().get(code)
+    return str(v) if v not in (None, "") else mac_dinh
+
+
+def lay_tu_do_theo_tien_to(tien_to: str) -> dict[str, str]:
+    """Mọi khoá tự do bắt đầu bằng `tien_to` — đọc cả cụm trong MỘT lượt.
+
+    Màn cấu hình cột phải vẽ 36 ô; gọi `lay_tu_do` 36 lần thì mỗi lần lại quét
+    cache một vòng, mà cái cần chỉ là một lát của cùng bảng đó."""
+    return {k: v for k, v in _nap().items()
+            if k.startswith(tien_to) and v not in (None, "")}
+
+
+def dat_tu_do(code: str, value: str, user_id: int | None = None) -> None:
+    """Ghi một khoá tự do. Giá trị RỖNG = XOÁ hẳn dòng (về giá trị gốc), chứ
+    không lưu chuỗi rỗng — nếu lưu, màn sẽ hiện ô trắng thay vì chữ mờ gợi ý và
+    người dùng mất đường quay lại mặc định."""
+    from app.db.client import get_pg_pool
+
+    pool = get_pg_pool()
+    with pool.connection() as conn:
+        if str(value or "").strip() == "":
+            conn.execute("delete from crm.app_settings where code = %s", (code,))
+        else:
+            conn.execute(
+                """
+                insert into crm.app_settings (code, value, updated_by)
+                values (%s, %s, %s)
+                on conflict (code) do update set
+                    value = excluded.value, updated_by = excluded.updated_by
+                """,
+                (code, str(value).strip(), user_id),
+            )
+    xoa_cache()
 
 
 # ------------------------------------------------------------------ ghi

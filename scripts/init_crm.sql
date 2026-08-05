@@ -1717,6 +1717,21 @@ alter table conversations add column if not exists external_tags jsonb not null 
 alter table conversations add column if not exists message_count integer;
 alter table conversations add column if not exists unread_count  integer;
 alter table conversations add column if not exists snippet       text;
+-- Đợt 2 — LOẠI hội thoại. Bình luận và tin nhắn riêng khác nhau ở hai điểm chí
+-- mạng: bình luận thường không kéo được nội dung tin, và cửa gửi tin của Meta
+-- cũng khác. Không phân biệt được thì lead bình luận lọt vào bảng việc Sale mà
+-- nhân viên mở ra chẳng có gì để tư vấn.
+alter table conversations add column if not exists kind text not null
+    default 'inbox';
+do $$ begin
+    alter table conversations add constraint conversations_kind_check
+        check (kind in ('inbox','comment','phone','khac'));
+exception when duplicate_object then null; end $$;
+comment on column conversations.kind is
+    'inbox | comment | phone | khac — dịch từ trường `type` của Pancake. Bảng '
+    'việc Sale lọc theo cột này (Cài đặt → Nguồn lead vào bảng việc)';
+create index if not exists idx_conversations_kind
+    on conversations (customer_id, kind);
 comment on column conversations.external_updated_at is
     'updated_at BÊN PANCAKE ở lần đồng bộ cuối — so mốc này để biết có gì mới, '
     'KHÔNG so updated_at của CRM (trigger tự đổi mỗi lần ghi)';
@@ -2736,6 +2751,15 @@ comment on column care_milestones.promo is
 comment on column care_milestones.sender is
     'nguoi = nhân viên làm · may = automation gửi. Mặc định NGƯỜI: máy chỉ lo '
     'cảm ơn + tặng voucher';
+
+-- Đợt 1 (khối 1D): nhãn 📌 riêng cho từng mốc.
+-- Trước đây mọi mốc trong cùng một cột đọc CHUNG một câu việc, nên ba mốc
+-- 60·90·120 cùng gom vào cột "Đến kỳ mua lại" hiện y hệt nhau — nhân viên
+-- không biết khách đang ở nấc nào. Có nhãn riêng thì mốc nào nói câu nấy;
+-- để TRỐNG thì rơi về câu chung của cột (khai ở 1G/1H).
+alter table care_milestones add column if not exists label text not null default '';
+comment on column care_milestones.label is
+    'Nhãn ngắn 📌 của MỐC, đè lên câu việc chung của cột. Trống = dùng câu cột';
 create index if not exists idx_care_milestones_dept
     on care_milestones (dept, offset_days) where active;
 
@@ -2780,6 +2804,145 @@ alter table customers add column if not exists cskh_column_by bigint
 create index if not exists idx_customers_cskh_column on customers (cskh_column)
     where cskh_column is not null;
 
+
+-- ============================================================
+-- ĐỢT 2 · MẪU CÂU NHẬN DIỆN (mẫu Kallet: bảng `phrase_patterns`)
+-- ============================================================
+-- Bốn danh sách mẫu câu mà máy dùng để ĐỌC tin nhân viên gõ. Trước Đợt 2 chúng
+-- ghi cứng trong `services/tieng_viet.py`; ghi cứng thì mỗi lần shop nói kiểu
+-- khác một chút là phải sửa mã và triển khai lại — trong khi đây đúng là thứ
+-- người vận hành phải tự sửa được.
+--
+-- Hằng trong mã KHÔNG bị xoá đi: chúng thành bộ NỀN luôn có hiệu lực, bảng này
+-- chỉ THÊM vào. Nhờ vậy bảng rỗng (chưa seed, hoặc admin lỡ xoá sạch) thì bộ dò
+-- vẫn chạy đúng như trước, không im lặng ngừng nhận diện.
+create table if not exists phrase_patterns (
+    id          bigint generated always as identity primary key,
+    kind        text not null check (kind in ('goi','chan','voucher','viet_tat')),
+    pattern     text not null,
+    replacement text,
+    status      text not null default 'active'
+                check (status in ('active','inactive')),
+    created_by  bigint references users(id) on delete set null,
+    created_at  timestamptz not null default now()
+);
+comment on table phrase_patterns is
+    'Mẫu câu admin khai thêm cho bộ nhận diện (Cài đặt → Kịch bản nhận diện). '
+    'goi = tính là ĐÃ GỌI · chan = chạy TRƯỚC goi để loại câu "lát em gọi" · '
+    'voucher = từ báo mã giảm · viet_tat = bung tắt thành chữ đầy đủ';
+comment on column phrase_patterns.replacement is
+    'Chỉ dùng cho kind=viet_tat: chữ đầy đủ. Ba loại kia để NULL';
+-- Trùng mẫu trong CÙNG một loại là vô nghĩa (dò hai lần một thứ) — chặn ở DB
+-- thay vì tin vào giao diện, vì còn cả đường API/seed ghi vào bảng này.
+create unique index if not exists idx_phrase_patterns_unique
+    on phrase_patterns (kind, lower(pattern));
+create index if not exists idx_phrase_patterns_kind
+    on phrase_patterns (kind, status);
+
+-- ============================================================
+-- ĐỢT 3 · LUỒNG TỰ ĐỘNG — KHUNG, CHƯA GỬI (mẫu Kallet: auto_flows)
+-- ============================================================
+-- 🔴 ĐỌC TRƯỚC KHI SỬA: bộ bảng này mới là KHUNG để khai và SOI luật. Engine
+-- (`services/auto_flow.py`) CỐ Ý không có một lời gọi API gửi tin nào — muốn
+-- gửi thật phải viết thêm mã mới, không phải gạt một công tắc. Ngoài ra còn
+-- khoá cứng riêng `AUTO_FLOW_HARD_LOCK` trong .env chặn ở `cong_tac_gui_tin`.
+create table if not exists auto_flows (
+    id          bigint generated always as identity primary key,
+    name        text not null default '',
+    -- 3 kiểu kích hoạt: su_kien (POS/Pancake báo) · lech_ngay (N ngày kể từ
+    -- một mốc neo) · truong_doi (một trường của khách đổi sang giá trị nào đó)
+    kind        text not null default 'lech_ngay'
+                check (kind in ('su_kien','lech_ngay','truong_doi')),
+    status      text not null default 'inactive'
+                check (status in ('active','inactive')),
+    su_kien     text,
+    so_ngay     integer,
+    lech        integer not null default 0,
+    moc_neo     text,
+    truong      text,
+    truong_gia_tri text,
+    khop        text not null default 'all' check (khop in ('all','any')),
+    dieu_kien   jsonb not null default '[]'::jsonb,
+    -- Nội dung sẽ gửi. Để đây từ bây giờ để màn hình khai được đủ ý định, dù
+    -- chưa đường nào đọc tới nó: khai luật mà không nói gửi gì thì lượt chạy
+    -- khô chẳng kiểm chứng được điều gì có ý nghĩa.
+    template_id bigint references message_templates(id) on delete set null,
+    script_id   bigint references sale_scripts(id) on delete set null,
+    gio_quet    integer,
+    tao_viec    boolean not null default false,
+    lan_chay_cuoi timestamptz,
+    created_by  bigint references users(id) on delete set null,
+    created_at  timestamptz not null default now(),
+    updated_at  timestamptz not null default now()
+);
+comment on table auto_flows is
+    'KHUNG luồng tự động (Đợt 3). Khai + soi luật được; GỬI thì CHƯA — engine '
+    'không có mã gọi API, và còn khoá cứng AUTO_FLOW_HARD_LOCK chặn ở cửa gửi';
+comment on column auto_flows.status is
+    'active = luật được tính khi chạy khô. KHÔNG có nghĩa là được gửi tin';
+comment on column auto_flows.dieu_kien is
+    'Danh sách điều kiện lọc: [{"ma","phep","gia_tri"}] — catalog ở '
+    'services/auto_flow.DIEU_KIEN';
+comment on column auto_flows.tao_viec is
+    'Sinh một việc cho nhân viên thay vì gửi tin. Đây là đường AN TOÀN: người '
+    'vẫn là người bấm gửi, máy chỉ nhắc';
+create index if not exists idx_auto_flows_chay on auto_flows (status, kind);
+
+-- Nhật ký từng lượt CHẠY KHÔ. Có bảng này thì "luật của tôi trúng ai" trả lời
+-- được bằng dữ liệu chứ không phải bằng niềm tin — và khi nào bật gửi thật thì
+-- đã có sẵn chỗ đối chiếu trước/sau.
+create table if not exists auto_flow_runs (
+    id           bigint generated always as identity primary key,
+    auto_flow_id bigint not null references auto_flows(id) on delete cascade,
+    -- 'kho' là giá trị DUY NHẤT hiện có. 'that' để sẵn cho ngày bật gửi thật;
+    -- CHECK giữ cả hai để lúc đó không phải migrate, nhưng không mã nào ghi
+    -- 'that' cả — xem `auto_flow.chay_kho()`.
+    che_do       text not null default 'kho' check (che_do in ('kho','that')),
+    so_trung     integer not null default 0,
+    so_bo_qua    integer not null default 0,
+    chi_tiet     jsonb not null default '[]'::jsonb,
+    boi          bigint references users(id) on delete set null,
+    created_at   timestamptz not null default now()
+);
+comment on table auto_flow_runs is
+    'Nhật ký lượt chạy KHÔ của luồng tự động: luật trúng bao nhiêu khách và vì '
+    'sao. Không tin nào được gửi trong bất kỳ lượt nào ghi ở đây';
+comment on column auto_flow_runs.chi_tiet is
+    'Mẫu vài chục khách đầu kèm lý do trúng — đủ để soi luật, không lưu cả tệp';
+create index if not exists idx_auto_flow_runs on auto_flow_runs
+    (auto_flow_id, created_at desc);
+
+-- Luồng đã sinh VIỆC cho khách nào. Bảng nay là thứ giữ cho worker chạy được
+-- nhiều lượt một ngày mà không đẻ ra một núi việc trùng: khoá duy nhất theo
+-- (luồng, khách, NGÀY) nên chạy 10 lượt trong ngày vẫn đúng 1 việc.
+create table if not exists auto_flow_tasks (
+    id           bigint generated always as identity primary key,
+    auto_flow_id bigint not null references auto_flows(id) on delete cascade,
+    customer_id  bigint not null references customers(id) on delete cascade,
+    task_id      bigint references tasks(id) on delete set null,
+    ngay         date not null default (now() at time zone 'Asia/Ho_Chi_Minh')::date,
+    created_at   timestamptz not null default now()
+);
+comment on table auto_flow_tasks is
+    'Luong tu dong da sinh viec cho ai. Dung de CHONG TRUNG, va de tra loi '
+    '"viec nay o dau ra" khi nhan vien hoi';
+comment on column auto_flow_tasks.ngay is
+    'Ngay theo GIO VN (UTC+7), khong phai UTC — worker chay luc 01:00 VN van '
+    'phai tinh la hom nay chu khong phai hom qua';
+create unique index if not exists idx_auto_flow_tasks_ngay
+    on auto_flow_tasks (auto_flow_id, customer_id, ngay);
+create index if not exists idx_auto_flow_tasks_kh
+    on auto_flow_tasks (customer_id, created_at desc);
+
+-- Việc do luồng tự động sinh trỏ ngược về `auto_flows` để thẻ việc trả lời được
+-- câu "việc này ở đâu ra". CHECK cũ chưa biết giá trị đó nên phải nới ra — nới
+-- bằng cách DROP rồi ADD lại ĐỦ danh sách (không thêm CHECK thứ hai: hai ràng
+-- buộc trên cùng một cột thì phải thoả CẢ HAI, và cái cũ sẽ chặn giá trị mới).
+alter table tasks drop constraint if exists tasks_related_type_check;
+alter table tasks add  constraint tasks_related_type_check
+    check (related_type in ('lead','order','care_plan_step',
+                            'customer_treatment','repurchase_opportunity',
+                            'auto_flows'));
 
 -- ============================================================
 -- TRIGGER updated_at cho mọi bảng CÓ CỘT updated_at trong schema crm

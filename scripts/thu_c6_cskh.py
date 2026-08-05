@@ -52,7 +52,12 @@ def ok(ten: str, dk: bool, them: str = "") -> None:
     global PASS, FAIL
     PASS, FAIL = (PASS + 1, FAIL) if dk else (PASS, FAIL + 1)
     # In KHONG dau: console Windows cp1252 khong in duoc tieng Viet co dau.
-    print(f"  {'PASS' if dk else 'FAIL'}  {ten}  {'' if dk else them}")
+    # Lo co ky tu ngoai bang ma (emoji trong ten phep thu / trong `them`) thi
+    # BO ky tu do chu khong de UnicodeEncodeError giet ca luot chay — mat mot
+    # dau hieu nho con hon mat 40 phep thu con lai.
+    dong = f"  {'PASS' if dk else 'FAIL'}  {ten}  {'' if dk else them}"
+    bang_ma = getattr(sys.stdout, "encoding", None) or "utf-8"
+    print(dong.encode(bang_ma, "replace").decode(bang_ma, "replace"))
 
 
 def don_dep(conn) -> None:
@@ -130,6 +135,23 @@ def tin(conn, cid: int, *, ai: str, truoc_ngay: float) -> None:
 
 def the_cua(bang: dict, cid: int) -> dict | None:
     return next((t for t in bang["the"] if int(t["id"]) == cid), None)
+
+
+def het_viec(bang: dict, cid: int, cot_cu: str = "") -> bool:
+    """Khách này KHÔNG còn là việc hôm nay nữa — chấp nhận CẢ HAI dạng đúng:
+
+      * thẻ còn trên bảng nhưng `la_viec` = False, hoặc
+      * thẻ BIẾN HẲN khỏi bảng (luật `an_da_cham`: chăm xong thì ẩn đi).
+
+    Trước đây bài kiểm chỉ chấp nhận dạng thứ nhất nên đỏ chập chờn: cùng một
+    hành vi đúng, lúc rơi vào nhánh này lúc rơi vào nhánh kia tuỳ thứ tự mốc
+    thời gian trong giây đó. "Không còn là việc" mới là điều cần kiểm, còn nó
+    biểu hiện bằng cách nào thì không.
+    """
+    t = the_cua(bang, cid)
+    if t is None:
+        return True
+    return t["la_viec"] is False or (bool(cot_cu) and t["cot"] != cot_cu)
 
 
 def main() -> None:  # noqa: PLR0912, PLR0915 — script nghiem thu
@@ -326,9 +348,8 @@ def chay(pool) -> None:  # noqa: PLR0912, PLR0915
     ok("LUAT 6: khach dang co don chay -> KHONG phai viec hom nay",
        t and t["la_viec"] is False, str(t and (t["cot"], t["la_viec"])))
 
-    t = the_cua(bang, k_dinh_ky)
     ok("da cham o moc dang mo -> khong con la viec",
-       t and t["la_viec"] is False, str(t and (t["cot"], t["la_viec"])))
+       het_viec(bang, k_dinh_ky), str(the_cua(bang, k_dinh_ky)))
 
     print("\n== 7. Da goi roi thi KHONG goi lan 2 ==")
     with pool.connection() as conn:
@@ -337,9 +358,8 @@ def chay(pool) -> None:  # noqa: PLR0912, PLR0915
             "contacted, call_result, action_kind, action_at) values "
             "(%s, 'call', true, 'khong_nghe', 'goi', now())", (k_goi,))
     bang = svc.bang_viec(q=DAU)
-    t = the_cua(bang, k_goi)
-    ok("goi roi -> roi khoi cot Nhac goi", t and t["cot"] != "nhac_goi",
-       str(t and t["cot"]))
+    ok("goi roi -> roi khoi cot Nhac goi",
+       het_viec(bang, k_goi, "nhac_goi"), str(the_cua(bang, k_goi)))
 
     print("\n== 8. LUAT 5 — moc khuyen mai khong co dot dang chay ==")
     kh_ct = {"last_delivered_at": datetime.now(timezone.utc) - timedelta(days=45),
@@ -459,9 +479,12 @@ def chay(pool) -> None:  # noqa: PLR0912, PLR0915
     dang_nhap(f"{DAU}admin")
     r = web.get("/crm/bang-viec-cskh")
     ok("man Bang viec CSKH mo duoc", r.status_code == 200, str(r.status_code))
-    ok("co bang bao quy trinh dang BAT", "Quy trình CSKH đang BẬT" in r.text)
+    # Bang bao xanh "dang BAT" da ha xuong mot dong ghi chu (mau khong co
+    # bang-ron bao trang thai binh thuong tren man lam viec) — noi dung o lai.
+    ok("noi ro thang nao dang dieu khien bang",
+       "đang BẬT" in r.text and "mốc đầu D" in r.text)
     ok("noi ro khac man Cham soc C01-C09", "C01-C09" in r.text)
-    ok("the khach hien cau viec 📌", "📌" in r.text)
+    ok("the khach hien cau viec (pin)", "📌" in r.text)
     r = web.get("/crm/bang-viec-cskh?viec=1")
     ok("loc 'chi viec hom nay' chay", r.status_code == 200, str(r.status_code))
     r = web.get("/crm/bang-viec-cskh?q=" + DAU + "NhacHan")
@@ -475,9 +498,8 @@ def chay(pool) -> None:  # noqa: PLR0912, PLR0915
     r = web.post("/crm/bang-viec-cskh/%d/cham" % k_moc, follow_redirects=False)
     ok("ghi luot cham tra 303", r.status_code == 303, str(r.status_code))
     bang = svc.bang_viec(q=DAU)
-    t = the_cua(bang, k_moc)
     ok("cham xong -> khach roi khoi Qua han",
-       t and t["cot"] != "qua_han", str(t and t["cot"]))
+       het_viec(bang, k_moc, "qua_han"), str(the_cua(bang, k_moc)))
 
     r = web.post("/crm/bang-viec-cskh/%d/goi" % k_luoi,
                  data={"ket_qua": "nghe"}, follow_redirects=False)
@@ -507,6 +529,131 @@ def chay(pool) -> None:  # noqa: PLR0912, PLR0915
     r = web.post("/crm/bang-viec-cskh/%d/cham" % k_luoi, follow_redirects=False)
     ok("Ke toan (khong co customer.edit) KHONG ghi cham duoc -> 403",
        r.status_code == 403, str(r.status_code))
+
+    print("\n== 14. Bang viec dung lai theo mau: 2 che do + dai loc ==")
+    dang_nhap(f"{DAU}admin")
+    r = web.get("/crm/bang-viec-cskh?cd=pipeline")
+    ok("che do Pipeline mo duoc",
+       r.status_code == 200 and "bv-board" in r.text, str(r.status_code))
+    r = web.get("/crm/bang-viec-cskh?cd=bang")
+    ok("che do Bang mo duoc",
+       r.status_code == 200 and "kh-tbl" in r.text, str(r.status_code))
+    ok("co du 3 tab dem cua mau",
+       all(t in r.text for t in ("Việc hôm nay", "Quá hạn",
+                                 "Chờ khách trả lời")))
+    ok("dai loc co du 5 o cua mau",
+       all(f'name="{o}"' in r.text
+           for o in ("dai", "nv", "page", "tt", "hang")))
+
+    # Dai ngay sinh TU NGUONG cot — doi moc dau la dai phai di theo.
+    dai = svc.dai_presets()
+    ok("dai ngay nhan sinh tu nguong cot",
+       any(g == "45-104" for g, _ in dai), str(dai))
+    ok("nhan dai muon TEN COT that",
+       any("Chăm định kỳ" in n for _, n in dai), str(dai))
+
+    # Loc dai ngay: khach D50 phai o trong dai 45-104, khach D10 thi khong.
+    # Do tren khach CHUA duoc cham hom nay (k_moc da bi POST /cham o muc 13,
+    # nen no bi luat `an_da_cham` giau di — do tren no la do nham thu khac).
+    r = web.get("/crm/bang-viec-cskh?dai=45-104")
+    ok("loc dai ngay: giu khach D50",
+       f"{DAU}Nong" in r.text, str(r.status_code))
+    ok("loc dai ngay: bo khach D10", f"{DAU}NhacHan" not in r.text)
+    r = web.get("/crm/bang-viec-cskh?dai=tuy&ntu=0&nden=5")
+    ok("tu nhap so ngay chay", r.status_code == 200 and
+       f"{DAU}QuaHanMoc" not in r.text, str(r.status_code))
+    r = web.get("/crm/bang-viec-cskh?hang=chua_xep_hang")
+    ok("loc 'Chua xep hang' chay", r.status_code == 200, str(r.status_code))
+    r = web.get("/crm/bang-viec-cskh?tt=qua_han")
+    ok("loc theo COT chay", r.status_code == 200, str(r.status_code))
+
+    # Ten cot doc tu Cai dat (khoa tu do bn_cskh_*) — mot cua de sua.
+    runtime_config.dat_tu_do("bn_cskh_nong", f"{DAU}TenMoi")
+    try:
+        ten = next(c["ten"] for c in svc.cac_cot() if c["ma"] == "nong")
+        ok("ten cot doc tu Cai dat 1H", ten == f"{DAU}TenMoi", ten)
+        ok("goc=True van tra ten trong ma",
+           next(c["ten"] for c in svc.cac_cot(goc=True)
+                if c["ma"] == "nong") == "Nóng")
+        r = web.get("/crm/bang-viec-cskh")
+        ok("ten moi hien tren bang viec", f"{DAU}TenMoi" in r.text)
+    finally:
+        runtime_config.dat_tu_do("bn_cskh_nong", "")
+    ok("xoa trang -> ten cot ve mac dinh",
+       next(c["ten"] for c in svc.cac_cot() if c["ma"] == "nong") == "Nóng")
+
+    print("\n== 14b. Focus 1 cot: trai the · phai hoi thoai ==")
+    r = web.get("/crm/bang-viec-cskh?cd=pipeline")
+    ok("ten cot la link mo focus", "col=nong" in r.text, str(r.status_code))
+    # Do tren MARKUP (`class="..."`) chu khong tren ten lop tran: ten lop nao
+    # cung nam san trong khoi <style> nen do kieu do luc nao cung "co".
+    # HOI cot that cua khach roi moi focus vao do. Doan cung mot ma cot la bai
+    # kiem do chinh cai fixture chu khong do man focus: the trong bang viec
+    # VON DI troi cot theo thoi gian va theo thao tac cua cac muc truoc.
+    _b = svc.bang_viec(q=DAU)
+    _t = the_cua(_b, k_nong)
+    cot_f = _t["cot"] if _t else "nong"
+    khac = next((x for x in _b["the"] if x["cot"] != cot_f), None)
+
+    r = web.get("/crm/bang-viec-cskh?col=" + cot_f)
+    ok("focus mo duoc, co ca 2 khung",
+       r.status_code == 200 and 'class="cs-focus"' in r.text
+       and 'class="cs-ds"' in r.text, str(r.status_code))
+    ok("khung phai bay danh sach hoi thoai cua dung cot",
+       f"{DAU}Nong" in r.text and 'class="cs-row' in r.text, cot_f)
+    ok("khach cot KHAC khong lot vao focus",
+       khac is None or khac["full_name"] not in r.text,
+       str(khac and (khac["full_name"], khac["cot"])))
+    r = web.get("/crm/bang-viec-cskh?col=%s&kh=%d" % (cot_f, k_nong))
+    ok("bam mot hoi thoai -> mo khung chat tai cho",
+       r.status_code == 200 and 'class="cs-chat"' in r.text, str(r.status_code))
+    ok("khung chat co tin that cua khach", 'class="cs-msg' in r.text)
+    r = web.get("/crm/bang-viec-cskh?col=lung_tung")
+    ok("ma cot la -> ve bang thuong, khong no",
+       r.status_code == 200 and 'class="cs-focus"' not in r.text,
+       str(r.status_code))
+
+    print("\n== 15. Hai nut dong khach KHAC NHAU ==")
+    with pool.connection() as conn:
+        k_tc = khach(conn, "TuChoiWeb", 50)
+        k_ng = khach(conn, "NgungWeb", 50)
+    r = web.post("/crm/bang-viec-cskh/%d/tu-choi" % k_tc, follow_redirects=False)
+    ok("Tu choi tra 303 (KHONG hoi xac nhan)", r.status_code == 303,
+       str(r.status_code))
+    with pool.connection() as conn:
+        c = conn.execute("select cskh_column from crm.customers where id = %s",
+                         (k_tc,)).fetchone()
+    ok("Tu choi -> khach vao cot tu_choi", c["cskh_column"] == "tu_choi",
+       str(c["cskh_column"]))
+    # ... va thoi han cua no la TAM: khach nhan lai thi the tu quay ve bang.
+    with pool.connection() as conn:
+        tin(conn, k_tc, ai="customer", truoc_ngay=0)
+    cskh_repo.nha_cot_da_cu()
+    with pool.connection() as conn:
+        c = conn.execute("select cskh_column from crm.customers where id = %s",
+                         (k_tc,)).fetchone()
+    ok("Tu choi la TAM: khach nhan lai -> the tu quay ve",
+       c["cskh_column"] is None, str(c["cskh_column"]))
+
+    r = web.post("/crm/bang-viec-cskh/%d/ngung" % k_ng, data={"ly_do": ""},
+                 follow_redirects=False)
+    ok("Ngung lien he THIEU ly do -> khong cho qua", r.status_code == 303
+       and "error=" in r.headers.get("location", ""),
+       str(r.status_code) + " " + r.headers.get("location", ""))
+    r = web.post("/crm/bang-viec-cskh/%d/ngung" % k_ng,
+                 data={"ly_do": "khach xin dung"}, follow_redirects=False)
+    ok("Ngung lien he co ly do -> 303", r.status_code == 303,
+       str(r.status_code))
+    with pool.connection() as conn:
+        c = conn.execute("select do_not_contact from crm.customers "
+                         "where id = %s", (k_ng,)).fetchone()
+    ok("Ngung lien he bat co do_not_contact", c["do_not_contact"] is True,
+       str(c["do_not_contact"]))
+    bang = svc.bang_viec(q=DAU)
+    t = the_cua(bang, k_ng)
+    ok("khach ngung lien he -> cot 'ngung', khong sinh viec",
+       t and t["cot"] == "ngung" and t["la_viec"] is False,
+       str(t and (t["cot"], t["la_viec"])))
 
 
 if __name__ == "__main__":

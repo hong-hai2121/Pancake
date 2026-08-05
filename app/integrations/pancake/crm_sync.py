@@ -177,6 +177,15 @@ def sync_nhan_vien(danh_sach: list[dict], external_page_id: str) -> dict:
     return dem
 
 
+# Đợt 2 — `type` của Pancake → `conversations.kind`. Giá trị lạ về "khac" chứ
+# KHÔNG về "inbox": đoán bừa là inbox thì lead lạ lọt thẳng vào bảng việc Sale.
+_LOAI = {"INBOX": "inbox", "COMMENT": "comment", "PHONE": "phone"}
+
+
+def _loai(raw) -> str:
+    return _LOAI.get(str(raw or "").strip().upper(), "khac") if raw else "inbox"
+
+
 def sync_row(external_page_id: str, page_name: str, conv: dict) -> bool:
     """Đồng bộ MỘT hội thoại. Trả True nếu vừa tạo khách mới. Idempotent."""
     page_id = _crm_page_id(str(external_page_id), page_name)
@@ -206,6 +215,7 @@ def sync_row(external_page_id: str, page_name: str, conv: dict) -> bool:
             snippet=(conv.get("snippet") or None),
             message_count=conv.get("message_count"),
             unread_count=conv.get("unread_count"),
+            kind=_loai(conv.get("loai")),
         )
     if tag_ids:
         _dong_bo_the(kh["id"], str(external_page_id), tag_ids)

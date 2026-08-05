@@ -32,20 +32,37 @@ from app.core.errors import ApiError
 from app.core.ngay import bay_gio, hom_nay
 from app.db.repositories import campaign_repo as repo
 
-# Nhóm khách theo số ngày im ắng — khớp mẫu (151-180 · 181-210 · >210).
-NHOM_TEP: dict[str, tuple[str, int, int | None]] = {
-    "151_180": ("Sắp rời bỏ · 151–180 ngày", 151, 180),
-    "181_210": ("Đang rời bỏ · 181–210 ngày", 181, 210),
-    "ngu210":  ("Khách ngủ · quá 210 ngày", 211, None),
-}
+# Nhóm khách theo số ngày im ắng. T4 — mốc lấy từ THANG CHĂM THẬT
+# (`crm_screens_repo.dai_cham_soc`) chứ không ghi cứng 180/210: đổi mốc buông
+# trên màn Cài đặt mà ô chọn tệp vẫn hiện số cũ thì người dựng chiến dịch chọn
+# nhầm tệp, và tin bay tới sai người.
+# Khoá giữ nguyên tên cũ (`151_180`…) để chiến dịch đã lưu không mất bộ lọc.
+def nhom_tep() -> dict[str, tuple[str, int, int | None]]:
+    from app.db.repositories.crm_screens_repo import dai_cham_soc
+
+    cuoi, roi = dai_cham_soc()
+    giua = max(cuoi - 29, 1)            # dải "sắp rời bỏ" rộng 30 ngày
+    return {
+        "151_180": (f"Sắp rời bỏ · {giua}–{cuoi} ngày", giua, cuoi),
+        "181_210": (f"Đang rời bỏ · {cuoi + 1}–{roi} ngày", cuoi + 1, roi),
+        "ngu210":  (f"Khách ngủ · quá {roi} ngày", roi + 1, None),
+    }
 
 TRANG_THAI = {"draft": "Nháp", "running": "Đang chạy",
               "paused": "Tạm dừng", "finished": "Đã đóng"}
 
 
 def gui_that() -> bool:
-    """Công tắc an toàn. False = chế độ NHÁP."""
-    return bool(runtime_config.bat("outbound_messaging_enabled"))
+    """Công tắc an toàn. False = chế độ NHÁP (hoặc TẮT, hoặc khoá cứng còn đóng).
+
+    Đợt 2 chuyển công tắc thành BA trạng thái + hai lớp khoá; luật nằm trọn ở
+    `services/cong_tac_gui_tin`. Giữ hàm này làm cửa vào cũ để mọi nơi gọi
+    `campaign_service.gui_that()` không phải sửa — và quan trọng hơn, để không
+    ai vô tình đọc thẳng cài đặt mà bỏ qua lớp khoá cứng.
+    """
+    from app.services import cong_tac_gui_tin
+
+    return cong_tac_gui_tin.gui_that()
 
 
 def tran_moi_dot() -> int:
@@ -57,9 +74,10 @@ def chuan_hoa_loc(nguon: dict) -> dict:
     """Chuẩn hoá tham số bộ lọc từ form — MỘT nơi duy nhất, để màn xem trước và
     lúc nạp thật không bao giờ hiểu khác nhau."""
     nhom = str(nguon.get("nhom") or "ngu210")
-    if nhom not in NHOM_TEP:
+    tep = nhom_tep()
+    if nhom not in tep:
         nhom = "ngu210"
-    _, tu, den = NHOM_TEP[nhom]
+    _, tu, den = tep[nhom]
     hang = re.sub(r"[^a-z_]", "", str(nguon.get("hang") or ""))
     so_mua = str(nguon.get("so_mua") or "")
     return {
@@ -172,7 +190,12 @@ async def chay_dot(campaign_id: int, so_luong: int = 0, *,
 async def _gui_tang_1(cd: dict, kh: dict) -> None:
     """Gửi một tin tầng 1. Tách riêng để chế độ nháp không bao giờ chạm vào."""
     from app.integrations.pancake import client
+    from app.services import cong_tac_gui_tin
 
+    # Đ3 — CỬA GỬI DUY NHẤT. `gui_that()` ở trên đã chặn rồi, nhưng xin phép lại
+    # ngay sát lời gọi API: cái `if` kia cách đây 30 dòng và có ngày ai đó thêm
+    # một lối vào mới bỏ qua nó. Chỗ chặn phải nằm cạnh chỗ nguy hiểm.
+    cong_tac_gui_tin.xin_phep_gui("chien_dich")
     page = kh.get("external_page_id")
     conv = kh.get("external_conversation_id")
     if not (page and conv):

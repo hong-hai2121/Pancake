@@ -324,6 +324,18 @@ def _khoi_giam(data: dict) -> str:
         chip += (f'<span class="ht-chip">{escape(icon)} '
                  f'<b>{escape(h["name"])}</b> → {escape(toi)}</span>')
     chip += ('<span class="ht-chip off">⬜ Chưa xếp hạng — bỏ qua</span>')
+    # Đ2 — luật này tắt được ở Cài đặt → Vòng đời khách. Tắt mà vẫn hiện "N
+    # khách đang bị giảm" là nói sai: không ai đang bị gì cả.
+    if not data.get("luat_giam_bat", True):
+        return (
+            '<div class="ht-warn"><div class="ht-warn-h">'
+            "⏸️ Luật giảm quyền lợi ngầm đang <b>TẮT</b>"
+            '<a class="kh-btn" href="/quan-tri/cai-dat?sec=vong_doi">Bật lại'
+            "</a></div>"
+            f'<p>Không khách nào bị giảm quyền lợi, kể cả người đã '
+            f'<b>{data["ngay_giam"]} ngày</b> không nhận hàng. Bật lại ở '
+            "<b>Cài đặt → Vòng đời khách</b>.</p>"
+            f'<div class="ht-chips">{chip}</div></div>')
     return (
         '<div class="ht-warn"><div class="ht-warn-h">'
         f'⚠️ <b>{_so(data["giam_quyen_loi"])} khách</b> đang bị giảm quyền lợi '
@@ -339,31 +351,27 @@ def _khoi_giam(data: dict) -> str:
     )
 
 
-def _bang_nguong(data: dict, co_sua: bool) -> str:
-    """Bảng ngưỡng. Ngưỡng chưa điền hiện chữ "chưa điền" màu cam — KHÔNG phải 0."""
+def _bang_nguong(data: dict) -> str:
+    """Bảng ngưỡng — CHỈ ĐỌC (T3). Sửa ở Cài đặt → Ưu đãi.
+
+    Trước đây sửa được cả ở đây lẫn ở Cài đặt; hai nơi cùng ghi một cột thì sớm
+    muộn cũng lệch nhau. Màn này giữ vai trò TOÀN CẢNH — xem hạng, xem đếm, xem
+    quyền lợi, bấm Tính lại — còn ngưỡng thì một cửa duy nhất.
+    Ngưỡng chưa điền hiện chữ "chưa điền" màu cam — KHÔNG phải 0.
+    """
     dong = ""
     for h in data["bac"]:
         mat = h["mat"]
         icon = (h.get("emoji") or "").strip() or mat["icon"]
-        if co_sua:
-            gia_tri = "" if h["min_spent"] is None else f'{float(h["min_spent"]):.0f}'
-            o = (f'<input class="ht-in num" type="number" min="0" step="1000" '
-                 f'name="nguong" value="{gia_tri}" placeholder="chưa điền">')
-            nut = '<button class="kh-btn" type="submit">Lưu</button>'
-            o = (f'<form class="ht-row-f" method="post" '
-                 f'action="/crm/hang-the/nguong">'
-                 f'<input type="hidden" name="ma" value="{escape(h["code"])}">'
-                 f"{o}{nut}</form>")
-        else:
-            o = (f'<span class="ht-in num">'
-                 + (f'{float(h["min_spent"]):,.0f}'.replace(",", ".")
-                    if h["min_spent"] is not None
-                    else '<i class="ht-chua">chưa điền</i>') + "</span>")
-        dong += (f'<div class="ht-row"><span class="ic">{escape(icon)}</span>'
+        o = (f'<span class="ht-in num">'
+             + (f'{float(h["min_spent"]):,.0f}'.replace(",", ".")
+                if h["min_spent"] is not None
+                else '<i class="ht-chua">chưa điền</i>') + "</span>")
+        dong += (f'<div class="hz-row"><span class="ic">{escape(icon)}</span>'
                  f'<span class="ten">{escape(h["name"])}</span>'
                  f'<span class="tu">từ</span>{o}'
                  f'<span class="mo">đ · {escape(h["mo_ta_nguong"])}</span></div>')
-    return f'<div class="ht-rows">{dong}</div>'
+    return f'<div class="hz-rows">{dong}</div>'
 
 
 def _quyen_loi(data: dict) -> str:
@@ -399,8 +407,11 @@ def render_hang_the(data: dict, user: dict, *, flash: str = "") -> str:
              "<code>python scripts/seed_uu_dai.py</code> để nạp ngưỡng."
              "</div>" if data.get("la_khung") else "")
     nut_tinh = ""
+    if co_sua:
+        nut_tinh = ('<a class="kh-btn" href="/quan-tri/cai-dat?sec=uu_dai#nguong"'
+                    ' title="Ngưỡng sửa một cửa ở màn Cài đặt">✏️ Sửa ngưỡng</a>')
     if co_sua and not data.get("la_khung"):
-        nut_tinh = (
+        nut_tinh += (
             '<form method="post" action="/crm/hang-the/tinh-lai" '
             'onsubmit="return confirm(\'Xếp lại hạng cho '
             f'{_so(data["tong_khach"])} khách theo tổng chi tiêu hiện tại?'
@@ -413,12 +424,14 @@ def render_hang_the(data: dict, user: dict, *, flash: str = "") -> str:
         + _cot_hang(data)
         + _khoi_giam(data)
         + '<div class="kh-card" style="padding:16px 18px">'
-        + '<div class="ht-h">Ngưỡng từng hạng' + nut_tinh + "</div>"
-        + _bang_nguong(data, co_sua)
+        + '<div class="ht-h"><span>Ngưỡng từng hạng</span>'
+        + f'<span class="ht-hnut">{nut_tinh}</span></div>'
+        + _bang_nguong(data)
         + '<p class="note" style="margin-top:12px">Ngưỡng là <b>tổng tiền các '
-          "đơn đã giao thành công</b>. Đổi ngưỡng xong phải bấm <b>Tính lại "
-          "hạng</b> mới áp cho khách cũ; khách mới thì tính lúc đơn giao xong."
-          "</p></div>"
+          "đơn đã giao thành công</b>, sửa ở <a href=\"/quan-tri/cai-dat"
+          "?sec=uu_dai#nguong\">Cài đặt → Ưu đãi</a>. Đổi ngưỡng xong phải bấm "
+          "<b>Tính lại hạng</b> mới áp cho khách cũ; khách mới thì tính lúc đơn "
+          "giao xong.</p></div>"
         + '<div class="kh-card" style="padding:16px 18px;margin-top:14px">'
         + '<div class="ht-h">🎁 Quyền lợi từng hạng</div>'
         + _quyen_loi(data)

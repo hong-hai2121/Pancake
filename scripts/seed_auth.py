@@ -67,6 +67,10 @@ PERMISSIONS: list[tuple[str, str]] = [
     # chiến dịch cũng là người soạn nội dung tầng 1. Bấm "Chạy đợt" là bắn tin
     # tới hàng nghìn khách thật nên KHÔNG mở cho nhân viên thường.
     ("campaign.manage", "Tạo & chạy chiến dịch, soạn mẫu tin"),
+    # Đợt 2 — TÁCH khỏi user.manage cố ý. Sửa nhịp worker là việc thường ngày;
+    # gạt công tắc sang "gửi THẬT" là quyết định KHÔNG thu hồi được (tin đã ra
+    # khỏi hệ thống thì thôi). Hai việc khác hạng thì không dùng chung một chìa.
+    ("gui_tin.bat_cong_tac", "Gạt công tắc gửi tin ra ngoài (tắt/nháp/thật)"),
     # A5 — FR-002/003 cần quyền riêng cho quản trị tài khoản + xem audit (màn 65-67, 77)
     ("user.manage", "Quản lý nhân viên & phân quyền"),
     ("user.manage_team", "Quản lý tài khoản trong đội (trưởng nhóm)"),

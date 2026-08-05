@@ -8,7 +8,7 @@ cho /crm/khach-hang) cùng lúc với form thao tác.
 from urllib.parse import quote
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app.core.deps import co_quyen
 from app.core.errors import ApiError
@@ -1622,29 +1622,17 @@ async def hang_the(request: Request, ok: str = "") -> HTMLResponse:
 
 @router.post("/hang-the/nguong")
 async def hang_the_nguong(request: Request):
-    """Sửa ngưỡng một hạng. Ô để TRỐNG = xoá ngưỡng ("chưa điền") — hạng đó
-    ngừng nhận khách mới cho tới khi điền lại, KHÔNG hiểu là ngưỡng 0đ."""
-    from app.db.repositories import audit_repo, voucher_repo
+    """T3 — ngưỡng nay sửa TRỌN VẸN ở Cài đặt → Ưu đãi (một cửa duy nhất).
 
-    user = _nguoi(request)
-    if not co_quyen(user, "user.manage"):
+    Giữ đường cũ sống dưới dạng CHUYỂN HƯỚNG thay vì xoá hẳn: form cũ còn mở ở
+    tab nào đó bấm Lưu sẽ tới đúng chỗ sửa mới, chứ không ăn 404 rồi mất chữ.
+    """
+    if not co_quyen(_nguoi(request), "user.manage"):
         return HTMLResponse(render_403("Sửa ngưỡng hạng thẻ cần quyền "
                                        "user.manage", heading="Hạng thẻ"),
                             status_code=403)
-    f = await request.form()
-    ma = str(f.get("ma") or "")
-    thoi = str(f.get("nguong") or "").strip()
-    try:
-        nguong = float(thoi.replace(".", "").replace(",", "")) if thoi else None
-    except ValueError:
-        return _ve("/crm/hang-the", error="Ngưỡng phải là một con số.")
-    voucher_repo.dat_nguong(ma, nguong)
-    audit_repo.ghi(action="sua_nguong_hang_the", object_type="card_rank",
-                   user_id=int(user.get("sub") or 0),
-                   new_value={"ma": ma, "nguong": thoi or "(chưa điền)"})
-    return _ve("/crm/hang-the",
-               ok=f"Đã lưu ngưỡng hạng {ma}. Bấm “Tính lại hạng” để áp cho "
-                  "khách cũ.")
+    return RedirectResponse("/quan-tri/cai-dat?sec=uu_dai#nguong",
+                            status_code=303)
 
 
 @router.post("/hang-the/tinh-lai")
@@ -2210,9 +2198,17 @@ async def giam_sat_duyet(request: Request, cong_id: int):
 # ================================= C5 — BỘ PHẬN SALE: BẢNG VIỆC + THANG BÁM ĐUỔI
 # Port từ mẫu Kallet (trang-chu.php · includes/sale_buoc.php ·
 # includes/board_rules.php). Luật ở services/sale_service.py.
+# Khung "🔥 Còn động N ngày" — phạm vi MẶC ĐỊNH của bảng việc. Mẫu để 14 ngày và
+# cho sửa ở Cài đặt; ở đây tạm hằng số, chuyển sang Cài đặt khi dựng nhóm 1A.
+# Người dùng đổi ý thì bấm "Tất cả lead" ngay trên dải lọc.
+_HD_NGAY = 14
+
+
 @router.get("/bang-viec", response_class=HTMLResponse)
 async def bang_viec(request: Request, cd: str = "bang", q: str = "",
                     loc: str = "", tatca: int = -1, hien_da_cham: int = 0,
+                    nv: str = "", page: int = 0, tt: str = "",
+                    tu: str = "", den: str = "", pv: str = "",
                     ok: str = "", error: str = "") -> HTMLResponse:
     """Bảng việc Sale — cột do MÁY ĐỌC TIN NHẮN THẬT suy ra.
 
@@ -2223,7 +2219,15 @@ async def bang_viec(request: Request, cd: str = "bang", q: str = "",
       * Nhân viên -> khách CỦA MÌNH (đúng việc hằng ngày của họ).
     Bấm ô tích thì `tatca` thành 0/1 và ý người dùng thắng — quản lý vẫn bó về
     "chỉ của tôi" được nếu họ có ôm lead riêng.
+
+    Bộ lọc (bước 2, port từ mẫu): `nv` (id nhân viên, hoặc "none" = chưa gán) ·
+    `page` (fanpage) · `tt` (mã cột) · `tu`/`den` (ngày khách nhắn lần đầu) ·
+    `pv` ("hd" = còn động N ngày · "all" = cả kho).
+
+    Ô "nhân viên" CHỈ quản lý mới dùng được — nhân viên thường gửi tay `?nv=9`
+    lên thì bỏ qua, không thì đó là lỗ xem trộm khách của người khác.
     """
+    from app.db.repositories import sale_repo
     from app.services import sale_service
 
     user = _nguoi(request)
@@ -2231,9 +2235,19 @@ async def bang_viec(request: Request, cd: str = "bang", q: str = "",
     quan_ly = (co_quyen(user, "user.manage")
                or co_quyen(user, "user.manage_team"))
     ca_doi = quan_ly if tatca < 0 else (bool(tatca) and quan_ly)
+    nv = nv if quan_ly else ""
+    chua_gan = nv == "none"
+    nv_id = int(nv) if nv.isdigit() else 0
+    # Mẫu: chọn NGÀY mà chưa tự chọn phạm vi thì mở "cả kho". Khung "còn động N
+    # ngày" sẽ che sạch lead cũ — lọc tháng trước mà bảng trắng dễ tưởng hỏng.
+    if (tu or den) and not pv:
+        pv = "all"
+    ngay_hd = None if pv == "all" else _HD_NGAY
     data = sale_service.bang_viec(
-        owner_id=None if ca_doi else uid, q=q, an_da_cham=not hien_da_cham)
-    # Lọc theo ô đếm (bấm ô nào thì bảng chỉ còn nhóm đó)
+        owner_id=None if ca_doi else uid, q=q, an_da_cham=not hien_da_cham,
+        staff_id=nv_id or None, chua_gan=chua_gan, page_id=page or None,
+        tao_tu=tu, tao_den=den, hoat_dong_ngay=ngay_hd, trang_thai=tt)
+    # Lọc theo tab đếm (bấm tab nào thì bảng chỉ còn nhóm đó)
     if loc:
         chon = {
             "hom_nay": lambda x: x["buoc_ke"] and x["buoc_ke"]["san_sang"],
@@ -2246,11 +2260,26 @@ async def bang_viec(request: Request, cd: str = "bang", q: str = "",
             giu = {x["id"] for x in data["the"]}
             data["theo_cot"] = {k: [x for x in v if x["id"] in giu]
                                 for k, v in data["theo_cot"].items()}
+    # Nguồn cho hai ô xổ. Nhân viên thường không thấy ô "nhân viên" nên khỏi tra.
+    import asyncio
+
+    ds_nv = await asyncio.to_thread(sale_repo.nhan_vien_co_lead) if quan_ly \
+        else []
+    ds_page = await asyncio.to_thread(sale_repo.fanpage_co_lead)
+    # Tên hạng thẻ đọc THẲNG từ `crm.card_ranks` — thêm/đổi hạng ở màn Hạng thẻ
+    # là thẻ khách đổi theo, không phải sửa code. Bảng rỗng thì thẻ lùi về hiện
+    # mã hạng, vẫn đọc được.
+    from app.db.repositories import cskh_repo
+
+    hang = await asyncio.to_thread(cskh_repo.hang_the_ds)
     return HTMLResponse(views_sale.render_bang_viec(
         data, loc={"q": q, "loc": loc, "tatca": 1 if ca_doi else 0,
-                   "hien_da_cham": hien_da_cham},
+                   "hien_da_cham": hien_da_cham, "nv": nv, "page": page,
+                   "tt": tt, "tu": tu, "den": den, "pv": pv},
         che_do="pipeline" if cd == "pipeline" else "bang",
-        ca_doi=ca_doi, quan_ly=quan_ly, flash=ok, loi=error))
+        ca_doi=ca_doi, quan_ly=quan_ly, flash=ok, loi=error,
+        ds_nv=ds_nv, ds_page=ds_page, hd_ngay=_HD_NGAY,
+        hang_ten={h["code"]: h["name"] for h in hang}))
 
 
 @router.post("/bang-viec/{lead_id}/keo")
@@ -2265,6 +2294,87 @@ async def bang_viec_keo(request: Request, lead_id: int):
     except ApiError as err:
         return _ve("/crm/bang-viec", error=err.message)
     return _ve("/crm/bang-viec", ok="Đã chuyển cột.")
+
+
+@router.post("/bang-viec/hang-loat")
+async def bang_viec_hang_loat(request: Request):
+    """Thanh hàng loạt — giao/chia nhân viên · xuất CSV.
+
+    CỐ Ý không có "tặng voucher" và "✅ tự khai" hàng loạt: mẫu cấm, và lệnh cấm
+    có lý (phát tiền nhầm cả lô · khai công 200 khách một nhịp thì số công hết
+    nghĩa). Đừng thêm vào đây.
+
+    Quyền: mọi hành động hàng loạt đòi quản lý. Riêng cột SĐT trong file xuất
+    còn đòi thêm `customer.view_phone` — file rời khỏi hệ thống là không thu về
+    được, nên không được xuất thứ mà chính người đó không được xem trên màn.
+    """
+    from app.services import sale_service
+
+    user = _nguoi(request)
+    if not (co_quyen(user, "user.manage")
+            or co_quyen(user, "user.manage_team")):
+        return HTMLResponse(
+            render_403("Thao tác hàng loạt cần quyền quản lý nhân viên",
+                       heading="Bảng việc Sale"), status_code=403)
+    f = await request.form()
+    act = str(f.get("act") or "")
+    ids = [int(x) for x in f.getlist("ids") if str(x).isdigit()]
+    uid = int(user.get("sub") or 0) or None
+    try:
+        if act == "giao":
+            nv_ids = [int(x) for x in f.getlist("bb_nv") if str(x).isdigit()]
+            kq = sale_service.giao_hang_loat(ids, nv_ids, nguoi=uid)
+            return _ve("/crm/bang-viec",
+                       ok=f'Đã giao {kq["doi"]} thẻ cho {kq["so_nv"]} nhân viên.')
+        if act == "xuat":
+            noi_dung = sale_service.xuat_csv(
+                ids, co_sdt=co_quyen(user, "customer.view_phone"))
+            from datetime import datetime
+
+            ten = f"bang-viec-sale-{datetime.now():%Y%m%d-%H%M%S}.csv"
+            # ﻿ = BOM. Thiếu nó thì Excel bản Việt mở ra vỡ hết dấu.
+            return Response(
+                "﻿" + noi_dung, media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{ten}"'})
+    except ApiError as err:
+        return _ve("/crm/bang-viec", error=err.message)
+    return _ve("/crm/bang-viec", error=f"Hành động hàng loạt lạ: {act!r}")
+
+
+@router.post("/bang-viec/{lead_id}/hen")
+async def bang_viec_hen(request: Request, lead_id: int):
+    """📌 Đặt hẹn mua (ô trống = xoá hẹn). Thẻ tự sang cột Hẹn mua."""
+    from app.services import sale_service
+
+    f = await request.form()
+    khi = str(f.get("khi") or "")
+    try:
+        sale_service.dat_hen(lead_id, khi,
+                             nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/bang-viec", error=err.message)
+    return _ve("/crm/bang-viec",
+               ok="Đã đặt hẹn mua." if khi else "Đã xoá hẹn mua.")
+
+
+@router.post("/bang-viec/{lead_id}/tu-khai")
+async def bang_viec_tu_khai(request: Request, lead_id: int):
+    """✅ Tự khai đã nhắn · ☎️ đã gọi — ghi công qua cổng giám sát."""
+    from app.services import sale_service
+
+    f = await request.form()
+    viec = str(f.get("viec") or "nhan")
+    try:
+        kq = sale_service.tu_khai(
+            lead_id, viec, nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/bang-viec", error=err.message)
+    ten = "đã nhắn" if viec == "nhan" else "đã gọi"
+    # "trung" = hôm nay đã có công này rồi. Phải nói ra, không thì người dùng bấm
+    # lại mấy lần vì tưởng nút hỏng.
+    return _ve("/crm/bang-viec",
+               ok=f"Hôm nay đã ghi công «{ten}» cho khách này rồi."
+                  if kq == "trung" else f"Đã ghi công «{ten}».")
 
 
 @router.post("/bang-viec/{lead_id}/tu-choi")
@@ -2321,33 +2431,18 @@ async def bang_viec_do_lai(request: Request):
                   f'{kq["nha_cot"]} thẻ tự nhả khỏi cột đặt tay.')
 
 
-@router.get("/thang-sale", response_class=HTMLResponse)
-async def thang_sale(request: Request, ok: str = "",
-                     error: str = "") -> HTMLResponse:
-    """Cấu hình thang bám đuổi — từ khoá của từng bước."""
-    from app.db.repositories import sale_repo
+@router.get("/thang-sale")
+async def thang_sale(request: Request):
+    """T2 — thang bám đuổi nay sửa TRỌN VẸN ở Cài đặt → Mốc thời gian (khối 1A).
 
+    Trước đây màn này giữ từ khoá + tên bước, còn 11 con số nhịp đẩy bước lại
+    nằm ở Cài đặt: cùng một tính năng, hai nơi sửa. Giữ đường cũ sống dưới dạng
+    CHUYỂN HƯỚNG để mọi liên kết/bookmark cũ vẫn tới đúng chỗ, thay vì trả 404
+    hay — tệ hơn — để lại một màn thứ hai sửa được và lệch dần với màn kia.
+    """
     if chan := _chan(request, "user.manage", "Thang bám đuổi Sale"):
         return chan
-    return HTMLResponse(views_sale.render_thang(
-        sale_repo.thang(), flash=ok, loi=error))
-
-
-@router.post("/thang-sale")
-async def thang_sale_luu(request: Request):
-    from app.services import sale_service
-
-    if chan := _chan(request, "user.manage", "Thang bám đuổi Sale"):
-        return chan
-    f = await request.form()
-    try:
-        sale_service.luu_buoc(
-            int(str(f.get("step_no") or "0") or 0),
-            name=str(f.get("name") or ""), work=str(f.get("work") or ""),
-            kw_nv=str(f.get("kw_nv") or ""), kw_kh=str(f.get("kw_kh") or ""))
-    except (ApiError, ValueError) as err:
-        return _ve("/crm/thang-sale", error=getattr(err, "message", str(err)))
-    return _ve("/crm/thang-sale", ok="Đã lưu bước.")
+    return RedirectResponse("/quan-tri/cai-dat?sec=moc#k1a", status_code=307)
 
 
 # =====================================================================
@@ -2357,25 +2452,138 @@ async def thang_sale_luu(request: Request):
 # ⚠️ KHÔNG phải màn /crm/cham-soc (B9 — liệu trình C01-C09 của MỘT đơn). Đây là
 # vòng đời khách SAU khi nhận hàng: cảm ơn → voucher → thang mua lại.
 # =====================================================================
+def _dai_cskh(dai: str, ntu: str, nden: str) -> tuple[int | None, int | None]:
+    """Ô "ngày nhận hàng" → cặp (từ, đến) tính bằng SỐ NGÀY kể từ nhận hàng.
+
+    Dải sẵn có dạng "45-104" (sinh từ chính ngưỡng cột, xem `svc.dai_presets`);
+    "tuy" = người dùng tự gõ hai ô số. Giá trị lạ thì bỏ qua chứ không nổ —
+    tham số URL là thứ ai cũng sửa được trên thanh địa chỉ.
+    """
+    if dai == "tuy":
+        return (int(ntu) if ntu.strip().isdigit() else None,
+                int(nden) if nden.strip().isdigit() else None)
+    if "-" in dai:
+        a, _, b = dai.partition("-")
+        if a.strip().isdigit() and b.strip().isdigit():
+            return int(a), int(b)
+    return None, None
+
+
 @router.get("/bang-viec-cskh", response_class=HTMLResponse)
-async def bang_viec_cskh(request: Request, q: str = "", viec: int = 0,
-                         toi: int = 0, ok: str = "",
-                         error: str = "") -> HTMLResponse:
-    """Bảng việc CSKH — cột do máy suy ra từ NGÀY NHẬN HÀNG CUỐI."""
+async def bang_viec_cskh(request: Request, cd: str = "bang", q: str = "",
+                         viec: int = 0, tt: str = "", nv: str = "",
+                         page: int = 0, hang: str = "", dai: str = "",
+                         ntu: str = "", nden: str = "", hien_da_cham: int = 0,
+                         col: str = "", kh: int = 0,
+                         ok: str = "", error: str = "") -> HTMLResponse:
+    """Bảng việc CSKH — cột do máy suy ra từ NGÀY NHẬN HÀNG CUỐI.
+
+    Phạm vi (đúng nết mẫu, không có ô tích "xem cả đội"):
+      * **Quản lý** thấy hết và chọn được XEM CỦA AI qua ô "nhân viên".
+      * **Nhân viên** bị bó cứng về khách mình phụ trách — chặn ở tầng dữ liệu,
+        gửi tay `?nv=9` lên cũng không xem trộm được khách người khác.
+
+    Bộ lọc: `dai`/`ntu`/`nden` (dải ngày nhận hàng) · `nv` ("none" = chưa gán) ·
+    `page` (fanpage) · `tt` (mã cột) · `hang` (hạng thẻ) · `viec` (tab việc
+    hôm nay) · `hien_da_cham`.
+    """
+    from app.db.repositories import cskh_repo
     from app.services import cskh_service
 
     if chan := _chan(request, "customer.view", "Bảng việc CSKH"):
         return chan
     user = _nguoi(request)
-    # "Khách của tôi": người không có customer.view_all luôn bị bó về khách mình
-    # phụ trách, dù có tick ô hay không — chặn ở tầng dữ liệu, không ẩn nút.
-    minh = int(user.get("sub") or 0) or None
-    pham_vi = minh if (toi or not co_quyen(user, "user.manage")) else None
-    data = cskh_service.bang_viec(owner_id=pham_vi, q=q.strip(),
-                                  chi_viec=bool(viec))
+    uid = int(user.get("sub") or 0) or None
+    quan_ly = (co_quyen(user, "user.manage")
+               or co_quyen(user, "user.manage_team"))
+    nv = nv if quan_ly else ""
+    nhan_tu, nhan_den = _dai_cskh(dai, ntu, nden)
+    data = cskh_service.bang_viec(
+        owner_id=None if quan_ly else uid, q=q.strip(), chi_viec=bool(viec),
+        an_da_cham=not hien_da_cham,
+        staff_id=int(nv) if nv.isdigit() else None, chua_gan=(nv == "none"),
+        page_id=page or None, hang_the=hang, nhan_tu=nhan_tu,
+        nhan_den=nhan_den, trang_thai=col or tt)
+
+    # Nguồn cho ba ô xổ. Nhân viên thường không thấy ô "nhân viên" nên khỏi tra.
+    import asyncio
+
+    vong = cskh_service.ngay_buong()
+    ds_nv = await asyncio.to_thread(cskh_repo.nhan_vien_co_khach, vong) \
+        if quan_ly else []
+    ds_page = await asyncio.to_thread(cskh_repo.fanpage_co_khach, vong)
+    ds_hang = await asyncio.to_thread(cskh_repo.hang_the_ds)
+
+    # FOCUS 1 CỘT (mẫu: bấm tên cột trên Pipeline) — trái thẻ, phải hội thoại.
+    # `trang_thai=col` ở trên khiến cả 500 suất bày ra dồn cho đúng cột này,
+    # thay vì chia đều 12 cột rồi cột đang cày bị cắt mất.
+    focus = None
+    cot_meta = next((c for c in data["cot"] if c["ma"] == col), None)
+    if col and cot_meta:
+        ds = data["theo_cot"].get(col) or []
+        ht = await asyncio.to_thread(
+            cskh_repo.hoi_thoai_map, [int(x["id"]) for x in ds])
+        kh_data = next((x for x in ds if int(x["id"]) == kh), None)
+        tin: list = []
+        if kh_data and ht.get(kh):
+            from app.db.repositories import profile_repo
+
+            tin = await asyncio.to_thread(
+                profile_repo.tin_nhan_gan_nhat, ht[kh]["conversation_id"], 40)
+        focus = {"cot_meta": cot_meta, "ht": ht, "kh": kh if kh_data else 0,
+                 "kh_data": kh_data, "tin": tin}
+
+    loc = {"q": q, "viec": viec, "tt": tt, "nv": nv, "page": page,
+           "hang": hang, "dai": dai, "ntu": ntu, "nden": nden,
+           "hien_da_cham": hien_da_cham, "col": col if cot_meta else "",
+           "kh": kh if focus and focus["kh"] else 0}
     return HTMLResponse(views_cskh.render_bang_viec(
-        data, user, {"q": q, "viec": viec, "toi": toi},
-        sua=co_quyen(user, "customer.edit"), flash=ok, loi=error))
+        data, user, loc, sua=co_quyen(user, "customer.edit"),
+        che_do="pipeline" if (cd == "pipeline" or focus) else "bang",
+        quan_ly=quan_ly, ds_nv=ds_nv, ds_page=ds_page, ds_hang=ds_hang,
+        focus=focus, flash=ok, loi=error))
+
+
+@router.post("/bang-viec-cskh/{customer_id}/tu-choi")
+async def cskh_tu_choi(request: Request, customer_id: int):
+    """🚫 Từ chối — đóng ĐỢT NÀY, mốc sau vẫn chăm.
+
+    CỐ Ý không hỏi xác nhận: nhân viên bấm mấy chục lần mỗi ngày. Thẻ tự quay
+    về bảng khi khách nhắn lại (`cskh_repo.nha_cot_da_cu`).
+    """
+    from app.services import cskh_service
+
+    if chan := _chan(request, "customer.edit", "Bảng việc CSKH"):
+        return chan
+    try:
+        cskh_service.keo_the(customer_id, "tu_choi",
+                             nguoi=int(_nguoi(request).get("sub") or 0) or None)
+    except ApiError as err:
+        return _ve("/crm/bang-viec-cskh", error=err.message)
+    return _ve("/crm/bang-viec-cskh",
+               ok="Đã đóng đợt này — khách nhắn lại là thẻ tự quay về.")
+
+
+@router.post("/bang-viec-cskh/{customer_id}/ngung")
+async def cskh_ngung_lien_he(request: Request, customer_id: int):
+    """⛔ Ngừng liên hệ — dừng HẲN mọi luồng tự động. Bắt buộc ghi lý do.
+
+    Khác Từ chối ở chỗ thẻ KHÔNG tự quay lại: dùng chung đường
+    `care_service.ngung_lien_he` với màn Chăm sóc, để một khách đã xin ngừng thì
+    im trên MỌI màn — hai đường tắt riêng là sớm muộn cũng còn một đường vẫn nhắn.
+    """
+    from app.services import care_service
+
+    if chan := _chan(request, "customer.edit", "Bảng việc CSKH"):
+        return chan
+    f = await request.form()
+    try:
+        care_service.ngung_lien_he(customer_id,
+                                   reason=str(f.get("ly_do") or ""),
+                                   actor=_nguoi(request))
+    except ApiError as err:
+        return _ve("/crm/bang-viec-cskh", error=err.message)
+    return _ve("/crm/bang-viec-cskh", ok="Đã ngừng liên hệ với khách này.")
 
 
 @router.post("/bang-viec-cskh/{customer_id}/cot")
