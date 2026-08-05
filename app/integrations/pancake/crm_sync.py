@@ -108,6 +108,23 @@ def _ids(raw) -> list:
     return list(raw or [])
 
 
+def _khong_khop_duoc(conv: dict) -> bool:
+    """Hội thoại không có NỔI một mẩu định danh nào -> không được đổ vào CRM.
+
+    Bốn bậc chống trùng của FR-011 đều cần một trong bốn thứ này: UUID khách,
+    PSID, SĐT, hoặc conv_id. Thiếu sạch thì khách tạo ra vĩnh viễn không khớp
+    lại được: mỗi lượt đồng bộ đẻ thêm một "Khách chưa rõ tên" mới kèm một lead
+    rác trèo lên bảng việc Sale. Thà bỏ qua — hội thoại rỗng thế này cũng chẳng
+    có gì để nhân viên tư vấn.
+    """
+    return not any((
+        str(conv.get("conv_id") or "").strip(),
+        str(conv.get("customer_id") or "").strip(),
+        str(conv.get("fb_id") or "").strip(),
+        _phones(conv.get("phones")),
+    ))
+
+
 def _dong_bo_the(customer_id: int, external_page_id: str, tag_ids: list) -> None:
     """Gắn thẻ Pancake vào khách CRM, dịch ID -> TÊN thẻ.
 
@@ -186,8 +203,15 @@ def _loai(raw) -> str:
     return _LOAI.get(str(raw or "").strip().upper(), "khac") if raw else "inbox"
 
 
-def sync_row(external_page_id: str, page_name: str, conv: dict) -> bool:
-    """Đồng bộ MỘT hội thoại. Trả True nếu vừa tạo khách mới. Idempotent."""
+def sync_row(external_page_id: str, page_name: str, conv: dict) -> bool | None:
+    """Đồng bộ MỘT hội thoại. Idempotent.
+
+    Trả True nếu vừa tạo khách mới, False nếu bồi vào khách đã có, **None nếu bỏ
+    qua** (dòng không có định danh nào — xem `_khong_khop_duoc`). None falsy nên
+    chỗ nào chỉ hỏi "có tạo mới không" vẫn đọc đúng.
+    """
+    if _khong_khop_duoc(conv):
+        return None
     page_id = _crm_page_id(str(external_page_id), page_name)
     conv_id = str(conv.get("conv_id") or "")
     kh, vua_tao = customer_service.upsert_from_source(
@@ -243,7 +267,10 @@ def sync_batch(external_page_id: str, page_name: str, convs: list[dict]) -> dict
 
     for conv in convs:
         try:
-            if sync_row(external_page_id, page_name, conv):
+            kq = sync_row(external_page_id, page_name, conv)
+            if kq is None:
+                ket_qua["bo_qua"] += 1
+            elif kq:
                 ket_qua["tao_moi"] += 1
             else:
                 ket_qua["cap_nhat"] += 1

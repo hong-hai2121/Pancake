@@ -285,6 +285,13 @@ async def _dong_bo_hoi_thoai(ts: dict) -> dict:
         "lay_ve": len(convs),
         "ket_qua_dong_bo": dem,
         "doi_chieu_trong_crm": soi,
+        # `bo_qua` giờ có 2 nghĩa: page bị tắt (bỏ qua CẢ mẻ, không đụng dòng
+        # nào) hoặc dòng lẻ không có định danh (crm_sync._khong_khop_duoc).
+        # Chỉ nghĩa thứ nhất mới đáng nhắc người dùng đi bật lại page.
         "ghi_chu": ("Page đang TẮT đồng bộ CRM ở màn Tích hợp nên bị bỏ qua — "
-                    "bật rồi chạy lại." if dem.get("bo_qua") else ""),
+                    "bật rồi chạy lại."
+                    if dem.get("bo_qua") and not (dem.get("tao_moi")
+                                                  or dem.get("cap_nhat")
+                                                  or dem.get("loi"))
+                    else ""),
     }

@@ -37,6 +37,23 @@ def don_dep(conn) -> None:
     )
     conn.execute(f"delete from crm.customers where full_name like '{DAU}%'")
     conn.execute(f"delete from crm.pages where external_page_id like '{DAU}%'")
+    # "Row rác" ở mục 4 KHÔNG mang dấu {DAU}: nó không có tên nên customer_service
+    # đặt tên mặc định "Khách chưa rõ tên" -> mấy câu xoá theo dấu ở trên không với
+    # tới, mỗi lần chạy script bỏ lại 1 khách ma + 1 lead rác trên bảng việc Sale.
+    # Dấu vân tay dưới đây chỉ khớp đúng loại rác đó (khách thật luôn có ít nhất
+    # một định danh/hội thoại/đơn — FR-020 bắt buộc SĐT hoặc định danh MXH).
+    # crm.leads và phần còn lại cascade theo customers.
+    conn.execute("""
+        delete from crm.customers c
+         where c.full_name = 'Khách chưa rõ tên'
+           and c.source = 'pancake'
+           and c.primary_phone is null
+           and not exists (select 1 from crm.customer_identities i
+                            where i.customer_id = c.id)
+           and not exists (select 1 from crm.conversations v
+                            where v.customer_id = c.id)
+           and not exists (select 1 from crm.orders o where o.customer_id = c.id)
+    """)
     crm_sync._page_cache.clear()
 
 
@@ -119,7 +136,20 @@ def main() -> None:
         {"conv_id": f"{DAU}c_moi", "name": f"{DAU}Vo Danh", "phones": "[]"},
         {"conv_id": "", "name": None},          # row rác
     ])
-    ok("batch chạy hết, không ném lỗi", kq["tao_moi"] + kq["cap_nhat"] + kq["loi"] == 2, str(kq))
+    ok("batch chạy hết, không ném lỗi", sum(kq.values()) == 2, str(kq))
+    # Row rác không có nổi 1 trong 4 bậc chống trùng -> khách tạo từ nó vĩnh viễn
+    # không khớp lại được, cứ đồng bộ là đẻ thêm một "Khách chưa rõ tên" nữa.
+    ok("row rác bị BỎ QUA, không đẻ khách ma + lead rác",
+       kq["bo_qua"] == 1 and kq["tao_moi"] == 1, str(kq))
+    with pool.connection() as conn:
+        ma = conn.execute(
+            "select count(*) as n from crm.customers where full_name = 'Khách chưa rõ tên'"
+            " and source = 'pancake' and primary_phone is null"
+            " and not exists (select 1 from crm.customer_identities i where i.customer_id = customers.id)"
+            " and not exists (select 1 from crm.conversations v where v.customer_id = customers.id)"
+            " and not exists (select 1 from crm.orders o where o.customer_id = customers.id)"
+        ).fetchone()["n"]
+    ok("không còn khách ma nào trong DB", ma == 0, f"còn {ma}")
 
     with pool.connection() as conn:
         don_dep(conn)
